@@ -1162,7 +1162,7 @@ TEST_CASE("restore: a succeeded restore prints the header, both tables and the s
               "restore               0:02:03.000\n"
               "restore_submit        -            not reported\n"
               "restore_wait          -            not reported\n"
-              "content_export        -            not reported\n"
+              "content_export        -            not run\n"
               "verify                0:18:27.000\n"
               "recovery              0:20:30.000\n"
               "cleanup_after         0:02:03.000\n"
@@ -1914,6 +1914,54 @@ TEST_CASE("restore: every type checked: canaries and random items of each, the O
                                           "backup\n"));
 }
 
+TEST_CASE("restore: the content exports' time is reported as its own span and left out of "
+          "restore, recovery and the restore line",
+          "[restore_command][step_timer][w6.3]")
+{
+    // The exports run inside restore_sample but restore nothing: a recovery
+    // time printed in a client's report must not hold them (W6.3 review,
+    // finding 2). One tick is 123 s; the fake reports 60 s of exports.
+    const auto run_with = [](std::optional<std::chrono::nanoseconds> content_time) {
+        Harness lab;
+        lab.canaries = false; // the one SharePoint item is report.pdf, random
+        lab.fake.pool.sharepoint = {
+            {{lab_values().site_id, "b!madeUpSourceLibraryDrive", "/Projects", "report.pdf",
+              "0b5e1d2c-0000-4000-8000-00000000c0de"},
+             1234}};
+        lab.fake.content_time = content_time;
+        const Run run = lab.run({"--run-id", kRunId, "--mail", "0", "--sp", "1", "--od", "0"});
+        INFO(run.out);
+        CHECK(run.exit_code == rp::exit_code::ok);
+        REQUIRE(lab.timings.size() == 1);
+        return std::pair{run.out, lab.timings[0]};
+    };
+    using T = rp::timing::Span;
+    using State = rp::timing::SpanState;
+    const auto span = [](const rp::timing::RunTimings& t, T s) {
+        return t.spans[static_cast<std::size_t>(s)];
+    };
+
+    const auto [out, timed] = run_with(60s);
+    const auto [plain_out, plain] = run_with(std::nullopt);
+
+    CHECK(span(timed, T::content_export).state == State::measured);
+    CHECK(span(timed, T::content_export).duration == std::chrono::nanoseconds{60s});
+    CHECK(span(plain, T::content_export).state == State::not_reported);
+    CHECK(span(plain, T::restore).duration == std::chrono::nanoseconds{123s});
+    CHECK(span(timed, T::restore).duration == std::chrono::nanoseconds{63s});
+    CHECK(*span(plain, T::recovery).duration - *span(timed, T::recovery).duration ==
+          std::chrono::nanoseconds{60s});
+    CHECK(span(timed, T::verify).duration == span(plain, T::verify).duration);
+    CHECK_THAT(plain_out, ContainsSubstring("1 of 1 item(s) restored in 0:02:03\n"));
+    CHECK_THAT(out, ContainsSubstring("1 of 1 item(s) restored in 0:01:03\n"));
+
+    // Exports the connector says took longer than the whole restore are held
+    // to it: restore is 0, never a clock that went back.
+    const rp::timing::RunTimings too_long = run_with(500s).second;
+    CHECK(span(too_long, T::restore).state == State::measured);
+    CHECK(span(too_long, T::restore).duration == std::chrono::nanoseconds{0});
+}
+
 TEST_CASE("restore: an item missing or not matching is status fail, exit 5",
           "[restore_command][checker]")
 {
@@ -2536,10 +2584,8 @@ constexpr SpanExpect stopped(int ticks)
 }
 
 // Every span, listed as the eleven before W6.3: content_export (after
-// restore_wait) is derived, since no run here asks for content. It is
-// reported, as none, wherever restore_submit was reported or measured, and
-// not run where restore_submit wasn't (docs/decisions.md 2026-10-14, W6.3
-// point 7).
+// restore_wait) is not run in every one, since no run here asks for content
+// (docs/decisions.md 2026-10-14, W6.3 point 7: null when nothing was asked).
 struct SpansExpect {
     SpansExpect(SpanExpect lookup, SpanExpect clean_before, SpanExpect select, SpanExpect snapshot,
                 SpanExpect restore, SpanExpect submit, SpanExpect wait, SpanExpect verify,
@@ -2551,7 +2597,7 @@ struct SpansExpect {
             restore,
             submit,
             wait,
-            submit.note == kNotRun.note ? kNotRun : kNotReported,
+            kNotRun,
             verify,
             recovery,
             clean_after,
@@ -2905,7 +2951,7 @@ TEST_CASE("restore: step timings: a clock that goes back makes no duration up, a
                                      "restore               -     clock went back\n"
                                      "restore_submit        -     not reported\n"
                                      "restore_wait          -     not reported\n"
-                                     "content_export        -     not reported\n"
+                                     "content_export        -     not run\n"
                                      "verify                -     clock went back\n"
                                      "recovery              -     clock went back\n"
                                      "cleanup_after         -     clock went back\n"
@@ -3466,7 +3512,7 @@ TEST_CASE("restore through veeam_m365: a canary restored on the recorded run, ex
           "restore               0:00:05.000\n"
           "restore_submit        0:00:00.000\n"
           "restore_wait          0:00:05.000\n"
-          "content_export        -            not reported\n"
+          "content_export        -            not run\n"
           "verify                0:00:00.000\n"
           "recovery              0:00:05.000\n"
           "cleanup_after         0:00:00.000\n"
@@ -3474,12 +3520,12 @@ TEST_CASE("restore through veeam_m365: a canary restored on the recorded run, ex
     // W3.5: a pass leaves no span stopped, open or unmeasured; the connector
     // reported its session's submit and wait on the rig's clock, which moves
     // only on the poll's waits. W6.3: no content was asked, so content_export
-    // alone is not reported.
+    // alone is not run.
     REQUIRE(real.timings.size() == 1);
     for (std::size_t i = 0; i < real.timings[0].spans.size(); ++i) {
         CAPTURE(i);
         CHECK(real.timings[0].spans[i].state ==
-              (static_cast<rp::timing::Span>(i) == rp::timing::Span::content_export ? rp::timing::SpanState::not_reported
+              (static_cast<rp::timing::Span>(i) == rp::timing::Span::content_export ? rp::timing::SpanState::not_run
                                                             : rp::timing::SpanState::measured));
     }
     CHECK(real.rig.restore_posts().size() == 1);

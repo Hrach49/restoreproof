@@ -1060,6 +1060,19 @@ VeeamClient::ExportAnswer VeeamClient::export_document(const std::string& path,
     }
 
     out.status = response.status;
+    // An empty 401 is a token Veeam no longer accepts (a REST restart kills
+    // them all). The export is not resent, but the token is dropped, unless
+    // another caller has replaced it meanwhile, so the next request signs in
+    // rather than carry it to its own 401.
+    if (response.status == 401 && is_blank(response.body)) {
+        const std::lock_guard lock(mutex_);
+        if (generation_ == token.generation) {
+            access_token_.clear();
+            refresh_token_.clear();
+            ++generation_;
+            log_debug(what + ": HTTP 401; the token is dropped for the next request");
+        }
+    }
     if (const auto it = response.headers.find("Content-Type"); it != response.headers.end()) {
         out.content_type = it->second;
     }

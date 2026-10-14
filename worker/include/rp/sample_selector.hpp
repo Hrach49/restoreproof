@@ -67,8 +67,8 @@ struct SampleRecord {
     // W6.2: whether the run had canaries (a manifest). Without, the whole
     // sample is random items, manifest_sha256 is empty and each type's
     // rotation (cursor, cursor_next, canary_wanted, canary_ids) is 0 and empty
-    // and not written.
-    bool canaries = true;
+    // and not written. False by default, as a run is (W6.3 review, finding 8).
+    bool canaries = false;
     std::string manifest_sha256;
     KindRecord mail;
     KindRecord sharepoint;
@@ -85,6 +85,7 @@ struct SampleRecord {
 // their names are of containers the run didn't test and stay out of the result.
 // W6.2: without canaries "manifest_sha256" and each type's "canary" object
 // are left out (never null): facts of a rotation the run didn't have.
+// Throws std::logic_error for `canaries` with an empty manifest_sha256.
 nlohmann::json to_json(const SampleRecord& record);
 
 struct Selection {
@@ -144,7 +145,8 @@ std::vector<std::string> random_key(const connector::OneDriveSelector& file);
 // sharepoint, onedrive): "the <kind> cursor must be below <n>, the manifest's
 // <kind> canaries", or "the <kind> cursor must be 0: the manifest has no <kind>
 // canaries"; nullopt when every cursor is in range. A null manifest (W6.2) has
-// no canaries of any type, so every cursor must be 0. The one cursor rule:
+// no canaries of any type, so every cursor must be 0 ("the <kind> cursor must
+// be 0: the run has no canaries"). The one cursor rule:
 // select throws std::invalid_argument("sampler: " + it), and `rpworker
 // restore` says it as a usage error before any Veeam call.
 std::optional<std::string> cursor_problem(const CanaryManifest* manifest,

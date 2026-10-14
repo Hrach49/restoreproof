@@ -2343,6 +2343,71 @@ TEST_CASE("a document export with a token due for renewal renews it first", "[ve
     CHECK(bearer(lab.http.requests().back()) == "Bearer access-refresh-1");
 }
 
+TEST_CASE("a document export's empty 401 drops its token, so the next export signs in afresh",
+          "[veeam][w6.3]")
+{
+    // A REST service restart kills every token (veeam-notes §1.3): the export
+    // that met it is not resent, but the dead token is not handed to the
+    // next one either.
+    Lab lab;
+    int posts = 0;
+    lab.http.on(HttpMethod::post, kBase + kExportPath, [&posts](const HttpRequest& request) {
+        ++posts;
+        return bearer(request) == "Bearer access-login-1"
+                   ? load_fixture("veeam", "api-invalid-token-401")
+                   : octet_stream(kExportBytes);
+    });
+    auto client = lab.make_client();
+
+    CHECK(client->export_document(kExportPath, 60s, 1000).status == 401);
+    const rp::VeeamClient::ExportAnswer second = client->export_document(kExportPath, 60s, 1000);
+
+    CHECK(second.status == 200);
+    CHECK(second.body == kExportBytes);
+    CHECK(posts == 2);
+    CHECK(lab.grants() == std::vector<std::string>{"password", "password"});
+    CHECK(bearer(lab.http.requests().back()) == "Bearer access-login-2");
+}
+
+TEST_CASE("a document export's 401 with a message keeps the token: signing in changes nothing",
+          "[veeam][w6.3]")
+{
+    Lab lab;
+    lab.http.on(HttpMethod::post, kBase + kExportPath,
+                {make_response(401, R"({"message":"Access denied.","errorCode":"Unauthorized"})"),
+                 octet_stream(kExportBytes)});
+    auto client = lab.make_client();
+
+    CHECK(client->export_document(kExportPath, 60s, 1000).status == 401);
+    CHECK(client->export_document(kExportPath, 60s, 1000).status == 200);
+
+    CHECK(lab.grants() == std::vector<std::string>{"password"});
+}
+
+TEST_CASE("a document export's empty 401 for a token already replaced leaves the newer one",
+          "[veeam][w6.3]")
+{
+    // Another caller signed in while the export was out: its token is newer,
+    // and the export's 401 says nothing about it.
+    Lab lab;
+    rp::VeeamClient* client_ptr = nullptr;
+    lab.http.on(HttpMethod::post, kBase + kExportPath, [&client_ptr](const HttpRequest& request) {
+        if (bearer(request) == "Bearer access-login-1") {
+            client_ptr->login();
+            return load_fixture("veeam", "api-invalid-token-401");
+        }
+        return octet_stream(kExportBytes);
+    });
+    auto client = lab.make_client();
+    client_ptr = client.get();
+
+    CHECK(client->export_document(kExportPath, 60s, 1000).status == 401);
+    CHECK(client->export_document(kExportPath, 60s, 1000).status == 200);
+
+    CHECK(lab.grants() == std::vector<std::string>{"password", "password"});
+    CHECK(bearer(lab.http.requests().back()) == "Bearer access-login-2");
+}
+
 TEST_CASE("stop_session refuses an ID that isn't a UUID before any request", "[veeam][w2.5]")
 {
     const std::string id = GENERATE(as<std::string>{}, "", "x", kSessionId + "/Stop",

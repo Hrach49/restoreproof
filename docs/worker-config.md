@@ -1193,8 +1193,8 @@ What stdout shows differs from `restore` in two places only:
   content (W6.3: every random file with a content rule), one more line: `content exports: <n> of
   <m> file(s) exported from the backup`, and ` (<word> <k>, ...)` when some weren't, by the words
   of `docs/verification.md` ("A random file's content against the backup's copy"); a file whose
-  export gave nothing is checked by name and size, and the status's `content_export` warning
-  names it on stderr.
+  export gave nothing is checked by name, and by size unless it is an Office document, and the
+  status's `content_export` warning names it on stderr.
 - **After the check**, one table, one row per sampled item, in place of `restore`'s check
   rows:
 

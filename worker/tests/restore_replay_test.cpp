@@ -614,7 +614,7 @@ TEST_CASE("replay of the W3.4 live run: the clean before finds the targets empty
                  "restore               " + kW34Total + ".000",
                  "restore_submit        0:00:00.000",
                  "restore_wait          " + kW34Total + ".000",
-                 "content_export        -            not reported",
+                 "content_export        -            not run",
                  "verify                0:00:00.000",
                  "recovery              " + kW34Total + ".000",
                  "cleanup_after         0:00:00.000",

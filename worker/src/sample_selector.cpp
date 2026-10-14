@@ -36,14 +36,18 @@ std::string kind_name(ItemKind kind)
     return std::string{connector::to_string(kind)};
 }
 
-// Why one type's cursor is out of the manifest's range, or nullopt.
+// Why one type's cursor is out of the manifest's range, or nullopt. Without
+// a manifest the run has no canaries at all, and says so.
 std::optional<std::string> kind_cursor_problem(ItemKind kind, std::uint32_t cursor,
-                                               std::size_t canaries)
+                                               std::size_t canaries, bool manifest)
 {
     if (canaries == 0 ? cursor == 0 : cursor < canaries) {
         return std::nullopt;
     }
     const std::string k = kind_name(kind);
+    if (!manifest) {
+        return "the " + k + " cursor must be 0: the run has no canaries";
+    }
     return "the " + k + " cursor must be " +
            (canaries == 0 ? "0: the manifest has no " + k + " canaries"
                           : "below " + std::to_string(canaries) + ", the manifest's " + k +
@@ -460,13 +464,15 @@ std::optional<std::string> cursor_problem(const CanaryManifest* manifest,
     const std::size_t mail = manifest == nullptr ? 0 : manifest->mail.size();
     const std::size_t sharepoint = manifest == nullptr ? 0 : manifest->sharepoint.size();
     const std::size_t onedrive = manifest == nullptr ? 0 : manifest->onedrive.size();
-    if (auto problem = kind_cursor_problem(ItemKind::mail, cursor.mail, mail)) {
+    const bool known = manifest != nullptr;
+    if (auto problem = kind_cursor_problem(ItemKind::mail, cursor.mail, mail, known)) {
         return problem;
     }
-    if (auto problem = kind_cursor_problem(ItemKind::sharepoint, cursor.sharepoint, sharepoint)) {
+    if (auto problem =
+            kind_cursor_problem(ItemKind::sharepoint, cursor.sharepoint, sharepoint, known)) {
         return problem;
     }
-    return kind_cursor_problem(ItemKind::onedrive, cursor.onedrive, onedrive);
+    return kind_cursor_problem(ItemKind::onedrive, cursor.onedrive, onedrive, known);
 }
 
 void check_manifest_tenant(const CanaryManifest& manifest, const std::string& graph_tenant_id)
@@ -505,6 +511,10 @@ nlohmann::json to_json(const SampleRecord& record)
         {"onedrive", kind_json(record.onedrive, record.canaries)},
     };
     if (record.canaries) {
+        // The schema's hash, never an empty one (W6.3 review, finding 8).
+        if (record.manifest_sha256.empty()) {
+            throw std::logic_error("sample: canaries without a manifest hash");
+        }
         out["manifest_sha256"] = record.manifest_sha256;
     }
     return out;

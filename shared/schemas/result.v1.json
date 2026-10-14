@@ -910,7 +910,7 @@
           ]
         }
       },
-      "description": "One sampled item's expectation. A key whose value isn't known is left out, never null. manifest: a canary, with the manifest's hash and its rule; fields: a random mail; metadata: a random file by its name and the size the backup lists; backup_content (W6.3): a random file whose bytes the backup exported before the restore, with their hash by its rule (bytes, with the export's size, or office-v1, without one). export: what became of a random file's export from the backup, on a random file alone; a file whose export gave nothing is metadata.",
+      "description": "One sampled item's expectation. A key whose value isn't known is left out, never null. manifest: a canary, with the manifest's hash and its rule; fields: a random mail; metadata: a random file by its name and the size the backup lists; backup_content (W6.3): a random file whose bytes the backup exported before the restore, with their hash by its rule (bytes, with the export's size, or office-v1, without one). export: what became of a random file's export from the backup, on a random file alone; a file whose export gave nothing is metadata, and one whose export is exported is backup_content.",
       "allOf": [
         {
           "if": {
@@ -1227,6 +1227,25 @@
             "properties": {
               "export": {
                 "const": "exported"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "export": {
+                "const": "exported"
+              }
+            },
+            "required": [
+              "export"
+            ]
+          },
+          "then": {
+            "properties": {
+              "expected_kind": {
+                "const": "backup_content"
               }
             }
           }

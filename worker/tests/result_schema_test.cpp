@@ -516,9 +516,9 @@ TEST_CASE("the shared result documents validate as they say", "[result_schema]")
     const json& cases = cases_file().at("cases");
     REQUIRE(cases_file().at("format") == std::string{rp::kResultFormat});
     // The file can't shrink unnoticed.
-    REQUIRE(cases.size() == 229);
+    REQUIRE(cases.size() == 230);
 
-    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{229}));
+    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{230}));
     const json& entry = cases.at(i);
     const std::string name = entry.at("name");
     INFO(name);

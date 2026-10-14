@@ -296,6 +296,9 @@ struct FakeConnector {
     std::function<std::string(const std::string& name, std::string bytes)> export_bytes;
     // A connector that ignores want_content: no export, no word.
     bool ignore_content = false;
+    // The exports' time the fake reports when it exported anything; none
+    // (not reported) unless a test sets one.
+    std::optional<std::chrono::nanoseconds> content_time;
 };
 
 // The size the backup holds of a random file: its candidate's, else the
@@ -407,6 +410,7 @@ public:
         connector::RestoreResult result = fake_.answer(spec);
         if (!content.empty() && result.content.empty()) {
             result.content = std::move(content);
+            result.content_time = fake_.content_time;
         }
         return result;
     }

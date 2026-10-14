@@ -3292,6 +3292,25 @@
       ]
     },
     {
+      "name": "expected-metadata-export-exported",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/3/expected_kind",
+          "value": "metadata"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256_rule"
+        }
+      ]
+    },
+    {
       "name": "expected-metadata-with-a-hash-and-export",
       "valid": false,
       "patch": [
@@ -3372,7 +3391,7 @@
             "indexes": [
               3
             ],
-            "message": "1 of 2 file(s) couldn't be exported from the backup and were checked by name and size alone (refused 1)"
+            "message": "1 of 2 file(s) couldn't be compared with the backup's own copy (refused 1): 1 checked by name and size alone, 0 by name alone"
           }
         }
       ]

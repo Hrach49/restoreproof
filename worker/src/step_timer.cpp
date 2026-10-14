@@ -140,6 +140,17 @@ bool StepTimer::report(Span span, std::optional<nanoseconds> duration) noexcept
     return true;
 }
 
+bool StepTimer::delay_start(Span span, nanoseconds by) noexcept
+{
+    const std::size_t i = index_of(span);
+    if (i == kSpanCount || entries_[i].timing.state != SpanState::open ||
+        by < nanoseconds{0}) {
+        return false;
+    }
+    entries_[i].started += by;
+    return true;
+}
+
 void StepTimer::stop_open(std::optional<TimePoint> at, std::optional<Span> keep) noexcept
 {
     for (std::size_t i = 0; i < kSpanCount; ++i) {

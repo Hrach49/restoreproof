@@ -65,13 +65,18 @@ There are four kinds, one per item, never mixed, and no "unknown" kind:
   minutes for all of a run's exports, the bytes at most 64 MiB, the read back's own cap). The
   answer must be 200 `application/octet-stream` with as many bytes as Veeam listed. The bytes go
   to the pipeline's `ContentHasher`, which keeps their SHA-256 (and `office-v1` for a docx or
-  xlsx) and drops them; nothing of a file's bytes is written anywhere, a recording keeps their
-  digest.
+  xlsx) and drops them; nothing of a file's bytes is written anywhere: `--record` keeps an
+  export's answer as its size and SHA-256 alone (`veeam_recorded_body`, the W6.3 review's finding
+  1), never as content. An empty 401 is not resent, but the token it was sent with is dropped, so
+  the next request signs in afresh rather than carry a token a Veeam REST restart killed to every
+  export left (finding 5).
 - **The words.** Each random file's expectation carries `export`: `exported`, `no_rule`,
   `refused` (any other answer, a 401 too), `no_answer` (a transport failure or the timeout),
   `size_mismatch`, `over_cap`, `invalid_package` (an exported docx or xlsx `office-v1` refused),
   `not_in_backup` (the restore point doesn't hold the item: never asked), `budget` (the run's 15
-  minutes were spent: never asked).
+  minutes were spent: never asked). Only an `exported` file with its digest is `backup_content`,
+  and a `metadata` file is never `exported`: the C++ consistency check and the schema both refuse
+  it (finding 6).
 - **The raise.** Once `restore_sample` returns, and before anything is read back,
   `verification::add_backup_content` raises each exported file with its digest to
   `backup_content`; every other random file stays `metadata` with its word, checked by its name
@@ -85,7 +90,15 @@ There are four kinds, one per item, never mixed, and no "unknown" kind:
   `fail`. When an export gives nothing, the file is `metadata`, and the `content_export` warning
   names it; when every export failed, a run whose names and sizes are right is `pass` with
   `verified.backup_content` 0 and the warning, so the result never claims the content was
-  checked.
+  checked. The warning counts the files whose size was compared apart from those checked by name
+  alone (a docx or xlsx carries no size), and names an `invalid_package` file by that word: its
+  export worked, its package didn't (finding 4).
+- **The time.** The exports run inside `restore_sample` but restore nothing: their time
+  (`RestoreResult::content_time`) is the span `content_export`, and is left out of `restore`,
+  `recovery` and the restore line's elapsed time (`StepTimer::delay_start`, held to the restore's
+  own span), so the recovery time a report prints never holds them (finding 2). A run that asked
+  for no export has `content_export` not run (`null`); one that asked and has no time from the
+  connector, or that stopped after its restore began, has it not reported.
 
 ### The rule for the Office files SharePoint rewrites
 
@@ -461,7 +474,7 @@ item `indexes` it concerns, in this order:
 | `duplicate` | items more than one of this run's copies matched (the newest was compared) | `<n> item(s) had more than one restored copy; the newest was checked` |
 | `shortfall` | per type and half that took fewer than it wanted | `<kind> <canary\|random>: <taken> of <wanted>` |
 | `stale_copies` | earlier runs' copies the check ignored | `<n> copies from earlier runs in the restore targets were ignored (mail <x>, sharepoint <y>, onedrive <z>)` |
-| `content_export` | W6.3: random files whose export from the backup was asked for and gave nothing (`refused`, `no_answer`, `size_mismatch`, `over_cap`, `invalid_package`, `budget`; never `no_rule` or `not_in_backup`), its indexes those files | `<n> of <m> file(s) couldn't be exported from the backup and were checked by name and size alone (<word> <k>, ...)` |
+| `content_export` | W6.3: random files whose export from the backup was asked for and that couldn't be compared with the backup's copy (`refused`, `no_answer`, `size_mismatch`, `over_cap`, `budget`, and `invalid_package`, an exported docx or xlsx `office-v1` refused; never `no_rule` or `not_in_backup`), its indexes those files | `<n> of <m> file(s) couldn't be compared with the backup's own copy (<word> <k>, ...): <s> checked by name and size alone, <t> by name alone` |
 
 A duplicate is a warning, never a status: the newest copy matched, so the backup delivered the
 data, and a second copy points at a double write, not at lost data. A shortfall never changes
@@ -734,7 +747,7 @@ the result invalid.
 | `check` | `verification::to_json(CheckResult)` (W3.2, above) | the check didn't run |
 | `status` | `verification::to_json(RunVerdict)` (W3.3, above) | never: a run without a verdict has no result |
 | `cleanup` | `to_json(RunCleanup)` (W3.4, above) | the run stopped before the clean before; `cleanup.after` when no clean after ran |
-| `timings` | `timing::to_json(RunTimings)` (W3.5): `{"spans": {...}}`, all twelve (W6.3's `content_export`, the exports inside `restore`, `{"note": "not_reported"}` when none was asked) | never; a span that didn't run is `null` |
+| `timings` | `timing::to_json(RunTimings)` (W3.5): `{"spans": {...}}`, all twelve (W6.3's `content_export`, the exports' time, left out of `restore` and `recovery`; `null` when none was asked, `{"note": "not_reported"}` when asked and not measured) | never; a span that didn't run is `null` |
 | `attachments` | `to_json(std::vector<Attachment>)` (W4.2, "The run folder" below): the run folder's files that the result covers (never `result.json` or `signature.json`), `[{name, sha256, size_bytes}]`, sorted by name | no run folder is written (`restore`, `test` without `--evidence`), and in the result as it is first validated |
 | `screenshot` | `to_json(Screenshot)` (W4.2): `{"state": "captured"}` or `{"state": "unavailable", "reason": <code>}` | as `attachments` |
 
@@ -2389,7 +2402,7 @@ at all is `period: no run in the period`; nothing is written for either.
 | Summary | the client and MSP names, the period, the overall line (in the pass colour only when a test ran and none failed or errored; a month without a test is grey), tests run, average and maximum recovery time, scheduled tests that did not run, scheduled tests with no result, the backup source, restore points covered, the meaning of the three words, C6.5's sentence ("It records what each test listed here found for the items it sampled, on the dates shown.") | `client.name`, `msp.name`; the month's runs; `recovery_ms` and the distinct `restore_point_at` values over the `pass` and `fail` runs alone (an `error` is a test that could not run: its stopped span and its restore point are no part of either, and the Summary says so); `connector.type` worded (`veeam_m365` is "Veeam Backup for Microsoft 365") |
 | Test log | one row per run, oldest first: date, restore point, items as `mail / SP / OD`, result (`pass`, `fail`, `error`, "did not run", "no result yet"), recovery time, the run id's first eight hex digits | the run's date as above, `restore_point_at`, `test_item` rows grouped by `type`, `state`, `recovery_ms`, `id` |
 | Failures | one block per `fail` or `error` run: the date, the result, for an `error` its code and message, the items that did not match (type, name, `missing` / `mismatch` / `not checked`, the `reason` word), "Every item that was checked matched." for a run with items and none unmatched, "No item was checked." for a run with none, and "A later test of the same plan passed on <date>." (the nearest later `pass` of the run's own plan in the month), else "No later test of the same plan passed in this period." | `error_code`, `error_message`; `test_item` rows with `match` not true: `match` false is `missing` when `found` is false and `mismatch` otherwise; `match` unknown is `not checked` whatever `found` says (the Worker stores an item whose target it could not read as not found) |
-| Method | the sizes of the plans that have a result in the period, canary plus random selection, the three restore targets by name, the comparison fields (a random mail's sender when the backup lists one, a random file's size unless it is an Office document), in how many tests the removal from the target did not complete (`cleanup_ok` false; nothing when none), and "Verification levels covered: 1, 2, 3" when a test passed or failed, with "; level 4 partially (files opened and read via Microsoft Graph)" only when such a test sampled a file; a month in which none did says no level was covered | `test_plan` sizes of the runs' plans; the month's runs; fixed text |
+| Method | the sizes of the plans that have a result in the period, the sample (random items from the backup's listing, and canaries for a test set up with them: W6.2 made them an opt-in, the W6.3 review's finding 3), the three restore targets by name, the comparison (a canary by its SHA-256; a random file by the SHA-256 of the copy the backup gave before the restore, `office-v1` for a Word or Excel document, else by its name and its size unless it is an Office document; a random mail by its subject, received time and sender when the backup lists one), in how many tests the removal from the target did not complete (`cleanup_ok` false; nothing when none), and "Verification levels covered: 1, 2, 3" when a test passed or failed, with "; level 4 partially (files opened and read via Microsoft Graph)" only when such a test sampled a file; a month in which none did says no level was covered | `test_plan` sizes of the runs' plans; the month's runs; fixed text |
 | Integrity | the content hash, the file-hash sentence, the generation time, the Workers of the month's runs (name, id, `key_id` as the public key's fingerprint), every run's id with its `bundle_sha256` and "timestamped <tsa_time>" or "not timestamped" | `worker`, `test_run` |
 | Framework mapping | the sentence above the table (what the table is: a description of this evidence, not an assessment of the control; a fail or error shows nothing for it), then the four controls by identifier and their own name (the SOC 2 row by the criteria's own words, never a gloss), each with what a test marked pass shows and what the report does not look at (C6.7, "The framework mapping" below) | `app/report/frameworks.py` |
 

@@ -208,6 +208,10 @@ const char* inconsistency(const ExpectedItem& item, std::size_t position)
             mail != (item.expected_kind == ExpectedKind::fields)) {
             return "is fields or metadata but not a random item of its type without a hash";
         }
+        // An export that gave its bytes raised the file to backup_content.
+        if (item.export_word == "exported") {
+            return "is metadata but its export gave its bytes";
+        }
         return nullptr;
     case ExpectedKind::backup_content: {
         // bytes with the export's size, office-v1 without one.
@@ -367,6 +371,10 @@ json to_json(const ExpectedSet& set)
         {"items", std::move(items)},
     };
     if (set.canaries) {
+        // The schema's hash, never an empty one (W6.3 review, finding 8).
+        if (set.manifest_sha256.empty()) {
+            throw std::logic_error("expected set: canaries without a manifest hash");
+        }
         out["manifest_sha256"] = set.manifest_sha256;
     }
     return out;

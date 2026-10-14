@@ -4039,8 +4039,9 @@ TEST_CASE("test --json: an export that gives nothing leaves its file metadata wi
                                           "backup (" + word + " 1)\n"));
     CHECK_THAT(run.out, ContainsSubstring("\nstatus pass: 4 of 4 item(s) verified: manifest 0, "
                                           "fields 0, metadata 2, backup_content 2\n"));
-    CHECK(run.err == "warning: content_export: 1 of 3 file(s) couldn't be exported from the "
-                     "backup and were checked by name and size alone (" + word + " 1)\n");
+    CHECK(run.err == "warning: content_export: 1 of 3 file(s) couldn't be compared with the "
+                     "backup's own copy (" + word + " 1): 1 checked by name and size alone, 0 by "
+                     "name alone\n");
     const json result = lab.result();
     const json pdf = item_named(result, "plan.pdf");
     CHECK(pdf.at("expected_kind") == "metadata");
@@ -4051,6 +4052,39 @@ TEST_CASE("test --json: an export that gives nothing leaves its file metadata wi
     REQUIRE(warnings.size() == 1);
     CHECK(warnings[0].at("code") == "content_export");
     CHECK(warnings[0].at("indexes") == json::array({pdf.at("index")}));
+}
+
+TEST_CASE("test --json: the content_export warning says which files had their size compared and "
+          "names an exported package office-v1 refused as such",
+          "[test_command][w6.3]")
+{
+    // An Office file has no size expectation (SharePoint rewrites it), and an
+    // invalid_package file was exported: the warning claims no size check it
+    // didn't make and no export that didn't happen (W6.3 review, finding 4).
+    TestLab lab;
+    four_random_files(lab);
+    lab.fake.export_outcome = [](const std::string& name)
+        -> std::optional<rp::connector::ContentOutcome> {
+        return name == "plan.pdf" ? std::optional{rp::connector::ContentOutcome::refused}
+                                  : std::nullopt;
+    };
+    lab.fake.export_bytes = [](const std::string& name, std::string bytes) {
+        return name == "notes.docx" ? std::string{"not a package"} : bytes;
+    };
+    Args args = kFourFiles;
+    const std::string json_arg = lab.json_arg(); // Args holds views: the path must outlive it
+    args.insert(args.end(), {"--json", json_arg});
+
+    const Run run = lab.run(args);
+
+    INFO(run.out);
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err == "warning: content_export: 2 of 3 file(s) couldn't be compared with the "
+                     "backup's own copy (refused 1, invalid_package 1): 1 checked by name and "
+                     "size alone, 1 by name alone\n");
+    const json result = lab.result();
+    CHECK(item_named(result, "notes.docx").at("export") == "invalid_package");
+    CHECK_FALSE(item_named(result, "notes.docx").contains("size_bytes"));
 }
 
 TEST_CASE("test --json: a restored copy whose bytes aren't the backup's is a mismatch on "

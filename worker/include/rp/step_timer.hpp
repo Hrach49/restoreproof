@@ -107,6 +107,11 @@ public:
     // unless not_run.
     bool report(Span span, std::optional<std::chrono::nanoseconds> duration) noexcept;
 
+    // An open span's start moved `by` later (0 or more): time inside it that
+    // isn't its own, measured elsewhere (W6.3: the content exports inside
+    // `restore` and `recovery`). False unless open, or for a negative `by`.
+    bool delay_start(Span span, std::chrono::nanoseconds by) noexcept;
+
     // Every open span but `keep` ends `stopped` at `at` (clock_backwards when
     // `at` is before its start); for nullopt each stays open for good, as
     // end's. A span whose end reading failed is left as it is.

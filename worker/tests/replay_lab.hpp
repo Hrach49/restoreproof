@@ -9,6 +9,7 @@
 // with secrets of its own (`load_secrets`). No Catch2 assertion in a fake's
 // handler: they run on the clients' threads.
 
+#include "../src/text_util.hpp"
 #include "fake_http_client.hpp"
 #include "graph_lab.hpp"
 #include "test_support.hpp"
@@ -168,9 +169,7 @@ struct Replay {
         // W6.2: the manifest at canaries\<tenant>.json beside the config; the
         // live runs' command line opts in with --canary-cursor (run below).
         std::filesystem::create_directories(temp.path() / "canaries");
-        temp.write(std::filesystem::path("canaries") /
-                       (lab_config().at("graph_tenant_id").get<std::string>() + ".json"),
-                   read_file(lab_dir() / "seed-manifest.json"));
+        copy_manifest_for(lab_config().at("graph_tenant_id").get<std::string>());
         auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(log_stream);
         logger = std::make_shared<spdlog::logger>("restore_replay_test", sink);
         logger->set_pattern("[%l] %v");
@@ -356,9 +355,11 @@ struct Replay {
     }
 
     // W6.2: the lab manifest also under another tenant's name.
+    // Named as the pipeline names it, the tenant lowered: a tenant in upper
+    // case finds its file on a case-sensitive volume too.
     void copy_manifest_for(const std::string& tenant) const
     {
-        temp.write(std::filesystem::path("canaries") / (tenant + ".json"),
+        temp.write(std::filesystem::path("canaries") / (rp::ascii_lower(tenant) + ".json"),
                    read_file(lab_dir() / "seed-manifest.json"));
     }
 

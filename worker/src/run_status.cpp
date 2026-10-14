@@ -50,8 +50,12 @@ constexpr std::string_view kBackupItem = "backup_item";
 constexpr std::string_view kDuplicate = "duplicate";
 constexpr std::string_view kShortfall = "shortfall";
 constexpr std::string_view kStaleCopies = "stale_copies";
-constexpr std::array<std::string_view, 5> kWarningCodes{kBackupSession, kBackupItem, kDuplicate,
-                                                        kShortfall, kStaleCopies};
+// W6.3: files that couldn't be compared with the backup's copy, checked by
+// name and, where they carry one, size alone (docs/decisions.md 2026-10-14,
+// W6.3 and W6.2, point 5, and its code review's finding 4).
+constexpr std::string_view kContentExport = "content_export";
+constexpr std::array<std::string_view, 6> kWarningCodes{kBackupSession, kBackupItem, kDuplicate,
+                                                        kShortfall, kStaleCopies, kContentExport};
 
 constexpr int kNoSeverity = -1;
 
@@ -193,6 +197,7 @@ bool known(ExpectedKind kind) noexcept
     case ExpectedKind::manifest:
     case ExpectedKind::fields:
     case ExpectedKind::metadata:
+    case ExpectedKind::backup_content:
         return true;
     }
     return false;
@@ -476,6 +481,43 @@ std::vector<StatusWarning> warnings_of(const RunFacts& facts,
                  {}});
         }
     }
+    // W6.3: the files an export was asked for and that couldn't be compared
+    // with the backup's copy (no bytes, or a package office-v1 refused), so
+    // they were checked by name, and by size where they carry one (an Office
+    // file never does); counted by word in the words' order.
+    if (facts.expected) {
+        std::vector<std::size_t> failed;
+        std::size_t asked = 0;
+        std::size_t sized = 0;
+        std::map<std::string_view, std::size_t> by_word;
+        for (const ExpectedItem& item : facts.expected->items) {
+            const std::string& word = item.export_word;
+            if (word.empty() || word == "no_rule" || word == "not_in_backup") {
+                continue;
+            }
+            ++asked;
+            if (is_failed_export(word)) {
+                failed.push_back(item.index);
+                ++by_word[word];
+                sized += item.file && item.file->size_bytes ? 1 : 0;
+            }
+        }
+        if (!failed.empty()) {
+            std::string counts;
+            for (const std::string_view word : export_words()) {
+                if (const auto it = by_word.find(word); it != by_word.end()) {
+                    counts += (counts.empty() ? "" : ", ") + std::string{word} + " " +
+                              std::to_string(it->second);
+                }
+            }
+            warnings.push_back(
+                {std::string{kContentExport},
+                 std::format("{} of {} file(s) couldn't be compared with the backup's own "
+                             "copy ({}): {} checked by name and size alone, {} by name alone",
+                             failed.size(), asked, counts, sized, failed.size() - sized),
+                 std::move(failed)});
+        }
+    }
     return warnings;
 }
 
@@ -641,7 +683,8 @@ std::vector<Shortfall> shortfalls_of(const sampling::SampleRecord& record)
         {ItemKind::sharepoint, &record.sharepoint},
         {ItemKind::onedrive, &record.onedrive}};
     for (const auto& [kind, k] : kinds) {
-        const int canary_wanted = (k->requested + 1) / 2;
+        // W6.2: a run without canaries wanted none.
+        const int canary_wanted = record.canaries ? (k->requested + 1) / 2 : 0;
         const int canary_taken = static_cast<int>(k->canary_ids.size());
         if (canary_taken < canary_wanted) {
             shortfalls.push_back({kind, ItemSource::canary, canary_wanted, canary_taken});
@@ -700,6 +743,9 @@ RunVerdict decide_status(const RunFacts& facts)
             case ExpectedKind::metadata:
                 ++verdict.verified_metadata;
                 break;
+            case ExpectedKind::backup_content:
+                ++verdict.verified_backup_content;
+                break;
             }
             break;
         case Verdict::failed:
@@ -744,9 +790,10 @@ RunVerdict decide_status(const RunFacts& facts)
     }
     // Row 8.
     verdict.status = RunStatus::pass;
-    verdict.message = std::format("{} of {} item(s) verified: manifest {}, fields {}, metadata {}",
-                                  n, n, verdict.verified_manifest, verdict.verified_fields,
-                                  verdict.verified_metadata);
+    verdict.message = std::format(
+        "{} of {} item(s) verified: manifest {}, fields {}, metadata {}, backup_content {}", n, n,
+        verdict.verified_manifest, verdict.verified_fields, verdict.verified_metadata,
+        verdict.verified_backup_content);
     return verdict;
 }
 
@@ -897,7 +944,8 @@ json to_json(const RunVerdict& verdict)
                      {"unchecked", verdict.unchecked.size()}};
     out["verified"] = {{"manifest", verdict.verified_manifest},
                        {"fields", verdict.verified_fields},
-                       {"metadata", verdict.verified_metadata}};
+                       {"metadata", verdict.verified_metadata},
+                       {"backup_content", verdict.verified_backup_content}};
     out["failed_items"] = verdict.failed;
     json unchecked = json::array();
     for (const UncheckedItem& item : verdict.unchecked) {

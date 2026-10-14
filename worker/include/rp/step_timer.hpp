@@ -31,12 +31,15 @@ enum class Span {
     restore,
     restore_submit,
     restore_wait,
+    // W6.3: the content exports inside `restore`, as the connector measured
+    // them (RestoreResult::content_time); not reported when none was asked.
+    content_export,
     verify,
     recovery,
     cleanup_after,
     total
 };
-inline constexpr std::size_t kSpanCount = 11;
+inline constexpr std::size_t kSpanCount = 12;
 
 // "restore_point_lookup", ...; "unknown" for a value outside the enum.
 std::string_view to_string(Span span) noexcept;
@@ -103,6 +106,11 @@ public:
     // not_reported for nullopt, clock_backwards for a negative one; false
     // unless not_run.
     bool report(Span span, std::optional<std::chrono::nanoseconds> duration) noexcept;
+
+    // An open span's start moved `by` later (0 or more): time inside it that
+    // isn't its own, measured elsewhere (W6.3: the content exports inside
+    // `restore` and `recovery`). False unless open, or for a negative `by`.
+    bool delay_start(Span span, std::chrono::nanoseconds by) noexcept;
 
     // Every open span but `keep` ends `stopped` at `at` (clock_backwards when
     // `at` is before its start); for nullopt each stays open for good, as

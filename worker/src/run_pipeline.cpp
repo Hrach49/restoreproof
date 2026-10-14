@@ -1,5 +1,6 @@
 #include "run_pipeline.hpp"
 
+#include <rp/backup_content.hpp>
 #include <rp/canary_manifest.hpp>
 #include <rp/cert_export.hpp>
 #include <rp/checker.hpp>
@@ -69,7 +70,8 @@ using connector::ItemKind;
 
 constexpr std::size_t kMaxSizeDigits = 3;
 constexpr std::size_t kMaxCursorDigits = 6;
-constexpr std::string_view kManifestFile = "seed-manifest.json";
+// W6.2: the manifests' folder beside the config file, one file per tenant.
+constexpr std::string_view kCanariesFolder = "canaries";
 
 bool all_digits(std::string_view text) noexcept
 {
@@ -116,12 +118,16 @@ std::optional<sampling::CanaryCursor> parse_cursor(std::string_view text)
     return sampling::CanaryCursor{*parts[0], *parts[1], *parts[2]};
 }
 
-// The manifest --manifest names, or seed-manifest.json beside the config file.
+// The manifest --manifest names, or canaries\<tenant>.json beside the config
+// file (W6.2 point 10), the tenant the profile's graph_tenant_id in lower case.
 std::filesystem::path manifest_path(std::optional<std::string_view> manifest_arg,
-                                    const std::filesystem::path& config_path)
+                                    const std::filesystem::path& config_path,
+                                    const std::string& graph_tenant_id)
 {
     if (!manifest_arg) {
-        return config_path.parent_path() / kManifestFile;
+        // The tenant is a GUID (the profile's rule): ASCII, so a path as it is.
+        return config_path.parent_path() / kCanariesFolder /
+               std::filesystem::path(ascii_lower(graph_tenant_id) + ".json");
     }
     std::optional<std::filesystem::path> path = path_from_utf8(*manifest_arg);
     if (!path) {
@@ -179,12 +185,13 @@ std::string shortfall_note(ItemKind kind, const std::vector<verification::Shortf
                                         : "";
 }
 
-TableRow kind_row(ItemKind kind, const sampling::KindRecord& k,
+TableRow kind_row(ItemKind kind, const sampling::KindRecord& k, bool canaries,
                   const std::vector<verification::Shortfall>& shortfalls)
 {
-    std::vector<std::string> cells{kind_name(kind), std::to_string(k.requested),
-                                   of(static_cast<int>(k.canary_ids.size()), (k.requested + 1) / 2),
-                                   of(k.random_taken, k.random_wanted)};
+    std::vector<std::string> cells{
+        kind_name(kind), std::to_string(k.requested),
+        canaries ? of(static_cast<int>(k.canary_ids.size()), (k.requested + 1) / 2) : "none",
+        of(k.random_taken, k.random_wanted)};
     if (std::string note = shortfall_note(kind, shortfalls); !note.empty()) {
         cells.push_back(std::move(note));
     }
@@ -206,14 +213,17 @@ std::string format_sample(const sampling::Selection& selection, std::size_t item
                           const std::vector<verification::Shortfall>& shortfalls)
 {
     const sampling::SampleRecord& r = selection.record;
-    std::string text = std::format(
-        "canary cursor {} -> {}\n",
-        cursor_text(r.mail.cursor, r.sharepoint.cursor, r.onedrive.cursor),
-        cursor_text(r.mail.cursor_next, r.sharepoint.cursor_next, r.onedrive.cursor_next));
+    // W6.2: a run without canaries says so where the cursor line would be.
+    std::string text =
+        r.canaries ? std::format("canary cursor {} -> {}\n",
+                                 cursor_text(r.mail.cursor, r.sharepoint.cursor, r.onedrive.cursor),
+                                 cursor_text(r.mail.cursor_next, r.sharepoint.cursor_next,
+                                             r.onedrive.cursor_next))
+                   : std::string{"canaries: none\n"};
     text += format_table({{"  ", {"KIND", "REQUESTED", "CANARIES", "RANDOM", "NOTE"}},
-                          kind_row(ItemKind::mail, r.mail, shortfalls),
-                          kind_row(ItemKind::sharepoint, r.sharepoint, shortfalls),
-                          kind_row(ItemKind::onedrive, r.onedrive, shortfalls)});
+                          kind_row(ItemKind::mail, r.mail, r.canaries, shortfalls),
+                          kind_row(ItemKind::sharepoint, r.sharepoint, r.canaries, shortfalls),
+                          kind_row(ItemKind::onedrive, r.onedrive, r.canaries, shortfalls)});
     if (items > 0) {
         text += std::format("restoring {} item(s) ...\n", items);
     }
@@ -497,26 +507,6 @@ void make_graph_and_cleaner(std::optional<graph::GraphClient>& client,
     cleaner.emplace(*client, targets, cleaner_options);
 }
 
-// The connector's options with every HTTP client it makes recorded: Veeam's
-// under "veeam", Graph's (the target guard's) under "graph". A null maker is
-// the connector's own default, made here so it can be wrapped.
-connector::ConnectorOptions record_connector(connector::ConnectorOptions options,
-                                             const std::shared_ptr<FixtureRecorder>& recorder)
-{
-    options.make_http = [inner = options.make_http,
-                         recorder](const HttpClientOptions& http) -> std::unique_ptr<IHttpClient> {
-        return recorded(inner ? inner(http) : std::make_unique<HttpClient>(http), recorder,
-                        "veeam");
-    };
-    options.make_graph_http =
-        [inner = options.make_graph_http,
-         recorder](std::shared_ptr<spdlog::logger> logger) -> std::unique_ptr<IHttpClient> {
-        return recorded(inner ? inner(logger) : graph::make_graph_http_client(std::move(logger)),
-                        recorder, "graph");
-    };
-    return options;
-}
-
 // The reader of the restore targets (W2.2), its lines on `logger`.
 graph::TargetReader target_reader(graph::GraphClient& client, IHttpClient& download,
                                   const connector::RestoreTargets& targets,
@@ -578,7 +568,7 @@ std::exception_ptr read_before(graph::GraphClient& client, IHttpClient& download
 constexpr graph::TargetCheckWording kClientWording{"restores only into", "nothing was restored"};
 
 std::exception_ptr check_client_step(connector::IConnector& source, const ClientProfile& profile,
-                                     const sampling::CanaryManifest& manifest,
+                                     const sampling::CanaryManifest* manifest,
                                      graph::GraphClient& graph,
                                      const connector::RestoreTargets& targets,
                                      const std::shared_ptr<spdlog::logger>& logger,
@@ -596,7 +586,9 @@ std::exception_ptr check_client_step(connector::IConnector& source, const Client
         if (const std::optional<ClientMismatch> mismatch = check_client(profile, facts)) {
             throw ClientMismatchError(*mismatch);
         }
-        sampling::check_manifest_tenant(manifest, profile.graph_tenant_id);
+        if (manifest != nullptr) {
+            sampling::check_manifest_tenant(*manifest, profile.graph_tenant_id);
+        }
         const graph::ResolvedMailbox mailbox =
             graph::check_restore_mailbox(graph, targets, kClientWording);
         const graph::ResolvedLibrary library =
@@ -711,6 +703,37 @@ std::filesystem::path check_evidence_root(std::string_view arg,
 }
 
 } // namespace
+
+RecordedBody veeam_recorded_body(const HttpRequest& request)
+{
+    const std::string_view path = request_path(request.url);
+    return request.method == HttpMethod::post && path.ends_with("/save") &&
+                   path.find("/Documents/") != std::string_view::npos
+               ? RecordedBody::digest
+               : RecordedBody::content;
+}
+
+connector::ConnectorOptions record_connector(connector::ConnectorOptions options,
+                                             const std::shared_ptr<FixtureRecorder>& recorder)
+{
+    options.make_http = [inner = options.make_http,
+                         recorder](const HttpClientOptions& http) -> std::unique_ptr<IHttpClient> {
+        std::unique_ptr<IHttpClient> client =
+            inner ? inner(http) : std::make_unique<HttpClient>(http);
+        if (!recorder || !client) {
+            return client;
+        }
+        return std::make_unique<RecordingHttpClient>(std::move(client), recorder, "veeam",
+                                                     veeam_recorded_body);
+    };
+    options.make_graph_http =
+        [inner = options.make_graph_http,
+         recorder](std::shared_ptr<spdlog::logger> logger) -> std::unique_ptr<IHttpClient> {
+        return recorded(inner ? inner(logger) : graph::make_graph_http_client(std::move(logger)),
+                        recorder, "graph");
+    };
+    return options;
+}
 
 bool parse_pipeline_args(const CommandOptions& options, PipelineArgs& parsed)
 {
@@ -1072,11 +1095,16 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     // the status line and the clean after, which are no part of what it
     // interrupted. Once the restore had started a POST may have gone out:
     // its submit and wait, unless already reported, are not reported, never
-    // not run.
+    // not run; so are the content exports, when any was asked (W6.3 point 7:
+    // not run when none was).
+    bool content_asked = false;
     const auto stop_timings = [&]() noexcept {
         if (timer.state(timing::Span::restore) != timing::SpanState::not_run) {
             timer.report(timing::Span::restore_submit, std::nullopt);
             timer.report(timing::Span::restore_wait, std::nullopt);
+            if (content_asked) {
+                timer.report(timing::Span::content_export, std::nullopt);
+            }
         }
         timer.stop_open(timer.try_now(), timing::Span::total);
     };
@@ -1370,14 +1398,24 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     // Everything that can throw is in here, the output included, so no
     // exception escapes.
     try {
-        const sampling::CanaryManifest manifest =
-            sampling::load_canary_manifest(manifest_path(parsed.manifest, config_path));
+        // W6.2 point 10: canaries are an opt-in, named by --canary-cursor or
+        // --manifest (a job: its canary_cursor key). Without, no manifest is
+        // looked for and the whole sample is random items.
+        const bool canaries = parsed.cursor.has_value() || parsed.manifest.has_value();
+        std::optional<sampling::CanaryManifest> loaded_manifest;
+        if (canaries) {
+            loaded_manifest = sampling::load_canary_manifest(
+                manifest_path(parsed.manifest, config_path, profile.graph_tenant_id));
+        }
+        const sampling::CanaryManifest* manifest = canaries ? &*loaded_manifest : nullptr;
         const connector::RestoreTargets targets = connector::RestoreTargets::from_profile(profile);
         // choose_sample's own checks, said before the connector is made: an
         // unreachable Veeam can't hide a manifest that names a restore target.
         // The manifest's tenant is the client check's (W4.11), after the run
         // line, so that a job of another tenant is reported.
-        sampling::check_manifest_targets(manifest, targets);
+        if (manifest != nullptr) {
+            sampling::check_manifest_targets(*manifest, targets);
+        }
         if (const std::optional<std::string> problem = sampling::cursor_problem(manifest, cursor)) {
             err << "usage error: --canary-cursor: " << *problem << '\n';
             return exit_code::usage;
@@ -1585,12 +1623,28 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                                             profile.graph_tenant_id, plan, manifest, cursor, run_id);
         timer.end(timing::Span::sample_select, timer.try_now());
         shortfalls = verification::shortfalls_of(selection->record);
-        const connector::RestoreSpec spec{.client_ref = profile.veeam_org_name,
-                                          .restore_point = *point,
-                                          .targets = targets,
-                                          .mail = selection->mail,
-                                          .sharepoint = selection->sharepoint,
-                                          .onedrive = selection->onedrive};
+        connector::RestoreSpec spec{.client_ref = profile.veeam_org_name,
+                                    .restore_point = *point,
+                                    .targets = targets,
+                                    .mail = selection->mail,
+                                    .sharepoint = selection->sharepoint,
+                                    .onedrive = selection->onedrive};
+        // W6.3 point 4: every random file with a content rule asks for its
+        // bytes from the backup; the connector exports them into the hasher
+        // before its first restore request, and the hasher keeps their hashes.
+        std::vector<std::string> sharepoint_names;
+        for (const connector::SharePointSelector& s : spec.sharepoint) {
+            sharepoint_names.push_back(s.name);
+        }
+        std::vector<std::string> onedrive_names;
+        for (const connector::OneDriveSelector& o : spec.onedrive) {
+            onedrive_names.push_back(o.name);
+        }
+        verification::ContentHasher hasher(std::move(sharepoint_names), std::move(onedrive_names));
+        if (verification::mark_wanted(spec, selection->record) > 0) {
+            spec.content_sink = &hasher;
+            content_asked = true;
+        }
 
         // No restore when the rest of the header can't be shown.
         out << format_sample(*selection, spec.item_count(), shortfalls);
@@ -1637,7 +1691,18 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         restoring_run.reset();
         phase = verification::RunPhase::check;
         const auto restored_at = timer.now();
-        const auto elapsed = restored_at - started;
+        // W6.3: the exports ran inside restore_sample, but they verify and
+        // restore nothing: their time is left out of `restore`, `recovery`
+        // and the restore line's elapsed time, held to the span they're in
+        // (another clock's measure could be longer). A restore_sample that
+        // throws has handed no time back, and its spans keep them.
+        const std::chrono::nanoseconds exports = std::clamp<std::chrono::nanoseconds>(
+            result->content_time.value_or(std::chrono::nanoseconds{0}),
+            std::chrono::nanoseconds{0},
+            std::max<std::chrono::nanoseconds>(restored_at - started, std::chrono::nanoseconds{0}));
+        timer.delay_start(timing::Span::restore, exports);
+        timer.delay_start(timing::Span::recovery, exports);
+        const auto elapsed = restored_at - started - exports;
         // Each session's submit and wait, summed: the time spent in each
         // phase, or a state, never a partial number. Reported before
         // `restore` ends, with nothing between that can throw.
@@ -1647,6 +1712,12 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         timer.report(timing::Span::restore_wait,
                      timing::sum_session_durations(result->sessions,
                                                    &connector::RestoreSessionResult::wait_time));
+        // W6.3: the exports, as the connector measured them; not run when
+        // none was asked (W6.3 point 7: null), not reported when asked and
+        // the connector gave no time.
+        if (content_asked) {
+            timer.report(timing::Span::content_export, result->content_time);
+        }
         timer.end(timing::Span::restore, restored_at);
         timer.start(timing::Span::verify, restored_at);
 
@@ -1655,7 +1726,8 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         // the exit code, and a restore whose output was lost isn't a success.
         bool output_lost = false;
         try {
-            out << format_result(*result, *selection, elapsed, presentation.restore_rows);
+            out << format_result(*result, *selection, elapsed, presentation.restore_rows)
+                << verification::content_exports_line(*result);
             flush_or_throw(out);
         } catch (...) {
             output_lost = true;
@@ -1667,6 +1739,11 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         // the restore's tables already out.
         std::optional<verification::CheckResult> checked;
         try {
+            // W6.3 point 3: the exported files' expectation raised to
+            // backup_content before anything is read back; facts that don't
+            // add up (a connector that ignored want_content) are the Worker's
+            // fault, error internal.
+            verification::add_backup_content(*expected, *result, hasher.digests());
             const verification::TargetSnapshot snapshot = verification::snapshot_of(before);
             verification::TargetsRead after;
             read_after(*graph_client, *download_http, targets, spec, options.logger, now,

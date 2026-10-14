@@ -59,7 +59,8 @@ async def main(argv: list[str]) -> None:
                     profile = json.loads(Path(argv[4]).read_text(encoding="utf-8"))
                     connector = await ConnectorRepo(session).create(msp_id, client_id, worker_id, profile)
                     plan = await PlanRepo(session).create(
-                        msp_id, client_id, connector.id, sample_mail=10, sample_sp=10, sample_od=10, cadence_cron="0 2 * * *"
+                        msp_id, client_id, connector.id, sample_mail=10, sample_sp=10, sample_od=10, cadence_cron="0 2 * * *",
+                        now=dt.datetime.now(dt.timezone.utc),  # C5.9: the plan's created_at
                     )
                     run = await RunRepo(session).create(
                         msp_id, plan_id=plan.id, client_id=client_id, connector_id=connector.id, worker_id=worker_id

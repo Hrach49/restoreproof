@@ -512,7 +512,7 @@ TEST_CASE("replay of live run 1: 11 items restored into empty targets, all match
           restore_part(kRun1, "311f1eea", run1_rows(), "0:02:15") +
               run1_check(outcomes, "check: 11 match, 0 mismatch, 0 missing, 0 error") +
               "\nstatus pass: 11 of 11 item(s) verified: manifest 9, fields 2, "
-              "metadata 0\n" +
+              "metadata 0, backup_content 0\n" +
               kCleanAfter + "\n");
     check_replayed_as_recorded(replay);
     // The recorded restore POSTs' credential is the recorder's placeholder;
@@ -600,7 +600,7 @@ TEST_CASE("replay of the W3.4 live run: the clean before finds the targets empty
     }
     check.insert(check.end(),
                  {"", "check: 11 match, 0 mismatch, 0 missing, 0 error", "",
-                  "status pass: 11 of 11 item(s) verified: manifest 9, fields 2, metadata 0",
+                  "status pass: 11 of 11 item(s) verified: manifest 9, fields 2, metadata 0, backup_content 0",
                   "cleanup after ok: deleted 5 mail, 3 sharepoint, 3 onedrive"});
     CHECK(replay.body(run) ==
           restore_part(kW34Run, "6933ea77", rows, kW34Total, kW34Point) + lines(check));
@@ -614,6 +614,7 @@ TEST_CASE("replay of the W3.4 live run: the clean before finds the targets empty
                  "restore               " + kW34Total + ".000",
                  "restore_submit        0:00:00.000",
                  "restore_wait          " + kW34Total + ".000",
+                 "content_export        -            not run",
                  "verify                0:00:00.000",
                  "recovery              " + kW34Total + ".000",
                  "cleanup_after         0:00:00.000",
@@ -755,6 +756,9 @@ TEST_CASE("replay of the W3.4 live run with a profile whose tenant isn't the org
     Replay replay("w34-live-run1");
     replay.rewrite_config(
         [](json& config) { config["graph_tenant_id"] = "11111111-2222-3333-4444-555555555555"; });
+    // W6.2: the run asks for canaries, so the manifest is the profile's
+    // tenant's file; the client check refuses the run before it is read.
+    replay.copy_manifest_for("11111111-2222-3333-4444-555555555555");
 
     const Run run = replay.run(kW34Run);
 

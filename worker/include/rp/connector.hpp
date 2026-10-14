@@ -107,8 +107,22 @@ struct SharePointSelector {
     std::string list_id;
     // Optional: the size SharePoint stores (the manifest's stored_size); -1 = unchecked.
     std::int64_t size = -1;
+    // W6.3: whether the file's bytes are to be exported from the backup
+    // before the restore (ContentExport below); the pipeline sets it on a
+    // random file whose name has a content rule, never on a canary.
+    bool want_content = false;
 
-    bool operator==(const SharePointSelector&) const = default;
+    // The same item: want_content is the request's, not the item's, so it
+    // takes no part (W6.3).
+    bool operator==(const SharePointSelector& other) const
+    {
+        return site_id == other.site_id &&
+               drive_id == other.drive_id &&
+               folder_path == other.folder_path &&
+               name == other.name &&
+               list_id == other.list_id &&
+               size == other.size;
+    }
 };
 
 struct OneDriveSelector {
@@ -117,23 +131,17 @@ struct OneDriveSelector {
     std::string name;        // file name
     // Optional: the size OneDrive stores (the manifest's stored_size); -1 = unchecked.
     std::int64_t size = -1;
+    // W6.3: as SharePointSelector::want_content.
+    bool want_content = false;
 
-    bool operator==(const OneDriveSelector&) const = default;
-};
-
-// One restore_sample call. RestoreTargets has no default, so a spec can't be
-// made without the configured targets.
-struct RestoreSpec {
-    std::string client_ref;     // as list_restore_points takes it
-    RestorePoint restore_point; // as list_restore_points returned it
-    RestoreTargets targets;
-    std::vector<MailSelector> mail;
-    std::vector<SharePointSelector> sharepoint;
-    std::vector<OneDriveSelector> onedrive;
-
-    std::size_t item_count() const noexcept
+    // The same item: want_content is the request's, not the item's, so it
+    // takes no part (W6.3).
+    bool operator==(const OneDriveSelector& other) const
     {
-        return mail.size() + sharepoint.size() + onedrive.size();
+        return user == other.user &&
+               folder_path == other.folder_path &&
+               name == other.name &&
+               size == other.size;
     }
 };
 
@@ -173,6 +181,78 @@ enum class ItemKind { mail, sharepoint, onedrive };
 
 // "mail", "sharepoint", "onedrive".
 std::string_view to_string(ItemKind kind) noexcept;
+
+// W6.3 (docs/decisions.md 2026-10-14, W6.3 and W6.2, points 1 and 2): the
+// content export. For every file selector with want_content, restore_sample
+// exports the file's bytes from the backup inside its own browsing session,
+// after every item is found and before the first restore request, and hands
+// them to the spec's sink; the hashes are the caller's (the connector keeps
+// nothing and knows no hash rule). One attempt per file, never resent;
+// kContentExportTimeout per file and kContentExportBudget for all of a
+// call's exports together, after which the rest are `budget`. A file above
+// content_max_bytes is `over_cap`, its body dropped.
+inline constexpr std::uint64_t kMaxContentBytes = 64ull * 1024 * 1024;
+inline constexpr std::chrono::milliseconds kContentExportTimeout{60'000};
+inline constexpr std::chrono::milliseconds kContentExportBudget{15 * 60'000};
+
+// What became of one file's export, in fixed words.
+enum class ContentOutcome {
+    exported,      // the bytes as listed, handed to the sink
+    refused,       // any answer but a 2xx octet-stream (a 401 too: no resend)
+    no_answer,     // a transport failure or the timeout
+    size_mismatch, // the bytes aren't as many as the backup listed
+    over_cap,      // more than content_max_bytes: the body was dropped
+    not_in_backup, // the item wasn't found in the restore point: never asked
+    budget,        // the call's export budget was spent before it: never asked
+};
+
+// "exported", "refused", ...; "unknown" for a value outside the enum.
+std::string_view to_string(ContentOutcome outcome) noexcept;
+
+struct ContentExport {
+    ItemKind kind = ItemKind::sharepoint;
+    std::size_t index = 0; // in its kind's selectors
+    ContentOutcome outcome = ContentOutcome::refused;
+    std::int64_t size_bytes = -1; // the bytes handed to the sink; -1 unless exported
+    std::int64_t ms = 0;          // the export's own time; 0 when never asked
+};
+
+// Takes each exported file's bytes, on the connector's thread, once per
+// `exported` item. One that throws ends restore_sample before any restore
+// request (connector::Error ending in kNothingRestored).
+class IContentSink {
+public:
+    virtual ~IContentSink() = default;
+    virtual void on_content(ItemKind kind, std::size_t index, std::string_view bytes) = 0;
+
+protected:
+    IContentSink() = default;
+    IContentSink(const IContentSink&) = default;
+    IContentSink& operator=(const IContentSink&) = default;
+};
+
+// One restore_sample call. RestoreTargets has no default, so a spec can't be
+// made without the configured targets.
+struct RestoreSpec {
+    std::string client_ref;     // as list_restore_points takes it
+    RestorePoint restore_point; // as list_restore_points returned it
+    RestoreTargets targets;
+    std::vector<MailSelector> mail;
+    std::vector<SharePointSelector> sharepoint;
+    std::vector<OneDriveSelector> onedrive;
+    // W6.3: where exported bytes go; must be set when any file selector
+    // wants content (std::invalid_argument before any request otherwise),
+    // and must outlive the call. Null: nothing is exported.
+    IContentSink* content_sink = nullptr;
+    std::uint64_t content_max_bytes = kMaxContentBytes;
+
+    std::size_t item_count() const noexcept
+    {
+        return mail.size() + sharepoint.size() + onedrive.size();
+    }
+    // How many file selectors want content.
+    std::size_t content_count() const noexcept;
+};
 
 // What the backup product says became of one item.
 enum class ItemOutcome {
@@ -236,6 +316,12 @@ struct RestoreResult {
     std::vector<RestoreSessionResult> sessions;
     // One per item of the spec, in its order: mail, then SharePoint, then OneDrive.
     std::vector<ItemRestoreResult> items;
+    // W6.3: one per file selector that wanted content, in spec order
+    // (SharePoint, then OneDrive); empty when none did.
+    std::vector<ContentExport> content;
+    // The exports' span on the connector's steady clock, from before the
+    // first to after the last; nullopt when nothing was asked for.
+    std::optional<std::chrono::nanoseconds> content_time;
 };
 
 // Every error a connector throws. what() is safe to print and log: it never
@@ -450,7 +536,12 @@ public:
     // restore` says so). An item the restore point doesn't hold is reported
     // as ItemOutcome::not_in_backup, not thrown (Q3.1), so the run's status
     // can name it; a NotFoundError thrown here is still taken as
-    // not_in_backup for the whole run.
+    // not_in_backup for the whole run. W6.3: for every file selector with
+    // want_content it exports the file's bytes from the backup into
+    // spec.content_sink before the first restore request and reports each
+    // in RestoreResult::content (the words of ContentOutcome); an export's
+    // own failure never fails the call, and a stop asked for during the
+    // exports ends it with nothing restored (Interrupted).
     virtual RestoreResult restore_sample(const RestoreSpec& spec) = 0;
 
     // W2.6: the random half's candidates in `query`'s restore point, never

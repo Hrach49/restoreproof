@@ -440,7 +440,7 @@ TEST_CASE("jobs: a job with a usable run_id and a broken rule is J3, with the fi
     CHECK(entry.job.sample_od == 0);
     CHECK(entry.job.restore_point.empty());
     CHECK_FALSE(entry.job.screenshots_enabled);
-    CHECK(entry.job.canary_cursor.mail == 0);
+    CHECK_FALSE(entry.job.canary_cursor.has_value());
 }
 
 TEST_CASE("jobs: an invalid job with a null client_id names no client", "[service_jobs]")
@@ -481,9 +481,10 @@ TEST_CASE("jobs: a valid job is read as it is written", "[service_jobs]")
         CHECK(entry.job.sample_od == 0);
         CHECK(entry.job.restore_point == "0a1b2c3d-0000-4000-8000-000000000001");
         CHECK(entry.job.screenshots_enabled);
-        CHECK(entry.job.canary_cursor.mail == 1);
-        CHECK(entry.job.canary_cursor.sharepoint == 999999);
-        CHECK(entry.job.canary_cursor.onedrive == 0);
+        REQUIRE(entry.job.canary_cursor.has_value());
+        CHECK(entry.job.canary_cursor->mail == 1);
+        CHECK(entry.job.canary_cursor->sharepoint == 999999);
+        CHECK(entry.job.canary_cursor->onedrive == 0);
         CHECK(entry.job.connector_type == "veeam_m365");
     }
     SECTION("a connector type the reader can't know is read as written: the loop decides (W4.11)")
@@ -505,9 +506,8 @@ TEST_CASE("jobs: a valid job is read as it is written", "[service_jobs]")
         CHECK(entry.job.sample_od == 2);
         CHECK(entry.job.restore_point == "Latest");
         CHECK_FALSE(entry.job.screenshots_enabled);
-        CHECK(entry.job.canary_cursor.mail == 0);
-        CHECK(entry.job.canary_cursor.sharepoint == 0);
-        CHECK(entry.job.canary_cursor.onedrive == 0);
+        // W6.2: no canary_cursor key, so no canaries.
+        CHECK_FALSE(entry.job.canary_cursor.has_value());
     }
 }
 

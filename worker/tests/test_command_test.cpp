@@ -361,7 +361,7 @@ TEST_CASE("test: a run stopped before its run line writes no --json file and pri
         {"the secrets", [](TestLab& lab) { lab.load_secrets = [] { return rp::Secrets{}; }; },
          Args{}, rp::exit_code::config},
         {"a manifest that doesn't load",
-         [](TestLab& lab) { lab.dir.write("seed-manifest.json", "{"); }, Args{},
+         [](TestLab& lab) { lab.write_manifest("{"); }, Args{},
          rp::exit_code::config},
         {"a cursor out of range", [](TestLab&) {}, Args{"--canary-cursor", "99,0,0"},
          rp::exit_code::usage},
@@ -750,7 +750,7 @@ TEST_CASE("test --json: the result is valid and has the seventeen keys for each 
          Args{"--mail", "2", "--sp", "0", "--od", "0"}, rp::exit_code::transient,
          "error backup_transient", nothing_chosen},
         {"an empty sample",
-         [](TestLab& lab) { lab.dir.write("seed-manifest.json", trimmed_manifest(0, 1, 1)); },
+         [](TestLab& lab) { lab.write_manifest(trimmed_manifest(0, 1, 1)); },
          Args{"--mail", "1", "--sp", "0", "--od", "0"}, rp::exit_code::service,
          "error empty_sample", {"restore", "check"}},
         {"the reads before fail",
@@ -1197,8 +1197,7 @@ TEST_CASE("test --json: a run ID that holds ':' never names the file or its temp
     for (const auto& entry : std::filesystem::directory_iterator(lab.dir.path())) {
         names.insert(utf8(entry.path().filename()));
     }
-    CHECK(names == std::set<std::string>{"config.json", "run.json", "seed-manifest.json",
-                                           "tsa-ca.pem"});
+    CHECK(names == std::set<std::string>{"canaries", "config.json", "run.json", "tsa-ca.pem"});
 }
 
 TEST_CASE("test --json: a file that appeared after the check is never overwritten",
@@ -1506,7 +1505,7 @@ std::string shared_result()
     // The manifest's hash is in the result: LF, however the checkout has it.
     std::string manifest = lab_manifest_text();
     std::erase(manifest, '\r');
-    lab.dir.write("seed-manifest.json", manifest);
+    lab.write_manifest(manifest);
     lab.fake.pool.mail = {carol_mail(1)};
     lab.fake.pool.sharepoint = {
         {{lab_values().site_id, "b!madeUpSourceLibraryDrive", "/Projects", "report.pdf",
@@ -2169,7 +2168,7 @@ TEST_CASE("test --evidence: the whole pipeline's result is shared/testdata/resul
     CHECK(document.at("status").at("status") == "pass");
     CHECK(document.at("status").at("counts").at("items") == 6);
     CHECK(document.at("expected").at("counts") ==
-          json{{"manifest", 3}, {"fields", 1}, {"metadata", 2}});
+          json{{"manifest", 3}, {"fields", 1}, {"metadata", 0}, {"backup_content", 2}});
     CHECK(document.at("expected").at("items").at(2).at("sha256_rule") == "office-v1");
     CHECK(document.at("expected").at("items").at(4).at("sha256_rule") == "bytes");
     CHECK(document.at("check").at("items").at(3).at("copies") == 2);
@@ -2335,7 +2334,7 @@ TEST_CASE("test --evidence: a signing key that is unset or isn't one stops the r
         return true;
     };
     // Said before a manifest that doesn't load, too.
-    lab.dir.write("seed-manifest.json", "{");
+    lab.write_manifest("{");
 
     const Run run = evidence_run(lab);
 
@@ -3722,6 +3721,7 @@ TEST_CASE("the pipeline run without a report runs as with one", "[test_command][
         args.mail = 2;
         args.sharepoint = 1;
         args.onedrive = 0;
+        args.cursor = rp::sampling::CanaryCursor{}; // W6.2: the lab's canaries
         std::shared_ptr<rp::FixtureRecorder> recorder;
         const std::string config = utf8(lab.config_path);
         args.config = config;
@@ -3870,4 +3870,280 @@ TEST_CASE("test --json: a run whose client check passed says scope same_tenant a
                {"onedrive_folder",
                 {{"name", "RestoreTarget"},
                  {"site_url", folder.at("sharepointIds").at("siteUrl")}}}});
+}
+
+// --- W6.2: the result of a run without canaries -------------------------------------
+
+TEST_CASE("test --json: a run without canaries records no manifest hash and no rotation",
+          "[test_command][w6.2]")
+{
+    TestLab lab;
+    lab.canaries = false;
+    std::filesystem::remove(lab.manifest_path);
+    lab.fake.pool.mail = {carol_mail(1)};
+
+    const Run run = lab.run({"--json", lab.json_arg(), "--run-id", kRunId, "--mail", "1", "--sp",
+                             "0", "--od", "0"});
+
+    INFO(run.out);
+    INFO(run.err);
+    CHECK(run.exit_code == rp::exit_code::ok);
+    const json result = lab.result();
+    CHECK(result.at("status").at("status") == "pass");
+    const json& sample = result.at("sample");
+    CHECK_FALSE(sample.contains("manifest_sha256"));
+    for (const char* kind : {"mail", "sharepoint", "onedrive"}) {
+        CAPTURE(kind);
+        CHECK_FALSE(sample.at(kind).contains("canary"));
+    }
+    CHECK(sample.at("mail").at("random").at("wanted") == 1);
+    const json& expected = result.at("expected");
+    CHECK_FALSE(expected.contains("manifest_sha256"));
+    CHECK(expected.at("counts").at("manifest") == 0);
+    CHECK(expected.at("counts").at("fields") == 1);
+    CHECK(expected.at("items").at(0).at("source") == "random");
+}
+
+// --- W6.3: a random file's content against the backup's copy, through the pipeline -------
+
+namespace {
+
+// A run without canaries of one random pdf, one random docx and one random
+// pptx in SharePoint, and one random txt in OneDrive.
+void four_random_files(TestLab& lab)
+{
+    lab.canaries = false;
+    lab.fake.pool.sharepoint = {
+        {{lab_values().site_id, "b!madeUpSourceLibraryDrive", "/Projects", "plan.pdf",
+          "0b5e1d2c-0000-4000-8000-00000000c0de"},
+         900},
+        {{lab_values().site_id, "b!madeUpSourceLibraryDrive", "/Projects", "notes.docx",
+          "0b5e1d2c-0000-4000-8000-00000000c0de"},
+         3230},
+        {{lab_values().site_id, "b!madeUpSourceLibraryDrive", "/Projects", "deck.pptx",
+          "0b5e1d2c-0000-4000-8000-00000000c0de"},
+         5000}};
+    lab.fake.pool.onedrive = {{{kCarol, "/Projects", "list.txt"}, 60}};
+}
+
+const Args kFourFiles{"--run-id", kRunId, "--mail", "0", "--sp", "3", "--od", "1"};
+
+json item_named(const json& result, const std::string& name)
+{
+    for (const json& item : result.at("expected").at("items")) {
+        if (item.value("name", "") == name) {
+            return item;
+        }
+    }
+    FAIL("no item " << name);
+    return {};
+}
+
+} // namespace
+
+TEST_CASE("test --json: random files the backup exported are backup_content, checked by hash, "
+          "and a file of no rule stays metadata",
+          "[test_command][w6.3][acceptance]")
+{
+    TestLab lab;
+    four_random_files(lab);
+    Args args = kFourFiles;
+    const std::string json_arg = lab.json_arg(); // Args holds views: the path must outlive it
+    args.insert(args.end(), {"--json", json_arg});
+
+    const Run run = lab.run(args);
+
+    INFO(run.out);
+    INFO(run.err);
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err.empty());
+    CHECK_THAT(run.out, ContainsSubstring("\ncontent exports: 3 of 3 file(s) exported from the "
+                                          "backup\n"));
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus pass: 4 of 4 item(s) verified: manifest 0, "
+                                          "fields 0, metadata 1, backup_content 3\n"));
+    const json result = lab.result();
+    const json pdf = item_named(result, "plan.pdf");
+    CHECK(pdf.at("expected_kind") == "backup_content");
+    CHECK(pdf.at("sha256_rule") == "bytes");
+    CHECK(pdf.at("sha256") == rp::sha256_hex(std::string(900, 'r')));
+    CHECK(pdf.at("size_bytes") == 900);
+    CHECK(pdf.at("export") == "exported");
+    const json docx = item_named(result, "notes.docx");
+    CHECK(docx.at("expected_kind") == "backup_content");
+    CHECK(docx.at("sha256_rule") == "office-v1");
+    CHECK_FALSE(docx.contains("size_bytes"));
+    const json pptx = item_named(result, "deck.pptx");
+    CHECK(pptx.at("expected_kind") == "metadata");
+    CHECK(pptx.at("export") == "no_rule");
+    CHECK(item_named(result, "list.txt").at("expected_kind") == "backup_content");
+    CHECK(result.at("expected").at("counts") ==
+          json{{"manifest", 0}, {"fields", 0}, {"metadata", 1}, {"backup_content", 3}});
+    CHECK(result.at("status").at("verified").at("backup_content") == 3);
+    CHECK(result.at("status").at("warnings").empty());
+    // The fake reports no time of its own: the span is not reported.
+    CHECK(result.at("timings").at("spans").at("content_export") ==
+          json{{"note", "not_reported"}});
+    // The fake backup was asked for exactly the three files with a rule.
+    REQUIRE(lab.fake.spec);
+    CHECK(lab.fake.spec->content_count() == 3);
+    CHECK(lab.fake.spec->content_sink != nullptr);
+}
+
+TEST_CASE("test --evidence: items.csv shows a backup_content file's expected and found hash",
+          "[test_command][w6.3][evidence]")
+{
+    TestLab lab;
+    four_random_files(lab);
+    Args args = kFourFiles;
+    const std::string root = lab.evidence_arg();
+    args.insert(args.end(), {"--evidence", root});
+
+    const Run run = lab.run(args);
+
+    REQUIRE(run.exit_code == rp::exit_code::ok);
+    const std::optional<std::string> csv = file_bytes(lab.run_folder() / "items.csv");
+    REQUIRE(csv);
+    const std::string hash = rp::sha256_hex(std::string(900, 'r'));
+    CHECK_THAT(*csv, ContainsSubstring("\"plan.pdf\",\"backup_content\",\"bytes\",\"" + hash +
+                                       "\",\"" + hash + "\""));
+    CHECK_THAT(*csv, ContainsSubstring("\"deck.pptx\",\"metadata\",\"\",\"\",\"\""));
+}
+
+TEST_CASE("test --json: an export that gives nothing leaves its file metadata with its word, the "
+          "run passes on names and sizes, and the warning says so",
+          "[test_command][w6.3]")
+{
+    const auto [outcome, word] = GENERATE(table<rp::connector::ContentOutcome, std::string>({
+        {rp::connector::ContentOutcome::refused, "refused"},
+        {rp::connector::ContentOutcome::no_answer, "no_answer"},
+        {rp::connector::ContentOutcome::size_mismatch, "size_mismatch"},
+        {rp::connector::ContentOutcome::over_cap, "over_cap"},
+        {rp::connector::ContentOutcome::budget, "budget"},
+    }));
+    CAPTURE(word);
+    TestLab lab;
+    four_random_files(lab);
+    lab.fake.export_outcome = [outcome](const std::string& name)
+        -> std::optional<rp::connector::ContentOutcome> {
+        return name == "plan.pdf" ? std::optional{outcome} : std::nullopt;
+    };
+    Args args = kFourFiles;
+    const std::string json_arg = lab.json_arg(); // Args holds views: the path must outlive it
+    args.insert(args.end(), {"--json", json_arg});
+
+    const Run run = lab.run(args);
+
+    INFO(run.out);
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK_THAT(run.out, ContainsSubstring("\ncontent exports: 2 of 3 file(s) exported from the "
+                                          "backup (" + word + " 1)\n"));
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus pass: 4 of 4 item(s) verified: manifest 0, "
+                                          "fields 0, metadata 2, backup_content 2\n"));
+    CHECK(run.err == "warning: content_export: 1 of 3 file(s) couldn't be compared with the "
+                     "backup's own copy (" + word + " 1): 1 checked by name and size alone, 0 by "
+                     "name alone\n");
+    const json result = lab.result();
+    const json pdf = item_named(result, "plan.pdf");
+    CHECK(pdf.at("expected_kind") == "metadata");
+    CHECK(pdf.at("export") == word);
+    CHECK(pdf.at("size_bytes") == 900); // the listed size, as before
+    CHECK_FALSE(pdf.contains("sha256"));
+    const json& warnings = result.at("status").at("warnings");
+    REQUIRE(warnings.size() == 1);
+    CHECK(warnings[0].at("code") == "content_export");
+    CHECK(warnings[0].at("indexes") == json::array({pdf.at("index")}));
+}
+
+TEST_CASE("test --json: the content_export warning says which files had their size compared and "
+          "names an exported package office-v1 refused as such",
+          "[test_command][w6.3]")
+{
+    // An Office file has no size expectation (SharePoint rewrites it), and an
+    // invalid_package file was exported: the warning claims no size check it
+    // didn't make and no export that didn't happen (W6.3 review, finding 4).
+    TestLab lab;
+    four_random_files(lab);
+    lab.fake.export_outcome = [](const std::string& name)
+        -> std::optional<rp::connector::ContentOutcome> {
+        return name == "plan.pdf" ? std::optional{rp::connector::ContentOutcome::refused}
+                                  : std::nullopt;
+    };
+    lab.fake.export_bytes = [](const std::string& name, std::string bytes) {
+        return name == "notes.docx" ? std::string{"not a package"} : bytes;
+    };
+    Args args = kFourFiles;
+    const std::string json_arg = lab.json_arg(); // Args holds views: the path must outlive it
+    args.insert(args.end(), {"--json", json_arg});
+
+    const Run run = lab.run(args);
+
+    INFO(run.out);
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err == "warning: content_export: 2 of 3 file(s) couldn't be compared with the "
+                     "backup's own copy (refused 1, invalid_package 1): 1 checked by name and "
+                     "size alone, 1 by name alone\n");
+    const json result = lab.result();
+    CHECK(item_named(result, "notes.docx").at("export") == "invalid_package");
+    CHECK_FALSE(item_named(result, "notes.docx").contains("size_bytes"));
+}
+
+TEST_CASE("test --json: a restored copy whose bytes aren't the backup's is a mismatch on "
+          "sha256: fail, that item listed",
+          "[test_command][w6.3][acceptance]")
+{
+    TestLab lab;
+    four_random_files(lab);
+    // The backup's copy one byte apart from what the targets hold: the
+    // offline form of the live Done-when's changed byte.
+    lab.fake.export_bytes = [](const std::string& name, std::string bytes) {
+        if (name == "list.txt") {
+            bytes[0] = static_cast<char>(bytes[0] ^ 0x01);
+        }
+        return bytes;
+    };
+    Args args = kFourFiles;
+    const std::string json_arg = lab.json_arg(); // Args holds views: the path must outlive it
+    args.insert(args.end(), {"--json", json_arg});
+
+    const Run run = lab.run(args);
+
+    INFO(run.out);
+    CHECK(run.exit_code == rp::exit_code::restore);
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus fail: 1 of 4 item(s) didn't verify (0 missing, "
+                                          "1 mismatch)\n"));
+    const json result = lab.result();
+    const json txt = item_named(result, "list.txt");
+    CHECK(result.at("status").at("failed_items") == json::array({txt.at("index")}));
+    const json& check = result.at("check").at("items").at(txt.at("index").get<std::size_t>());
+    CHECK(check.at("outcome") == "mismatch");
+    CHECK(check.at("mismatches") == json::array({"sha256"}));
+}
+
+TEST_CASE("test: a connector that ignores want_content is the Worker's fault, error internal, "
+          "never a fail",
+          "[test_command][w6.3]")
+{
+    TestLab lab;
+    four_random_files(lab);
+    lab.fake.ignore_content = true;
+
+    const Run run = lab.run(kFourFiles);
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus error internal: "));
+    CHECK_THAT(run.err, ContainsSubstring("check error: unexpected failure\n"));
+}
+
+TEST_CASE("test: a run with canaries alone asks the backup for nothing", "[test_command][w6.3]")
+{
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"});
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK_THAT(run.out, !ContainsSubstring("content exports"));
+    REQUIRE(lab.fake.spec);
+    CHECK(lab.fake.spec->content_count() == 0);
+    CHECK(lab.fake.spec->content_sink == nullptr);
 }

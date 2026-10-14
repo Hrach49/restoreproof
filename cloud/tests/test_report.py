@@ -942,6 +942,8 @@ async def test_the_method_names_the_plans_that_were_tested_and_level_four_only_w
     assert "<p>Verification levels covered: 1, 2, 3.</p>" in html and "level 4" not in html
     assert "<p>In 1 test of this period the removal from the restore target did not complete.</p>" in html
     assert "by its sender's name when the backup lists one" in html and "unless it is an Office document, its size" in html
+    # The W6.3 review's finding 3: no month is said to hold canaries, and a random file's hash comparison is named.
+    assert "plus items chosen at random" not in html and "copy the backup gave of it before the restore" in html
     # A file sampled by a test that ran: level 4 partially; two tests whose clean-up did not complete.
     files = await lab.tested("fail", finished_at=at(4), recovery_ms=1000, cleanup_ok=False)
     await lab.items(files, [an_item(0, type="sharepoint", name="a.docx", found=False, match=False)])

@@ -6,6 +6,7 @@
 
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
+#include <rp/graph_download.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -22,6 +23,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <chrono>
 #include <string>
 #include <utility>
 #include <vector>
@@ -472,6 +474,68 @@ TEST_CASE("the selectors' optional fields start unset", "[connector]")
     CHECK(sp.size == -1);
     const connector::OneDriveSelector od{"alice@x", "/RestoreTest", "f.pdf"};
     CHECK(od.size == -1);
+    // W6.3: no file asks for its content unless the pipeline says so, and
+    // asking doesn't make it another item.
+    CHECK_FALSE(sp.want_content);
+    CHECK_FALSE(od.want_content);
+    connector::SharePointSelector sp_asking = sp;
+    sp_asking.want_content = true;
+    CHECK(sp_asking == sp);
+    connector::OneDriveSelector od_asking = od;
+    od_asking.want_content = true;
+    CHECK(od_asking == od);
+    sp_asking.name = "g.pdf";
+    CHECK_FALSE(sp_asking == sp);
+}
+
+TEST_CASE("the content export's words, limits and defaults", "[connector][w6.3]")
+{
+    const auto [outcome, name] = GENERATE(table<connector::ContentOutcome, std::string>({
+        {connector::ContentOutcome::exported, "exported"},
+        {connector::ContentOutcome::refused, "refused"},
+        {connector::ContentOutcome::no_answer, "no_answer"},
+        {connector::ContentOutcome::size_mismatch, "size_mismatch"},
+        {connector::ContentOutcome::over_cap, "over_cap"},
+        {connector::ContentOutcome::not_in_backup, "not_in_backup"},
+        {connector::ContentOutcome::budget, "budget"},
+    }));
+    CHECK(connector::to_string(outcome) == name);
+    CHECK(connector::to_string(static_cast<connector::ContentOutcome>(99)) == "unknown");
+    // The export's cap is the read-back's: a file the export may give is one
+    // the read-back can take (rp/graph_download.hpp).
+    CHECK(connector::kMaxContentBytes == rp::graph::kMaxDownloadBytes);
+    CHECK(connector::kMaxContentBytes == connector::CandidateLimits{}.max_file_bytes);
+    CHECK(connector::kContentExportTimeout == std::chrono::seconds{60});
+    CHECK(connector::kContentExportBudget == std::chrono::minutes{15});
+    const connector::ContentExport e;
+    CHECK(e.kind == connector::ItemKind::sharepoint);
+    CHECK(e.index == 0);
+    CHECK(e.outcome == connector::ContentOutcome::refused);
+    CHECK(e.size_bytes == -1);
+    CHECK(e.ms == 0);
+    const connector::RestoreResult result;
+    CHECK(result.content.empty());
+    CHECK_FALSE(result.content_time.has_value());
+}
+
+TEST_CASE("a restore spec counts the file selectors that want content", "[connector][w6.3]")
+{
+    const connector::RestoreTargets targets =
+        connector::RestoreTargets::from_config(config_with_targets());
+    connector::RestoreSpec spec{.client_ref = "c", .restore_point = point("p", "t"),
+                                .targets = targets};
+    CHECK(spec.content_sink == nullptr);
+    CHECK(spec.content_max_bytes == connector::kMaxContentBytes);
+    spec.mail = {{"alice@x", "Inbox", "RP-CANARY-0001"}};
+    spec.sharepoint = {{"site", "drive", "/", "a.pdf"}, {"site", "drive", "/", "b.pdf"}};
+    spec.onedrive = {{"alice@x", "/RestoreTest", "c.pdf"}};
+    CHECK(spec.content_count() == 0);
+    spec.sharepoint[1].want_content = true;
+    CHECK(spec.content_count() == 1);
+    spec.onedrive[0].want_content = true;
+    CHECK(spec.content_count() == 2);
+    spec.sharepoint[0].want_content = true;
+    CHECK(spec.content_count() == 3);
 }
 
 TEST_CASE("a connector that can't list candidates says so by name", "[connector]")

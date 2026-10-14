@@ -1,11 +1,14 @@
 #pragma once
 
 // The sampler (W2.6; docs/decisions.md 2026-09-30, W2.6): which items a run
-// restores. Per type, half the sample size (rounded up) are canaries taken in
-// turn from the manifest by a cursor, and half (rounded down) are drawn from
-// the real data IConnector::list_candidates offers, with the portable draws of
-// rp/sample_rng.hpp seeded from the run ID. select is pure, so a run's
-// selection can be repeated from what its result records.
+// restores. With canaries (W6.2: an opt-in, docs/decisions.md 2026-10-14,
+// W6.3 and W6.2, points 9 and 10), per type half the sample size (rounded
+// up) are canaries taken in turn from the manifest by a cursor, and half
+// (rounded down) are drawn from the real data IConnector::list_candidates
+// offers; without canaries the whole sample is drawn from the real data.
+// The draws are the portable ones of rp/sample_rng.hpp seeded from the run
+// ID. select is pure, so a run's selection can be repeated from what its
+// result records.
 
 #include <rp/canary_manifest.hpp>
 #include <rp/config.hpp>
@@ -61,6 +64,11 @@ struct SampleRecord {
     std::string algorithm{kAlgorithm};
     std::string run_id;
     std::uint32_t seed = 0;
+    // W6.2: whether the run had canaries (a manifest). Without, the whole
+    // sample is random items, manifest_sha256 is empty and each type's
+    // rotation (cursor, cursor_next, canary_wanted, canary_ids) is 0 and empty
+    // and not written. False by default, as a run is (W6.3 review, finding 8).
+    bool canaries = false;
     std::string manifest_sha256;
     KindRecord mail;
     KindRecord sharepoint;
@@ -75,6 +83,9 @@ struct SampleRecord {
 // "folders_listed", "short_of_containers"}}}. "containers_drawn" is how many
 // containers the draw looked into (BrowseRecord::containers_listed's length):
 // their names are of containers the run didn't test and stay out of the result.
+// W6.2: without canaries "manifest_sha256" and each type's "canary" object
+// are left out (never null): facts of a rotation the run didn't have.
+// Throws std::logic_error for `canaries` with an empty manifest_sha256.
 nlohmann::json to_json(const SampleRecord& record);
 
 struct Selection {
@@ -96,8 +107,10 @@ struct Selection {
 class SampleSelector {
 public:
     // Pure: no I/O, no clock. The seed is derived from run_id here, so no
-    // caller can pass one the run ID didn't give. Per type, with N the plan's
-    // size and M the manifest's canaries:
+    // caller can pass one the run ID didn't give. `manifest` null (W6.2): the
+    // run has no canaries, every cursor must be 0, and per type the whole
+    // size N is random. With one, per type, with N the plan's size and M the
+    // manifest's canaries:
     //  - canaries: c = min(ceil(N/2), M) from the cursor on (mod M), the next
     //    cursor (cursor + c) mod M;
     //  - random: floor(N/2) drawn from the pool, sorted by key and
@@ -115,7 +128,7 @@ public:
     // std::logic_error ("sampler: the connector offered ...") when the pool
     // holds a candidate list_candidates must never offer (a restore target, a
     // canary or a canary location), and then nothing is sampled.
-    static Selection select(const SamplePlan& plan, const CanaryManifest& manifest,
+    static Selection select(const SamplePlan& plan, const CanaryManifest* manifest,
                             const CanaryCursor& cursor, const connector::RestoreTargets& targets,
                             const connector::CandidatePool& pool, std::string_view run_id);
 };
@@ -131,10 +144,12 @@ std::vector<std::string> random_key(const connector::OneDriveSelector& file);
 // Why `cursor` is out of `manifest`'s range, for the first type that is (mail,
 // sharepoint, onedrive): "the <kind> cursor must be below <n>, the manifest's
 // <kind> canaries", or "the <kind> cursor must be 0: the manifest has no <kind>
-// canaries"; nullopt when every cursor is in range. The one cursor rule:
+// canaries"; nullopt when every cursor is in range. A null manifest (W6.2) has
+// no canaries of any type, so every cursor must be 0 ("the <kind> cursor must
+// be 0: the run has no canaries"). The one cursor rule:
 // select throws std::invalid_argument("sampler: " + it), and `rpworker
 // restore` says it as a usage error before any Veeam call.
-std::optional<std::string> cursor_problem(const CanaryManifest& manifest,
+std::optional<std::string> cursor_problem(const CanaryManifest* manifest,
                                           const CanaryCursor& cursor);
 
 // The manifest against the client, pure: manifest.tenant_id is
@@ -153,16 +168,20 @@ void check_manifest_tenant(const CanaryManifest& manifest, const std::string& gr
 void check_manifest_targets(const CanaryManifest& manifest,
                             const connector::RestoreTargets& targets);
 
-// A run's sample: connector.list_candidates for the types whose random half is
-// above 0 (not called when none is), then SampleSelector::select. The query
-// excludes the manifest's canary libraries, subjects and names. Checks first,
-// before the connector is called: the run ID, the plan and cursor as select
-// does, then check_manifest. The connector's errors pass out.
+// A run's sample: connector.list_candidates for the types whose random part
+// is above 0 (not called when none is), then SampleSelector::select. With a
+// manifest the query excludes its canary libraries, subjects, names and
+// OneDrive folders, and the checks come first, before the connector is
+// called: the run ID, the plan and cursor as select does, then
+// check_manifest. Without one (W6.2, null) the query excludes nothing of a
+// manifest's (the lister's own rules, the restore targets and the rp-canary-
+// prefix, stay) and the whole plan is random. The connector's errors pass
+// out.
 Selection choose_sample(connector::IConnector& connector, const std::string& client_ref,
                         const connector::RestorePoint& point,
                         const connector::RestoreTargets& targets,
                         const std::string& graph_tenant_id, const SamplePlan& plan,
-                        const CanaryManifest& manifest, const CanaryCursor& cursor,
+                        const CanaryManifest* manifest, const CanaryCursor& cursor,
                         std::string_view run_id, const connector::CandidateLimits& limits = {});
 
 } // namespace rp::sampling

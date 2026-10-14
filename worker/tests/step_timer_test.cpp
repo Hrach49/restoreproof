@@ -60,8 +60,8 @@ timing::SpanTiming span_of(const StepTimer& timer, Span span)
 
 const Span kAllSpans[] = {Span::restore_point_lookup, Span::cleanup_before, Span::sample_select,
                           Span::target_snapshot,      Span::restore,        Span::restore_submit,
-                          Span::restore_wait,         Span::verify,         Span::recovery,
-                          Span::cleanup_after,        Span::total};
+                          Span::restore_wait,         Span::content_export, Span::verify,
+                          Span::recovery,             Span::cleanup_after,  Span::total};
 
 // A Span outside the enum: a caller's cast gone wrong.
 const Span kBadSpan = static_cast<Span>(timing::kSpanCount);
@@ -412,6 +412,30 @@ TEST_CASE("step timer: report takes a connector's duration or marks it not repor
     CHECK(fake.reads == 0);
 }
 
+TEST_CASE("step timer: delay_start moves an open span's start later, and nothing else",
+          "[step_timer][w6.3]")
+{
+    FakeClock fake;
+    StepTimer timer{fake.clock()};
+    CHECK(timer.start(Span::restore, t0));
+    CHECK(timer.start(Span::recovery, t0));
+
+    CHECK(timer.delay_start(Span::restore, seconds{3}));
+    CHECK(timer.delay_start(Span::recovery, nanoseconds{0}));
+    // Refused: a negative shift, a span not open, a span outside the enum.
+    CHECK_FALSE(timer.delay_start(Span::restore, nanoseconds{-1}));
+    CHECK_FALSE(timer.delay_start(Span::verify, seconds{1}));
+    CHECK_FALSE(timer.delay_start(static_cast<Span>(99), seconds{1}));
+    CHECK(timer.end(Span::restore, t0 + seconds{10}));
+    CHECK(timer.end(Span::recovery, t0 + seconds{10}));
+    CHECK_FALSE(timer.delay_start(Span::restore, seconds{1}));
+
+    CHECK(span_of(timer, Span::restore).duration == seconds{7});
+    CHECK(span_of(timer, Span::recovery).duration == seconds{10});
+    CHECK(span_of(timer, Span::verify).state == SpanState::not_run);
+    CHECK(fake.reads == 0);
+}
+
 TEST_CASE("step timer: spans that share a reading share it exactly", "[step_timer]")
 {
     FakeClock fake;
@@ -483,8 +507,8 @@ TEST_CASE("step timer: span and state names, and the table's notes", "[step_time
 {
     const std::vector<std::string_view> names = {
         "restore_point_lookup", "cleanup_before", "sample_select", "target_snapshot",
-        "restore",              "restore_submit", "restore_wait",  "verify",
-        "recovery",             "cleanup_after",  "total"};
+        "restore",              "restore_submit", "restore_wait",  "content_export",
+        "verify",               "recovery",       "cleanup_after", "total"};
     REQUIRE(names.size() == timing::kSpanCount);
     for (std::size_t i = 0; i < timing::kSpanCount; ++i) {
         CHECK(timing::to_string(kAllSpans[i]) == names[i]);
@@ -526,7 +550,7 @@ timing::RunTimings every_state()
 
 } // namespace
 
-TEST_CASE("step timer: format_timings prints all eleven rows in span order", "[step_timer]")
+TEST_CASE("step timer: format_timings prints all twelve rows in span order", "[step_timer]")
 {
     CHECK(timing::format_timings(every_state()) ==
           "STEP                  TIME         NOTE\n"
@@ -537,6 +561,7 @@ TEST_CASE("step timer: format_timings prints all eleven rows in span order", "[s
           "restore               0:08:10.004  stopped\n"
           "restore_submit        -            not reported\n"
           "restore_wait          -            clock went back\n"
+          "content_export        -            not run\n"
           "verify                -            not closed\n"
           "recovery              -            not run\n"
           "cleanup_after         -            not run\n"
@@ -554,6 +579,7 @@ TEST_CASE("step timer: to_json has every span as a key, null when it didn't run"
         "restore": {"ms": 490004, "note": "stopped"},
         "restore_submit": {"note": "not_reported"},
         "restore_wait": {"note": "clock_backwards"},
+        "content_export": null,
         "verify": {"note": "open"},
         "recovery": null,
         "cleanup_after": null,

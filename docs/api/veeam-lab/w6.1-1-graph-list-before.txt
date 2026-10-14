@@ -1,0 +1,12 @@
+W6.1 (#181) step 1: rpworker graph list before the spike: the three restore targets must be empty.
+started 2026-10-13T23:36:50Z
+
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+0 item(s) in the three restore targets
+
+exit code 0

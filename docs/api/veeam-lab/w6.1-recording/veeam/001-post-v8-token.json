@@ -1,0 +1,17 @@
+{
+  "source": "rpworker 0.0.0 w6.1 export spike --record",
+  "request": "POST /v8/token",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "access_token": "[REDACTED]",
+    "refresh_token": "[REDACTED]",
+    "token_type": "bearer",
+    "expires_in": 3600,
+    "userName": "DESKTOP-P55CDUM\\rp-veeam",
+    ".issued": "2026-10-13T23:37:11.0370878Z",
+    ".expires": "2026-10-14T00:37:11.0370878Z"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "source": "rpworker 0.0.0 w6.1 export spike --record",
+  "request": "POST /v8/RestoreSessions/4532c9c7-21af-4f68-a038-4cbdfefb8aa1/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313bc4f9093f-3fd8-460f-8550-8034b2535054/save",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/octet-stream"
+  },
+  "body": null,
+  "body_size": 87,
+  "body_sha256": "f1fb906f8d50c0fcd2e61952c82ccf04df717ee6cc9009b0745fd58909025d3e",
+  "request_body": {
+    "asZip": false
+  }
+}

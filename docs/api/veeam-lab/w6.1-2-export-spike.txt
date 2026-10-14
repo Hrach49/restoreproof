@@ -1,0 +1,120 @@
+W6.1 (#181) step 2: rptests "live export spike*" (worker/tests/export_spike_live_test.cpp): the 14 exports, the restore through the guarded path, the read-back and the comparison. The copies are left for step 3.
+started 2026-10-13T23:36:52Z
+
+Filters: "live export spike*"
+Randomness seeded to: 162787525
+W6.1 export spike started 2026-10-13T23:36:52Z as rp-veeam
+restore point 2026-10-13T22:00:58.3211091Z c2f0f2e7-177f-48ac-992b-93a50cf702e33203ea1d-3395-4c0c-8cdf-9707be7125cd
+candidates: 7 sharepoint, 7 onedrive (containers listed 4 and 2)
+sharepoint candidate / team-meeting-notes.txt (list 7ce76907-31fb-45fe-ad8f-960264f0313b)
+sharepoint candidate / supplier-contacts.txt (list 7ce76907-31fb-45fe-ad8f-960264f0313b)
+sharepoint candidate / project-brief.pdf (list 7ce76907-31fb-45fe-ad8f-960264f0313b)
+sharepoint candidate / budget-summary.pdf (list 7ce76907-31fb-45fe-ad8f-960264f0313b)
+sharepoint candidate / office-floor-plan.png (list 7ce76907-31fb-45fe-ad8f-960264f0313b)
+sharepoint candidate / brand-colours-draft.png (list 7ce76907-31fb-45fe-ad8f-960264f0313b)
+sharepoint candidate / room-bookings.xlsx (list 7ce76907-31fb-45fe-ad8f-960264f0313b)
+onedrive candidate alice@RestoreProofLab.onmicrosoft.com / reading-list.txt
+onedrive candidate alice@RestoreProofLab.onmicrosoft.com / travel-notes.txt
+onedrive candidate alice@RestoreProofLab.onmicrosoft.com / expense-report-march.pdf
+onedrive candidate alice@RestoreProofLab.onmicrosoft.com / course-certificate.pdf
+onedrive candidate alice@RestoreProofLab.onmicrosoft.com / holiday-photo.png
+onedrive candidate alice@RestoreProofLab.onmicrosoft.com / whiteboard-sketch.png
+onedrive candidate alice@RestoreProofLab.onmicrosoft.com / weekly-status.docx
+[2026-10-14 01:37:10.080] [live_export] [info] listed 0 item(s) in the RestoreTarget library
+
+[2026-10-14 01:37:10.472] [live_export] [info] listed 0 item(s) in the test OneDrive folder
+
+targets before: 0 sharepoint, 0 onedrive
+source library before: 7 items
+source onedrive root before: {"childCount":10,"eTag":"","id":"01ZK75LGF6Y2GOVW7725BZO354PWSELRRZ","lastModifiedDateTime":"2026-10-13T23:33:29Z","size":75284}
+session A (Vesp) 4532c9c7-21af-4f68-a038-4cbdfefb8aa1
+sites listed: 7; RestoreTest site found
+site documents listed: 19
+export sharepoint team-meeting-notes.txt: 200 application/octet-stream len 87 got 87 B (veeam size 87) in 14915 ms sha256 f1fb906f8d50c0fcd2e61952c82ccf04df717ee6cc9009b0745fd58909025d3e
+export sharepoint supplier-contacts.txt: 200 application/octet-stream len 84 got 84 B (veeam size 84) in 1213 ms sha256 05c0de9efc1e6113aa07caf47bbdc334fef014dcaaf055d9e816d49922c13b89
+export sharepoint project-brief.pdf: 200 application/octet-stream len 899 got 899 B (veeam size 899) in 768 ms sha256 d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71
+export sharepoint budget-summary.pdf: 200 application/octet-stream len 894 got 894 B (veeam size 894) in 734 ms sha256 4acae6b1632752b9ce1b84a691691df9289eea3605fa7eaa66afc015d4ba8e43
+export sharepoint office-floor-plan.png: 200 application/octet-stream len 12420 got 12420 B (veeam size 12420) in 1413 ms sha256 7951cde1a0e313c1fce94d8271bf9b5f67a601b02ebd80907db0784036fe0246
+export sharepoint brand-colours-draft.png: 200 application/octet-stream len 12420 got 12420 B (veeam size 12420) in 1201 ms sha256 89a9f0d1ba70360f335250e508a9f859e8eb67f883a2de1d7d991ea2a022abd9
+export sharepoint room-bookings.xlsx: 200 application/octet-stream len 19995 got 19995 B (veeam size 19995) in 1027 ms sha256 69703b0295e517c7149743defae6397dde43952fe6f2012dcc0a126a00bf3795 office-v1 a2d69a1b8883dfd250d2e5ba44950e7edac8d20c526d4317fd953c26156c3c4e
+asZip project-brief.pdf: {"bytes":598,"content_disposition":"attachment; filename=project-brief.pdf.zip; filename*=UTF-8''project-brief.pdf.zip","content_length":"598","content_type":"application/octet-stream","entries":1,"error":"","file":"project-brief.pdf","first_entry_bytes":899,"first_entry_equals_plain_export":true,"first_entry_name":"project-brief.pdf","first_entry_sha256":"d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71","is_zip":true,"ms":1282,"status":200}
+session A after exports: {"document_reread_name":"team-meeting-notes.txt","session":"4532c9c7-21af-4f68-a038-4cbdfefb8aa1","state":"Working"}
+session B (Veod) fc6176f5-6946-4426-a07a-6845d2f652e0
+onedrives listed: 2; alice's found
+onedrive documents listed: 17
+export onedrive reading-list.txt: 200 application/octet-stream len 60 got 60 B (veeam size 60) in 500 ms sha256 100094ac90d10f71f9c1a60cdd06f0d6ea67e82442cca9f2e18f77ac17887bba
+export onedrive travel-notes.txt: 200 application/octet-stream len 75 got 75 B (veeam size 75) in 596 ms sha256 4db1fbcb63b82aeee4ce41086ea5dd244a2798104768cc50a04bb5b9f551cad0
+export onedrive expense-report-march.pdf: 200 application/octet-stream len 910 got 910 B (veeam size 910) in 494 ms sha256 b0ecbe97d0828844155e89e2cec42027dfc88e7793de08fe697d97d07fd44879
+export onedrive course-certificate.pdf: 200 application/octet-stream len 907 got 907 B (veeam size 907) in 493 ms sha256 16237a1cdb3d1cf017cdd6562c085372670631ff5ff7f7f75987b946f01c5e02
+export onedrive holiday-photo.png: 200 application/octet-stream len 12420 got 12420 B (veeam size 12420) in 808 ms sha256 7731653c27df7ff2932094b2f436e82a10bed211898bd250de8076faaf0859ce
+export onedrive whiteboard-sketch.png: 200 application/octet-stream len 12420 got 12420 B (veeam size 12420) in 879 ms sha256 e1f664a2d4736300375c4c58eb1a8c9fe3d94f60ad9decb16584e60168dadff8
+export onedrive weekly-status.docx: 200 application/octet-stream len 3230 got 3230 B (veeam size 3230) in 736 ms sha256 9396a67f678fd5f10649557f107fb22a00df7eed9c62c159589a388c0330b333 office-v1 bcf2ef44b8aea4e31ebe161ca93c441f90b3f706d0bd5d5a6ae8907c93df99a1
+stopped session fc6176f5-6946-4426-a07a-6845d2f652e0 -> 204
+stopped session 4532c9c7-21af-4f68-a038-4cbdfefb8aa1 -> 204
+source library unchanged by the exports: yes; onedrive root unchanged: yes
+export beside the running restore: {"bytes":899,"equals_first_export":true,"file":"project-brief.pdf","ms":11958,"seen":true,"session_c":"29efce0b-388d-42db-a139-bd70f6dc2edb","sha256":"d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71","status":200,"working_vesp_sessions":[{"creationTime":"2026-10-13T23:38:05.0405654Z","id":"4dc4c706-5902-4e04-a8a6-145a88d2cfa7"},{"creationTime":"2026-10-13T23:37:50.2263254Z","id":"687c3d24-301d-4b55-a91e-fd444360eb29"}]}
+stopped session 29efce0b-388d-42db-a139-bd70f6dc2edb -> 204
+[2026-10-14 01:40:28.963] [live_export] [warning] veeam_m365: stopping explore session 58a1b0cc-fe33-4569-a457-1349d64a89ba failed (Veeam POST https://localhost:4443/v8/RestoreSessions/58a1b0cc-fe33-4569-a457-1349d64a89ba/Stop: timed out: Operation timed out after 30009 milliseconds with 0 bytes received) and it is still Working; sending Stop once more
+
+[2026-10-14 01:40:58.985] [live_export] [warning] veeam_m365: couldn't close explore session 58a1b0cc-fe33-4569-a457-1349d64a89ba: Veeam POST https://localhost:4443/v8/RestoreSessions/58a1b0cc-fe33-4569-a457-1349d64a89ba/Stop: timed out: Operation timed out after 30019 milliseconds with 0 bytes received
+
+restore status succeeded: 14 of 14 item(s) restored
+restore session 4dc4c706-5902-4e04-a8a6-145a88d2cfa7 (sharepoint) 2026-10-13T23:38:05.0405654Z .. 2026-10-13T23:39:18.6901981Z: Success, 7 items processed (7 successes) (7 of 7)
+restore session 0b261e56-b78a-44b8-abdb-b97e0545e4f5 (onedrive) 2026-10-13T23:39:22.1835758Z .. 2026-10-13T23:39:54.1336108Z: Success, 7 items processed (7 successes) (7 of 7)
+restore item sharepoint team-meeting-notes.txt: restored (Item team-meeting-notes.txt was restored successfully (type: File; source: /sites/RestoreTest/Shared Documents/team-meeting-notes.txt; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest))
+restore item sharepoint supplier-contacts.txt: restored (Item supplier-contacts.txt was restored successfully (type: File; source: /sites/RestoreTest/Shared Documents/supplier-contacts.txt; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest))
+restore item sharepoint project-brief.pdf: restored (Item project-brief.pdf was restored successfully (type: File; source: /sites/RestoreTest/Shared Documents/project-brief.pdf; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest))
+restore item sharepoint budget-summary.pdf: restored (Item budget-summary.pdf was restored successfully (type: File; source: /sites/RestoreTest/Shared Documents/budget-summary.pdf; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest))
+restore item sharepoint office-floor-plan.png: restored (Item office-floor-plan.png was restored successfully (type: File; source: /sites/RestoreTest/Shared Documents/office-floor-plan.png; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest))
+restore item sharepoint brand-colours-draft.png: restored (Item brand-colours-draft.png was restored successfully (type: File; source: /sites/RestoreTest/Shared Documents/brand-colours-draft.png; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest))
+restore item sharepoint room-bookings.xlsx: restored (Item room-bookings.xlsx was restored successfully (type: File; source: /sites/RestoreTest/Shared Documents/room-bookings.xlsx; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest))
+restore item onedrive reading-list.txt: restored (Item reading-list.txt was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/reading-list.txt; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com))
+restore item onedrive travel-notes.txt: restored (Item travel-notes.txt was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/travel-notes.txt; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com))
+restore item onedrive expense-report-march.pdf: restored (Item expense-report-march.pdf was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/expense-report-march.pdf; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com))
+restore item onedrive course-certificate.pdf: restored (Item course-certificate.pdf was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/course-certificate.pdf; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com))
+restore item onedrive holiday-photo.png: restored (Item holiday-photo.png was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/holiday-photo.png; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com))
+restore item onedrive whiteboard-sketch.png: restored (Item whiteboard-sketch.png was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/whiteboard-sketch.png; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com))
+restore item onedrive weekly-status.docx: restored (Item weekly-status.docx was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/weekly-status.docx; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com))
+[2026-10-14 01:41:02.240] [live_export] [info] listed 7 item(s) in the RestoreTarget library
+
+[2026-10-14 01:41:04.942] [live_export] [info] listed 7 item(s) in the test OneDrive folder
+
+targets after the restore: 7 sharepoint, 7 onedrive
+
+KIND        NAME                      OFFICE  VEEAM_SIZE  EXPORT  MS     EXPORT_BYTES  RESTORED_BYTES  BYTES_EQUAL  CONTENT_EQUAL
+sharepoint  team-meeting-notes.txt    -       87          200     14915  87            87              yes          yes
+sharepoint  supplier-contacts.txt     -       84          200     1213   84            84              yes          yes
+sharepoint  project-brief.pdf         -       899         200     768    899           899             yes          yes
+sharepoint  budget-summary.pdf        -       894         200     734    894           894             yes          yes
+sharepoint  office-floor-plan.png     -       12420       200     1413   12420         12420           yes          yes
+sharepoint  brand-colours-draft.png   -       12420       200     1201   12420         12420           yes          yes
+sharepoint  room-bookings.xlsx        xlsx    19995       200     1027   19995         22594           no           yes
+onedrive    reading-list.txt          -       60          200     500    60            60              yes          yes
+onedrive    travel-notes.txt          -       75          200     596    75            75              yes          yes
+onedrive    expense-report-march.pdf  -       910         200     494    910           910             yes          yes
+onedrive    course-certificate.pdf    -       907         200     493    907           907             yes          yes
+onedrive    holiday-photo.png         -       12420       200     808    12420         12420           yes          yes
+onedrive    whiteboard-sketch.png     -       12420       200     879    12420         12420           yes          yes
+onedrive    weekly-status.docx        docx    3230        200     736    3230          3230            yes          yes
+
+exports with the listed size as octet-stream: 14 of 14; content equal to the restored copy: 14 of 14
+hash sharepoint team-meeting-notes.txt: export f1fb906f8d50c0fcd2e61952c82ccf04df717ee6cc9009b0745fd58909025d3e restored f1fb906f8d50c0fcd2e61952c82ccf04df717ee6cc9009b0745fd58909025d3e
+hash sharepoint supplier-contacts.txt: export 05c0de9efc1e6113aa07caf47bbdc334fef014dcaaf055d9e816d49922c13b89 restored 05c0de9efc1e6113aa07caf47bbdc334fef014dcaaf055d9e816d49922c13b89
+hash sharepoint project-brief.pdf: export d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71 restored d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71
+hash sharepoint budget-summary.pdf: export 4acae6b1632752b9ce1b84a691691df9289eea3605fa7eaa66afc015d4ba8e43 restored 4acae6b1632752b9ce1b84a691691df9289eea3605fa7eaa66afc015d4ba8e43
+hash sharepoint office-floor-plan.png: export 7951cde1a0e313c1fce94d8271bf9b5f67a601b02ebd80907db0784036fe0246 restored 7951cde1a0e313c1fce94d8271bf9b5f67a601b02ebd80907db0784036fe0246
+hash sharepoint brand-colours-draft.png: export 89a9f0d1ba70360f335250e508a9f859e8eb67f883a2de1d7d991ea2a022abd9 restored 89a9f0d1ba70360f335250e508a9f859e8eb67f883a2de1d7d991ea2a022abd9
+hash sharepoint room-bookings.xlsx: export 69703b0295e517c7149743defae6397dde43952fe6f2012dcc0a126a00bf3795 restored 16f0b9d80077dec2a97b9cb277e026a1bb8d85ae8b164cf137fb6ee8f8b550b2 office-v1 export a2d69a1b8883dfd250d2e5ba44950e7edac8d20c526d4317fd953c26156c3c4e restored a2d69a1b8883dfd250d2e5ba44950e7edac8d20c526d4317fd953c26156c3c4e
+hash onedrive reading-list.txt: export 100094ac90d10f71f9c1a60cdd06f0d6ea67e82442cca9f2e18f77ac17887bba restored 100094ac90d10f71f9c1a60cdd06f0d6ea67e82442cca9f2e18f77ac17887bba
+hash onedrive travel-notes.txt: export 4db1fbcb63b82aeee4ce41086ea5dd244a2798104768cc50a04bb5b9f551cad0 restored 4db1fbcb63b82aeee4ce41086ea5dd244a2798104768cc50a04bb5b9f551cad0
+hash onedrive expense-report-march.pdf: export b0ecbe97d0828844155e89e2cec42027dfc88e7793de08fe697d97d07fd44879 restored b0ecbe97d0828844155e89e2cec42027dfc88e7793de08fe697d97d07fd44879
+hash onedrive course-certificate.pdf: export 16237a1cdb3d1cf017cdd6562c085372670631ff5ff7f7f75987b946f01c5e02 restored 16237a1cdb3d1cf017cdd6562c085372670631ff5ff7f7f75987b946f01c5e02
+hash onedrive holiday-photo.png: export 7731653c27df7ff2932094b2f436e82a10bed211898bd250de8076faaf0859ce restored 7731653c27df7ff2932094b2f436e82a10bed211898bd250de8076faaf0859ce
+hash onedrive whiteboard-sketch.png: export e1f664a2d4736300375c4c58eb1a8c9fe3d94f60ad9decb16584e60168dadff8 restored e1f664a2d4736300375c4c58eb1a8c9fe3d94f60ad9decb16584e60168dadff8
+hash onedrive weekly-status.docx: export 9396a67f678fd5f10649557f107fb22a00df7eed9c62c159589a388c0330b333 restored 9396a67f678fd5f10649557f107fb22a00df7eed9c62c159589a388c0330b333 office-v1 export bcf2ef44b8aea4e31ebe161ca93c441f90b3f706d0bd5d5a6ae8907c93df99a1 restored bcf2ef44b8aea4e31ebe161ca93c441f90b3f706d0bd5d5a6ae8907c93df99a1
+evidence written to C:\Users\minas\AppData\Local\RestoreProof\lab\w6.1-20261014T013650\w6.1-results.json
+===============================================================================
+All tests passed (152 assertions in 1 test case)
+
+
+exit code 0

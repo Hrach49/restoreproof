@@ -247,8 +247,10 @@ Until the lab holds real (non-canary) data the random half is mostly a recorded 
 
 ### Live restore (writes to the lab tenant)
 
-**These two tests write.** They are the only live tests that change anything: one restores
-real items into the three restore targets and deletes them again, the other only deletes
+**These three tests write.** They are the only live tests that change anything: one restores
+canaries into the three restore targets and deletes them again, one (W6.1's export spike, below)
+restores the 14 real files into the two file targets and leaves them for the harness to read and
+clean, the other only deletes
 (W3.4's Cleaner). Each is skipped unless **both** `RP_LIVE=1` and `RP_LIVE_RESTORE=1` are set,
 so a normal `RP_LIVE=1` run stays read-only. Each takes the run mutex
 `Global\RestoreProof-restore-targets` first, as `rpworker restore` does
@@ -300,10 +302,36 @@ $env:RP_LIVE_EVIDENCE_FILE = "$env:TEMP\w2.5-live-restore.json"   # optional
 ctest --preset dev -R "live restore" -V
 ```
 
-(`.\build\dev\rptests.exe "[live][writes]"` runs both writing tests). The restored copies are
+(`.\build\dev\rptests.exe "[live][writes]"` runs all three writing tests, the export spike
+included). The restored copies are
 deleted at the test's end, so `rpworker graph list --hash` afterwards shows empty targets; to
 read a restore's copies back and compare them with the manifest, use `rpworker restore` (below),
 whose check does it before its clean after.
+
+**The export spike (W6.1).** `worker/tests/export_spike_live_test.cpp` (tag `[live][writes]`,
+ctest name `live export spike: Veeam's document export in admin mode against the restored copy`;
+`docs/decisions.md` 2026-10-14, W6.1) is the spike's harness and no product code: as `rp-veeam`
+from the vault it finds the lab's 14 real files (L1.8) through the connector's `list_candidates`,
+exports each from explore sessions of its own (`POST …/Documents/{id}/save {"asZip":false}`, the
+pdf once more with `asZip` true), stops those sessions and reads them again until neither is
+`Working` (one more Stop after a minute, as the connector sends one; still `Working` after three
+minutes fails the test there, before any restore, since the connector's preflight would refuse
+it), restores the same 14 through `restore_sample` (the guarded path, on a thread, with one more
+export from a third session while the SharePoint restore is `Working`: that session is opened as
+soon as the connector's explore session is listed, before its restore POST, so it is older than
+the connector's duplicate window, and the sessions are listed as `own_sessions` lists them, since
+the restore began, newest first), reads the two file targets back with `TargetReader` and
+compares: SHA-256 for pdf, txt and png, `office-v1` on both sides for the xlsx and the docx. It
+prints one table and writes it as JSON to `RP_LIVE_EVIDENCE_FILE`; with `RP_LIVE_RECORD_DIR` (a
+new or empty folder) its own Veeam exchanges are recorded, scrubbed, under `veeam/` (JSON) and
+`export/` (the exports as digests, never the bytes). **It does not clean:** run it through
+`docs/api/veeam-lab/w6.1-harness/w61-live.ps1` (elevated PowerShell 7), which checks the targets
+are empty first (targets that aren't are left as they are: nothing of this run is in them), runs
+the test, reads the copies back with `rpworker graph list --hash`, and runs the live cleanup test
+in its `finally` once the test has started; it copies the evidence into `docs/api/veeam-lab/` only
+when every step exited 0 and no file holds a token-, PFX-, PEM- or key-shaped value. It needs
+the variables of the live restore test above (the vault, `RP_LIVE_VEEAM_CA_FILE`, an elevated
+shell), and the restore point must hold the 14 files (a missing one stops it before any export).
 
 **The live cleanup test.** `worker/tests/cleaner_live_test.cpp` (W3.4, tag `[live][writes]`,
 ctest name `live cleanup: the Cleaner empties the three restore targets with folders and all`;

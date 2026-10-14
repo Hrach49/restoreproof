@@ -888,3 +888,124 @@ the composite-ID handling.
   implements it in W2.5.)*
 - **A new user and Veeam's cache** (§2.4): observed in W1.0, not re-tested (it needs a tenant
   change).
+
+## 12. Document export (W6.1)
+
+The spike W6.1 (#181, `docs/decisions.md` 2026-10-14) answered, on 2026-10-13 23:36–23:41 UTC,
+whether Veeam's document export gives a real file's bytes straight from the backup **in admin
+mode** (as `rp-veeam`, the account the Worker signs in as), for **SharePoint and for OneDrive**,
+and whether those bytes compare with the copy a restore puts in the restore target. Until then
+the export had been run once, as the operator account, for SharePoint only (feasibility §2 d).
+Harness: `worker/tests/export_spike_live_test.cpp` through
+[`w6.1-harness/w61-live.ps1`](veeam-lab/w6.1-harness/w61-live.ps1) (`docs/testing.md`, "The
+export spike"); evidence [`w6.1-*`](veeam-lab/README.md#w61-spike-veeams-document-export-in-admin-mode).
+Items: the lab's 14 real files of L1.8 (7 in the RestoreTest site's default library, 7 in alice's
+OneDrive root), found through the connector's own `list_candidates` on the restore point of
+2026-10-13T22:00:58.3211091Z; no canary, no mail.
+
+### 12.1 The call
+
+```
+POST /v8/RestoreSessions/{restoreSessionId}/Organization/Sites/{siteId}/Documents/{documentId}/save
+POST /v8/RestoreSessions/{restoreSessionId}/Organization/OneDrives/{oneDriveId}/Documents/{documentId}/save
+Content-Type: application/json
+
+{"asZip": false}
+```
+
+→ **200** `application/octet-stream`, `Content-Length` = the document's `sizeBytes` as listed,
+`Content-Disposition: attachment; filename=<name>; filename*=UTF-8''<name>`, the body the file
+(`w6.1-recording/export/001` to `016`: the 14 exports, the `asZip` one and the one beside the
+restore, each as a digest, size and SHA-256). The document
+IDs are the ones `GET …/Documents` lists (§5.2, §5.3), the same in every session. The request
+names **no Microsoft 365 credential** (compare the restore bodies, feasibility §2 c), and Veeam
+answers it from the repository: the source library's listing (ids, names, sizes, eTags,
+modification times) and the OneDrive root's metadata, read through the Worker app before the
+first export and after the last, were equal (`w6.1-results.json`, `notes.source_unchanged`), and
+the restore targets were empty before and after the exports. **The export writes nothing in the
+tenant.**
+
+### 12.2 Admin mode, SharePoint and OneDrive: yes, both
+
+| Site / OneDrive | Session | Files | Exports | Bytes = `sizeBytes` | Time per file |
+|---|---|---|---|---|---|
+| RestoreTest site, default library (`Vesp` session `4532c9c7…`) | 7 sites listed, 19 documents in the site | txt ×2, pdf ×2, png ×2, xlsx | **7 of 7** 200 octet-stream | yes, all 7 | 14.9 s the first, then 0.7–1.4 s |
+| alice's OneDrive (`Veod` session `fc6176f5…`) | 2 OneDrives listed, 17 documents | txt ×2, pdf ×2, png ×2, docx | **7 of 7** 200 octet-stream | yes, all 7 | 0.5–0.9 s |
+
+(`w6.1-2-export-spike.txt`, the `export …` lines; the second full run of the night, whose
+evidence this is. The first full run, 23:31–23:35 UTC, gave the same 14 of 14 with 12.0 s, 9.5 s
+and 8.4 s as its slow ones; its files were replaced by this run's, as the harness replaces
+evidence only with a passing run's.)
+
+### 12.3 The export against the restored copy: 14 of 14 equal
+
+The same 14 were restored through `restore_sample` (the guarded path, two restore sessions,
+both `Success`, 7 of 7 each: `4dc4c706…` SharePoint 23:38:05–23:39:18, `0b261e56…` OneDrive
+23:39:22–23:39:54) and read back from the two file targets with the Worker's `TargetReader`
+(`w6.1-2-export-spike.txt`, the table and the `hash …` lines) and, as a second tool, `rpworker
+graph list --hash` (`w6.1-3-graph-list-hash-after.txt`):
+
+| File | Export bytes | Restored bytes | Bytes equal | Content equal (rule) |
+|---|---|---|---|---|
+| 6 SharePoint txt, pdf, png | 84–12,420 | the same | **yes** | **yes** (SHA-256) |
+| `room-bookings.xlsx` (SharePoint) | 19,995 | **22,594** | no: SharePoint rewrote the package on restore (as W1.0 saw for a docx) | **yes** (`office-v1` `a2d69a1b…` on both sides) |
+| 6 OneDrive txt, pdf, png | 60–12,420 | the same | **yes** | **yes** (SHA-256) |
+| `weekly-status.docx` (OneDrive) | 3,230 | 3,230 | **yes** | **yes** (`office-v1` `bcf2ef44…`; OneDrive rewrote nothing, as W3.1's check saw) |
+
+Every SHA-256 `graph list --hash` printed equals the test's restored hash. So the export's bytes
+are what a restore puts back, byte for byte for plain files, and by `office-v1` for Office files
+(byte for byte too where SharePoint doesn't rewrite).
+
+### 12.4 Limits and behaviour seen
+
+- **`asZip: true`** answers a ZIP (598 bytes for the 899-byte pdf, `Content-Disposition`
+  `project-brief.pdf.zip`) holding **one entry** named as the file, whose bytes equal the plain
+  export's (`notes.as_zip`). Nothing is gained: send `false` and hash the body.
+- **Time.** 0.5–1.5 s per file for these sizes, with one slow export per run of 9–15 s (the
+  first of the run in both runs, and one more in the first run); the overlap export below took
+  12.0 s. Budget 15 s or more per export, not the median. **Size:** the lab files are at most
+  20 KB, so no large file was tried; the Worker's own read-back cap is 64 MiB
+  (`rp::graph::kMaxDownloadBytes`), and an export above it would be the same cap's question.
+- **The session after an export** stays `Working` and browsable: a document re-read and the
+  session read after the seven exports (`notes.session_after_exports`). An export does not end
+  an admin explore session (the operator's one-restore-per-session rule of feasibility §2 b was
+  about restores).
+- **An export beside a running restore.** Once two `Vesp` sessions of ours were `Working` (the
+  connector's explore session `687c3d24…` and the restore `4dc4c706…` it had started), a third
+  explore session `29efce0b…` was opened and `project-brief.pdf` exported from it: 200, the
+  same SHA-256, 12.0 s; the restore went on to `Success` 7 of 7, and the OneDrive restore after
+  it too (`notes.export_during_restore`, `notes.restore`). The export disturbed neither.
+  Since the code review (`docs/decisions.md` 2026-10-14, "W6.1 code review") the test opens that
+  third session as soon as the connector's explore session is listed, before the restore POST, so
+  it is older than the connector's duplicate window (restore-flow §8: a `Working` `Vesp` session
+  of ours created from 5 s before the POST is a second candidate and costs the restore its
+  verdict, the connector's rule and not Veeam's; `notes.export_during_restore
+  .session_c_before_duplicate_window` says whether it was), and it lists the sessions since the
+  restore began, newest first, as `own_sessions` does, never the server's default order of a page
+  of everything; the kept evidence is the run before that change.
+- **A Stop that hangs**, once more: the connector's OneDrive explore session `58a1b0cc…` did
+  not answer two Stops within 30 s each and was left `Working` by the connector (its rule: at
+  most two Stops, `veeam_explore.cpp`); the same thing §4.4 recorded on 2026-09-30 and W3.2's
+  live run met on 2026-10-01. It is Veeam's Stop, not the export: the hang came after the
+  restores, on the session the connector had opened. `08-sweep-sessions.ps1 -WhatIf` some
+  minutes later listed 200 sessions and **0 Working**: the session had stopped on its own, as
+  on 2026-09-30.
+- **What `office-v1` reads:** `docx` and `xlsx` only (`rp/office_v1.hpp`, `lab/seeder/office.py`,
+  `CONTENT_FOLDERS`). A pptx, a doc, an xls, a ppt and the macro and template types are
+  rewritten by SharePoint (`docs/verification.md`, "The rule for the Office files SharePoint
+  rewrites") and have no content rule, so their export can't be compared with a restored copy
+  until a rule exists; none is in the lab, and the spike added none (from the code, not a live
+  check).
+
+### 12.5 Verdict for W6.3: go, with these limits
+
+The export works in admin mode for SharePoint and for OneDrive, and its bytes are the restored
+copy's. W6.3 (`backup_content`, the real file's content expected from the backup before the
+restore) can be built, under four conditions: (1) **Office files by `office-v1`, never by
+bytes** (the export is the bytes SharePoint stored; the restore may rewrite them again); (2)
+**`asZip` false**, always; (3) **pptx, legacy Office and the macro and template types stay
+`metadata` by name** until a content rule exists for them; (4) **a time budget of at least 15 s
+per export and the 64 MiB cap**, the export inside the connector's own explore session before
+the restore POST (an export leaves the session usable, and runs beside a restore). The one
+product seam the spike did not build is a `VeeamClient` method for an octet-stream POST, W6.3's
+with its unit tests (`docs/decisions.md` 2026-10-14, W6.1, point 1).

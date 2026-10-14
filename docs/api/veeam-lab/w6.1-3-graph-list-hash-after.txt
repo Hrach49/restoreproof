@@ -1,0 +1,28 @@
+W6.1 (#181) step 3: rpworker graph list --hash right after the spike: the restored copies as a second tool reads them (bytes SHA-256).
+started 2026-10-13T23:41:05Z
+
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 7 item(s)
+  NAME                     SIZE   ID                                  SHA256                                                            RULE
+  brand-colours-draft.png  12420  01BLWRTHJQAW6WNZKDLRFIW5UJHOBZ5D2B  89a9f0d1ba70360f335250e508a9f859e8eb67f883a2de1d7d991ea2a022abd9  bytes
+  budget-summary.pdf       894    01BLWRTHMZ5QVIC7BAIZCIAPEJYIMZYVEB  4acae6b1632752b9ce1b84a691691df9289eea3605fa7eaa66afc015d4ba8e43  bytes
+  office-floor-plan.png    12420  01BLWRTHOBGCIJGIXH7JBLX4R4PQUOSPL5  7951cde1a0e313c1fce94d8271bf9b5f67a601b02ebd80907db0784036fe0246  bytes
+  project-brief.pdf        899    01BLWRTHKZYENRUX7PJRGYW7ATIOSWOFWO  d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71  bytes
+  room-bookings.xlsx       22594  01BLWRTHMFEVCRZT2JSBCL6REOD77EWPOW  16f0b9d80077dec2a97b9cb277e026a1bb8d85ae8b164cf137fb6ee8f8b550b2  bytes
+  supplier-contacts.txt    84     01BLWRTHLFAVR42SVHBZB2UCEIL5AFTQ64  05c0de9efc1e6113aa07caf47bbdc334fef014dcaaf055d9e816d49922c13b89  bytes
+  team-meeting-notes.txt   87     01BLWRTHNHOOAZ7IPHLBA3R7ISVXYPMHO3  f1fb906f8d50c0fcd2e61952c82ccf04df717ee6cc9009b0745fd58909025d3e  bytes
+
+OneDrive (RestoreTarget folder): 7 item(s)
+  NAME                      SIZE   ID                                  SHA256                                                            RULE
+  course-certificate.pdf    907    01ZK75LGASS65CCGMVAFEIIRSDLZOZGH4J  16237a1cdb3d1cf017cdd6562c085372670631ff5ff7f7f75987b946f01c5e02  bytes
+  expense-report-march.pdf  910    01ZK75LGA3ZBL4IB6BKVBIVNM6OF2QRGQ7  b0ecbe97d0828844155e89e2cec42027dfc88e7793de08fe697d97d07fd44879  bytes
+  holiday-photo.png         12420  01ZK75LGDKWIWTA4I2ZVHI4ETDCB5LIZ3A  7731653c27df7ff2932094b2f436e82a10bed211898bd250de8076faaf0859ce  bytes
+  reading-list.txt          60     01ZK75LGEATHANVXJAVFGI5LMDCGHI3PPL  100094ac90d10f71f9c1a60cdd06f0d6ea67e82442cca9f2e18f77ac17887bba  bytes
+  travel-notes.txt          75     01ZK75LGAUN3TTSYZKFFELRWG2VT7YJXRU  4db1fbcb63b82aeee4ce41086ea5dd244a2798104768cc50a04bb5b9f551cad0  bytes
+  weekly-status.docx        3230   01ZK75LGFZ2RA3TMGJ5BAKI3EMINY37WP7  9396a67f678fd5f10649557f107fb22a00df7eed9c62c159589a388c0330b333  bytes
+  whiteboard-sketch.png     12420  01ZK75LGGETE6GEONAN5B2ULBFLY6FDHPV  e1f664a2d4736300375c4c58eb1a8c9fe3d94f60ad9decb16584e60168dadff8  bytes
+
+14 item(s) in the three restore targets
+
+exit code 0

@@ -24,7 +24,10 @@ There are three kinds, one per item, never mixed, and no "unknown" kind:
 - **Random items are expected from the backup, not from Graph.** The Worker app may read only
   the restore targets, never a source, so the backup's listing is the only place a random
   item's expectation can come from. A random file's content isn't expected in Stage 1 (a fourth
-  kind, `backup_content`, from Veeam's document export, is a follow-up task after W3.2).
+  kind, `backup_content`, from Veeam's document export, is a follow-up task after W3.2). W6.1
+  (2026-10-14, `docs/api/veeam-notes.md` §12) showed that export works in admin mode for
+  SharePoint and OneDrive and gives the restored copy's bytes (plain files byte for byte, Office
+  files by `office-v1`), so W6.3 can build the kind under the limits §12.5 lists.
 - **The sender.** A canary's sender is an address (the manifest's `sender`); a random mail's is
   a display name (`sender_name`), because Veeam's browse lists only that. W3.2 compares each
   with the matching Graph field.

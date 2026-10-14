@@ -194,7 +194,9 @@ The schema marks none of these as required.
 | `rp-canary-02.docx`, **restored** into `RestoreTarget` | — | 15 563 bytes: SharePoint **rewrote it again**, whole-file hash new; `office-v1` `5540efd7…f30b`; unchanged 16 minutes later | same | **yes** |
 
 This closes the question left open in `lab/README.md`: a Veeam restore into the library
-keeps the `office-v1` content hash. The MSG's sender property is an Exchange X.500 address,
+keeps the `office-v1` content hash. *W6.1 (2026-10-14) repeated the export in **admin mode**, for
+SharePoint and for OneDrive, on 14 real files against their restored copies: 14 of 14 equal
+(`veeam-notes.md` §12).* The MSG's sender property is an Exchange X.500 address,
 not SMTP; match mail on `internetMessageId` (as L1.4 found).
 
 ## 3. How a restore's result is read

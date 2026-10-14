@@ -1,0 +1,157 @@
+W6.3 (#183) step 2: rptests "live backup content*" (worker/tests/backup_content_live_test.cpp): the 14 real files restored three times through the guarded path; (a) as they are, (b) one byte of team-meeting-notes.txt changed in its restored copy, (c) every export over a 1-byte cap. It cleans after each.
+started 2026-10-14T17:37:26Z
+
+Filters: "live backup content*"
+Randomness seeded to: 1815038597
+restore point 2026-10-13T22:00:58.3211091Z c2f0f2e7-177f-48ac-992b-93a50cf702e33203ea1d-3395-4c0c-8cdf-9707be7125cd
+
+== a: as it is
+[2026-10-14 19:37:36.816] [live_backup_content] [info] cleanup before: the test mailbox's Inbox: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:37:37.319] [live_backup_content] [info] cleanup before: the RestoreTarget library: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:37:37.729] [live_backup_content] [info] cleanup before: the test OneDrive folder: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:37:38.115] [live_backup_content] [info] listed 0 item(s) in the RestoreTarget library
+
+[2026-10-14 19:37:38.393] [live_backup_content] [info] listed 0 item(s) in the test OneDrive folder
+
+content exports: 14 of 14 file(s) exported from the backup
+[2026-10-14 19:39:56.520] [live_backup_content] [info] listed 7 item(s) in the RestoreTarget library
+
+[2026-10-14 19:39:59.276] [live_backup_content] [info] listed 7 item(s) in the test OneDrive folder
+
+status pass: 14 of 14 item(s) verified: manifest 0, fields 0, metadata 0, backup_content 14
+  sharepoint  team-meeting-notes.txt  backup_content  exported  bytes  f1fb906f8d50c0fcd2e61952c82ccf04df717ee6cc9009b0745fd58909025d3e  f1fb906f8d50c0fcd2e61952c82ccf04df717ee6cc9009b0745fd58909025d3e  match
+  sharepoint  supplier-contacts.txt  backup_content  exported  bytes  05c0de9efc1e6113aa07caf47bbdc334fef014dcaaf055d9e816d49922c13b89  05c0de9efc1e6113aa07caf47bbdc334fef014dcaaf055d9e816d49922c13b89  match
+  sharepoint  project-brief.pdf  backup_content  exported  bytes  d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71  d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71  match
+  sharepoint  budget-summary.pdf  backup_content  exported  bytes  4acae6b1632752b9ce1b84a691691df9289eea3605fa7eaa66afc015d4ba8e43  4acae6b1632752b9ce1b84a691691df9289eea3605fa7eaa66afc015d4ba8e43  match
+  sharepoint  office-floor-plan.png  backup_content  exported  bytes  7951cde1a0e313c1fce94d8271bf9b5f67a601b02ebd80907db0784036fe0246  7951cde1a0e313c1fce94d8271bf9b5f67a601b02ebd80907db0784036fe0246  match
+  sharepoint  brand-colours-draft.png  backup_content  exported  bytes  89a9f0d1ba70360f335250e508a9f859e8eb67f883a2de1d7d991ea2a022abd9  89a9f0d1ba70360f335250e508a9f859e8eb67f883a2de1d7d991ea2a022abd9  match
+  sharepoint  room-bookings.xlsx  backup_content  exported  office-v1  a2d69a1b8883dfd250d2e5ba44950e7edac8d20c526d4317fd953c26156c3c4e  a2d69a1b8883dfd250d2e5ba44950e7edac8d20c526d4317fd953c26156c3c4e  match
+  onedrive  reading-list.txt  backup_content  exported  bytes  100094ac90d10f71f9c1a60cdd06f0d6ea67e82442cca9f2e18f77ac17887bba  100094ac90d10f71f9c1a60cdd06f0d6ea67e82442cca9f2e18f77ac17887bba  match
+  onedrive  travel-notes.txt  backup_content  exported  bytes  4db1fbcb63b82aeee4ce41086ea5dd244a2798104768cc50a04bb5b9f551cad0  4db1fbcb63b82aeee4ce41086ea5dd244a2798104768cc50a04bb5b9f551cad0  match
+  onedrive  expense-report-march.pdf  backup_content  exported  bytes  b0ecbe97d0828844155e89e2cec42027dfc88e7793de08fe697d97d07fd44879  b0ecbe97d0828844155e89e2cec42027dfc88e7793de08fe697d97d07fd44879  match
+  onedrive  course-certificate.pdf  backup_content  exported  bytes  16237a1cdb3d1cf017cdd6562c085372670631ff5ff7f7f75987b946f01c5e02  16237a1cdb3d1cf017cdd6562c085372670631ff5ff7f7f75987b946f01c5e02  match
+  onedrive  holiday-photo.png  backup_content  exported  bytes  7731653c27df7ff2932094b2f436e82a10bed211898bd250de8076faaf0859ce  7731653c27df7ff2932094b2f436e82a10bed211898bd250de8076faaf0859ce  match
+  onedrive  whiteboard-sketch.png  backup_content  exported  bytes  e1f664a2d4736300375c4c58eb1a8c9fe3d94f60ad9decb16584e60168dadff8  e1f664a2d4736300375c4c58eb1a8c9fe3d94f60ad9decb16584e60168dadff8  match
+  onedrive  weekly-status.docx  backup_content  exported  office-v1  bcf2ef44b8aea4e31ebe161ca93c441f90b3f706d0bd5d5a6ae8907c93df99a1  bcf2ef44b8aea4e31ebe161ca93c441f90b3f706d0bd5d5a6ae8907c93df99a1  match
+[2026-10-14 19:39:59.494] [live_backup_content] [info] cleanup after: the test mailbox's Inbox: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:40:01.540] [live_backup_content] [info] cleanup after: the RestoreTarget library: deleted 7, gone 0, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:40:03.269] [live_backup_content] [info] cleanup after: the test OneDrive folder: deleted 7, gone 0, left 0, skipped 0 in 1 round(s)
+
+
+== b: one byte changed in the restored copy
+[2026-10-14 19:40:03.483] [live_backup_content] [info] cleanup before: the test mailbox's Inbox: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:40:03.953] [live_backup_content] [info] cleanup before: the RestoreTarget library: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:40:04.343] [live_backup_content] [info] cleanup before: the test OneDrive folder: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:40:04.686] [live_backup_content] [info] listed 0 item(s) in the RestoreTarget library
+
+[2026-10-14 19:40:04.947] [live_backup_content] [info] listed 0 item(s) in the test OneDrive folder
+
+content exports: 14 of 14 file(s) exported from the backup
+[2026-10-14 19:42:41.799] [live_backup_content] [info] listed 7 item(s) in the RestoreTarget library
+
+tamper PUT team-meeting-notes.txt: HTTP 200
+[2026-10-14 19:42:45.160] [live_backup_content] [info] listed 7 item(s) in the RestoreTarget library
+
+[2026-10-14 19:42:47.598] [live_backup_content] [info] listed 7 item(s) in the test OneDrive folder
+
+status fail: 1 of 14 item(s) didn't verify (0 missing, 1 mismatch)
+  sharepoint  team-meeting-notes.txt  backup_content  exported  bytes  f1fb906f8d50c0fcd2e61952c82ccf04df717ee6cc9009b0745fd58909025d3e  39330f4af604dec7fcc64437e1e002ff8b18d3f2e9d91df7ce7baebb0903529b  mismatch
+  sharepoint  supplier-contacts.txt  backup_content  exported  bytes  05c0de9efc1e6113aa07caf47bbdc334fef014dcaaf055d9e816d49922c13b89  05c0de9efc1e6113aa07caf47bbdc334fef014dcaaf055d9e816d49922c13b89  match
+  sharepoint  project-brief.pdf  backup_content  exported  bytes  d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71  d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71  match
+  sharepoint  budget-summary.pdf  backup_content  exported  bytes  4acae6b1632752b9ce1b84a691691df9289eea3605fa7eaa66afc015d4ba8e43  4acae6b1632752b9ce1b84a691691df9289eea3605fa7eaa66afc015d4ba8e43  match
+  sharepoint  office-floor-plan.png  backup_content  exported  bytes  7951cde1a0e313c1fce94d8271bf9b5f67a601b02ebd80907db0784036fe0246  7951cde1a0e313c1fce94d8271bf9b5f67a601b02ebd80907db0784036fe0246  match
+  sharepoint  brand-colours-draft.png  backup_content  exported  bytes  89a9f0d1ba70360f335250e508a9f859e8eb67f883a2de1d7d991ea2a022abd9  89a9f0d1ba70360f335250e508a9f859e8eb67f883a2de1d7d991ea2a022abd9  match
+  sharepoint  room-bookings.xlsx  backup_content  exported  office-v1  a2d69a1b8883dfd250d2e5ba44950e7edac8d20c526d4317fd953c26156c3c4e  a2d69a1b8883dfd250d2e5ba44950e7edac8d20c526d4317fd953c26156c3c4e  match
+  onedrive  reading-list.txt  backup_content  exported  bytes  100094ac90d10f71f9c1a60cdd06f0d6ea67e82442cca9f2e18f77ac17887bba  100094ac90d10f71f9c1a60cdd06f0d6ea67e82442cca9f2e18f77ac17887bba  match
+  onedrive  travel-notes.txt  backup_content  exported  bytes  4db1fbcb63b82aeee4ce41086ea5dd244a2798104768cc50a04bb5b9f551cad0  4db1fbcb63b82aeee4ce41086ea5dd244a2798104768cc50a04bb5b9f551cad0  match
+  onedrive  expense-report-march.pdf  backup_content  exported  bytes  b0ecbe97d0828844155e89e2cec42027dfc88e7793de08fe697d97d07fd44879  b0ecbe97d0828844155e89e2cec42027dfc88e7793de08fe697d97d07fd44879  match
+  onedrive  course-certificate.pdf  backup_content  exported  bytes  16237a1cdb3d1cf017cdd6562c085372670631ff5ff7f7f75987b946f01c5e02  16237a1cdb3d1cf017cdd6562c085372670631ff5ff7f7f75987b946f01c5e02  match
+  onedrive  holiday-photo.png  backup_content  exported  bytes  7731653c27df7ff2932094b2f436e82a10bed211898bd250de8076faaf0859ce  7731653c27df7ff2932094b2f436e82a10bed211898bd250de8076faaf0859ce  match
+  onedrive  whiteboard-sketch.png  backup_content  exported  bytes  e1f664a2d4736300375c4c58eb1a8c9fe3d94f60ad9decb16584e60168dadff8  e1f664a2d4736300375c4c58eb1a8c9fe3d94f60ad9decb16584e60168dadff8  match
+  onedrive  weekly-status.docx  backup_content  exported  office-v1  bcf2ef44b8aea4e31ebe161ca93c441f90b3f706d0bd5d5a6ae8907c93df99a1  bcf2ef44b8aea4e31ebe161ca93c441f90b3f706d0bd5d5a6ae8907c93df99a1  match
+[2026-10-14 19:42:47.860] [live_backup_content] [info] cleanup after: the test mailbox's Inbox: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:42:49.461] [live_backup_content] [info] cleanup after: the RestoreTarget library: deleted 7, gone 0, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:42:50.997] [live_backup_content] [info] cleanup after: the test OneDrive folder: deleted 7, gone 0, left 0, skipped 0 in 1 round(s)
+
+
+== c: every export over a cap of 1 byte
+[2026-10-14 19:42:51.235] [live_backup_content] [info] cleanup before: the test mailbox's Inbox: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:42:51.665] [live_backup_content] [info] cleanup before: the RestoreTarget library: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:42:52.009] [live_backup_content] [info] cleanup before: the test OneDrive folder: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:42:52.606] [live_backup_content] [info] listed 0 item(s) in the RestoreTarget library
+
+[2026-10-14 19:42:52.876] [live_backup_content] [info] listed 0 item(s) in the test OneDrive folder
+
+[2026-10-14 19:43:02.209] [live_backup_content] [warning] veeam_m365: sharepoint item 0: content export over_cap
+
+[2026-10-14 19:43:02.716] [live_backup_content] [warning] veeam_m365: sharepoint item 1: content export over_cap
+
+[2026-10-14 19:43:03.096] [live_backup_content] [warning] veeam_m365: sharepoint item 2: content export over_cap
+
+[2026-10-14 19:43:03.475] [live_backup_content] [warning] veeam_m365: sharepoint item 3: content export over_cap
+
+[2026-10-14 19:43:03.699] [live_backup_content] [warning] veeam_m365: sharepoint item 4: content export over_cap
+
+[2026-10-14 19:43:03.991] [live_backup_content] [warning] veeam_m365: sharepoint item 5: content export over_cap
+
+[2026-10-14 19:43:04.267] [live_backup_content] [warning] veeam_m365: sharepoint item 6: content export over_cap
+
+[2026-10-14 19:43:04.540] [live_backup_content] [warning] veeam_m365: onedrive item 0: content export over_cap
+
+[2026-10-14 19:43:04.820] [live_backup_content] [warning] veeam_m365: onedrive item 1: content export over_cap
+
+[2026-10-14 19:43:05.142] [live_backup_content] [warning] veeam_m365: onedrive item 2: content export over_cap
+
+[2026-10-14 19:43:05.432] [live_backup_content] [warning] veeam_m365: onedrive item 3: content export over_cap
+
+[2026-10-14 19:43:05.770] [live_backup_content] [warning] veeam_m365: onedrive item 4: content export over_cap
+
+[2026-10-14 19:43:06.013] [live_backup_content] [warning] veeam_m365: onedrive item 5: content export over_cap
+
+[2026-10-14 19:43:06.488] [live_backup_content] [warning] veeam_m365: onedrive item 6: content export over_cap
+
+content exports: 0 of 14 file(s) exported from the backup (over_cap 14)
+[2026-10-14 19:45:06.412] [live_backup_content] [info] listed 7 item(s) in the RestoreTarget library
+
+[2026-10-14 19:45:08.611] [live_backup_content] [info] listed 7 item(s) in the test OneDrive folder
+
+status pass: 14 of 14 item(s) verified: manifest 0, fields 0, metadata 14, backup_content 0
+warning: content_export: 14 of 14 file(s) couldn't be exported from the backup and were checked by name and size alone (over_cap 14)
+  sharepoint  team-meeting-notes.txt  metadata  over_cap  -  -  -  match
+  sharepoint  supplier-contacts.txt  metadata  over_cap  -  -  -  match
+  sharepoint  project-brief.pdf  metadata  over_cap  -  -  -  match
+  sharepoint  budget-summary.pdf  metadata  over_cap  -  -  -  match
+  sharepoint  office-floor-plan.png  metadata  over_cap  -  -  -  match
+  sharepoint  brand-colours-draft.png  metadata  over_cap  -  -  -  match
+  sharepoint  room-bookings.xlsx  metadata  over_cap  -  -  -  match
+  onedrive  reading-list.txt  metadata  over_cap  -  -  -  match
+  onedrive  travel-notes.txt  metadata  over_cap  -  -  -  match
+  onedrive  expense-report-march.pdf  metadata  over_cap  -  -  -  match
+  onedrive  course-certificate.pdf  metadata  over_cap  -  -  -  match
+  onedrive  holiday-photo.png  metadata  over_cap  -  -  -  match
+  onedrive  whiteboard-sketch.png  metadata  over_cap  -  -  -  match
+  onedrive  weekly-status.docx  metadata  over_cap  -  -  -  match
+[2026-10-14 19:45:08.842] [live_backup_content] [info] cleanup after: the test mailbox's Inbox: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:45:10.733] [live_backup_content] [info] cleanup after: the RestoreTarget library: deleted 7, gone 0, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:45:12.580] [live_backup_content] [info] cleanup after: the test OneDrive folder: deleted 7, gone 0, left 0, skipped 0 in 1 round(s)
+
+===============================================================================
+All tests passed (143 assertions in 1 test case)
+
+
+exit code 0

@@ -31,8 +31,10 @@ const std::string kUsage =
     "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
     "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "
     "[--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | "
-    "rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | "
+    "rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] | "
     "rpworker outbox list [--outbox <root>] | "
+    "rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] "
+    "[--record <dir>] | "
     "rpworker signer public-key [--vault <file>] | "
     "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | "
     "rpworker service install [--config <path>] | rpworker service uninstall|start|stop | "
@@ -229,7 +231,9 @@ TEST_CASE("rpworker config check --config <file> checks that file", "[cli]")
                                 "veeam_password            (not set)\n"
                                 "graph_cert_pfx_base64     (not set)\n"
                                 "graph_cert_password       (not set)\n"
-                                "signing_key_base64        (not set)\n"));
+                                "signing_key_base64        (not set)\n"
+                                "cloud_install_token       (not set)\n"
+                                "cloud_api_token           (not set)\n"));
 }
 
 TEST_CASE("rpworker's main() skips the program name and runs the rest", "[cli]")

@@ -260,14 +260,22 @@ struct Outputs {
     }
 
     // Every request `client` received: the URL, each header, the body and
-    // each multipart part's name, file name, content type and bytes.
-    void add_requests(std::string_view label, const FakeHttpClient& client)
+    // each multipart part's name, file name, content type and bytes. W5.1:
+    // with `bearer`, the one place a request may carry a secret is its
+    // Authorization header, and it must be exactly that (the Cloud's API
+    // token, which the Cloud is the one to receive); it isn't searched.
+    void add_requests(std::string_view label, const FakeHttpClient& client,
+                      std::optional<std::string> bearer = std::nullopt)
     {
         std::size_t n = 0;
         for (const rp::HttpRequest& request : client.requests()) {
             const std::string prefix = std::string{label} + " request " + std::to_string(++n);
             add(prefix + " url", request.url);
             for (const auto& [name, value] : request.headers) {
+                if (bearer && rp::is_secret_header(name)) {
+                    CHECK(value == *bearer);
+                    continue;
+                }
                 add(prefix + " header " + name, value);
             }
             add(prefix + " body", request.body);

@@ -3328,10 +3328,17 @@ TEST_CASE("test --evidence --outbox: the signed run folder is queued with its ma
                  if (++calls == 1) {
                      throw rp::HttpError("POST: dropped", rp::TransportError::dropped, 0, 1);
                  }
-                 return rp::test::make_response(202);
+                 return rp::test::cloud_answer(202);
              });
     long long now = 0;
     rp::OutboxCommandEnv env;
+    // W5.1: the flush's token.
+    env.load_secrets = [](const std::filesystem::path&) {
+        rp::Secrets secrets;
+        secrets.cloud_api_token = "PipeToken-w51-0123456789abcdefABCDEF_-01234";
+        return secrets;
+    };
+    env.default_vault_path = [&] { return lab.config_path.parent_path() / "vault.bin"; };
     env.default_config_path = [&] { return lab.config_path; };
     env.default_outbox_root = [&] { return outbox.root_path; };
     env.make_cloud_http = [&](const rp::Config&) -> std::unique_ptr<rp::IHttpClient> {
@@ -3353,14 +3360,14 @@ TEST_CASE("test --evidence --outbox: the signed run folder is queued with its ma
     const Run down = flush();
     CHECK(down.exit_code == rp::exit_code::transient);
     CHECK(down.out == "kept run-0001: upload_unreachable; attempt 1, next at "
-                      "2026-10-07T12:01:00Z\n1 queued, 0 sent\n");
+                      "2026-10-07T12:01:00Z\n1 queued, 0 sent, 0 failed\n");
     CHECK(rp::test::outbox_lab::files_of(outbox.queued()) == before);
     CHECK(outbox.manifest().attempts == 1);
 
     now = 60;
     const Run up = flush();
     CHECK(up.exit_code == rp::exit_code::ok);
-    CHECK(up.out == "sent run-0001\n0 queued, 1 sent\n");
+    CHECK(up.out == "sent run-0001\n0 queued, 1 sent, 0 failed\n");
     CHECK(up.err.empty());
     CHECK_FALSE(std::filesystem::exists(outbox.queued()));
     CHECK(rp::test::outbox_lab::files_of(outbox.sent()) == before);

@@ -162,7 +162,7 @@ struct BodyLab {
             return context->stop.requested();
         };
         cloud.on(rp::HttpMethod::post, kResultsUrl,
-                 [this](const rp::HttpRequest&) { return rp::test::make_response(cloud_status); });
+                 [this](const rp::HttpRequest&) { return rp::test::cloud_answer(cloud_status); });
         cloud.on(rp::HttpMethod::post, kHeartbeatUrl,
                  [](const rp::HttpRequest&) { return rp::test::make_response(204); });
     }

@@ -39,6 +39,7 @@ from app.models import Worker
 from app.repo.audit import AuditRepo
 from app.repo.clients import ClientRepo
 from app.repo.items import ItemRepo
+from app.repo.plans import PlanRepo
 from app.repo.runs import RunRepo
 from app.routers.errors import NOT_AUTHENTICATED, refusal
 
@@ -230,6 +231,12 @@ async def upload(request: Request, worker: Annotated[Worker, Depends(current_wor
         raise RuntimeError("the run's UPDATE touched nothing and the run holds no bundle")
     await ItemRepo(session).create_many(worker.msp_id, run.id, results.item_rows(verified.result))
     await audit.write(worker.msp_id, AUDIT_RECEIVED, f"run:{run.id}", ip=ip)
+    # C6.8, point 11: a pass or fail with canaries moves its plan's cursor to
+    # the Worker's signed `cursor_next`, only from the cursor it was sent with;
+    # it commits or rolls back with the run's rows and objects.
+    advance = results.cursor_advance(verified.result)
+    if advance is not None:
+        await PlanRepo(session).advance_canary_cursor(worker.msp_id, run.plan_id, sent=advance[0], next=advance[1])
 
     storage = request.app.state.storage
 

@@ -40,6 +40,7 @@ from uuid import UUID
 
 from app.models import RUN_STATES, Client, TestRun
 from app.repo.items import ItemRow
+from app.repo.plans import MAX_CURSOR
 from app.repo.runs import RECEIVABLE_STATES, ReceivedRun
 from app.schemas import shared_schemas_dir
 
@@ -423,6 +424,30 @@ def item_rows(result: Mapping[str, Any]) -> list[ItemRow]:
             )
         )
     return rows
+
+
+# C6.8: the three types' rotation, in the job's order.
+CURSOR_KINDS = ("mail", "sharepoint", "onedrive")
+# The tests that compared the canaries they sampled (an error's may never have been).
+CURSOR_STATES = ("pass", "fail")
+Cursor = tuple[int, int, int]
+
+
+def cursor_advance(result: Mapping[str, Any]) -> tuple[Cursor, Cursor] | None:
+    """C6.8 (docs/decisions.md 2026-10-15, point 11): the cursor a `pass` or
+    `fail` with canaries was sent with and the Worker's own `cursor_next`, both
+    as the job gives them; None for any other result, and for a value outside
+    the Worker's job rule (0 to 999999), which the plan's columns can neither
+    hold nor be compared with."""
+    sample = result["sample"]
+    if result["status"]["status"] not in CURSOR_STATES or sample is None or "manifest_sha256" not in sample:
+        return None
+    mail, sp, od = (sample[kind]["canary"] for kind in CURSOR_KINDS)
+    sent = (mail["cursor"], sp["cursor"], od["cursor"])
+    next = (mail["cursor_next"], sp["cursor_next"], od["cursor_next"])
+    if not all(0 <= value <= MAX_CURSOR for value in sent + next):
+        return None
+    return sent, next
 
 
 def _match(outcome: str) -> bool | None:

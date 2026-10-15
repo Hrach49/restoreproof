@@ -112,6 +112,25 @@ class PlanRepo(Repo):
             .values(enabled=enabled)
         )
 
+    async def advance_canary_cursor(
+        self, msp_id: UUID, plan_id: UUID, *, sent: tuple[int, int, int], next: tuple[int, int, int]
+    ) -> int:
+        """C6.8 (docs/decisions.md 2026-10-15, point 11): the plan's cursor to
+        `next` only while it is still `sent`, in one UPDATE; 0 rows when
+        another result moved it first, when the plan has no canaries (null is
+        never equal), or for another MSP's plan. Never read back."""
+        return await self._touched(
+            update(TestPlan)
+            .where(
+                TestPlan.msp_id == msp_id,
+                TestPlan.id == plan_id,
+                TestPlan.canary_cursor_mail == sent[0],
+                TestPlan.canary_cursor_sp == sent[1],
+                TestPlan.canary_cursor_od == sent[2],
+            )
+            .values(canary_cursor_mail=next[0], canary_cursor_sp=next[1], canary_cursor_od=next[2])
+        )
+
     async def delete(self, msp_id: UUID, plan_id: UUID) -> int:
         return await self._touched(
             delete(TestPlan).where(TestPlan.msp_id == msp_id, TestPlan.id == plan_id)

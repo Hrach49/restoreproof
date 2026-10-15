@@ -71,13 +71,15 @@ std::string utf8(const std::filesystem::path& path)
     return {text.begin(), text.end()};
 }
 
-// The masks `config check` prints for each of the five secrets.
+// The masks `config check` prints for each of the seven secrets.
 struct SecretMasks {
     std::string_view user;
     std::string_view password;
     std::string_view pfx;
     std::string_view pfx_password;
     std::string_view signing_key = "(not set)";
+    std::string_view install_token = "(not set)";
+    std::string_view api_token = "(not set)";
 };
 
 constexpr SecretMasks kNoSecrets{"(not set)", "(not set)", "(not set)", "(not set)"};
@@ -128,7 +130,9 @@ std::string expected_secrets(const std::filesystem::path& vault, const SecretMas
            "veeam_password            " + std::string{secrets.password} + "\n" +
            "graph_cert_pfx_base64     " + std::string{secrets.pfx} + "\n" +
            "graph_cert_password       " + std::string{secrets.pfx_password} + "\n" +
-           "signing_key_base64        " + std::string{secrets.signing_key} + "\n";
+           "signing_key_base64        " + std::string{secrets.signing_key} + "\n" +
+           "cloud_install_token       " + std::string{secrets.install_token} + "\n" +
+           "cloud_api_token           " + std::string{secrets.api_token} + "\n";
 }
 
 struct Run {

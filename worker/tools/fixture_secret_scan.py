@@ -77,6 +77,10 @@ SECRET_KEYS = (
     "pfx",
     "sig",
     "authorization",
+    # The Cloud's tokens (W5.1): registration's install_token and api_token,
+    # and the vault's names that end in them.
+    "api_token",
+    "install_token",
 )
 _KEYS = "|".join(re.escape(k) for k in SECRET_KEYS)
 # The keys redact() also masks as "name: value" (its colon_form): not the

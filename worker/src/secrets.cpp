@@ -27,6 +27,12 @@ Field* field_of(S& secrets, std::string_view name) noexcept
     if (name == kNameSigningKeyBase64) {
         return &secrets.signing_key_base64;
     }
+    if (name == kNameCloudInstallToken) {
+        return &secrets.cloud_install_token;
+    }
+    if (name == kNameCloudApiToken) {
+        return &secrets.cloud_api_token;
+    }
     return nullptr;
 }
 
@@ -53,10 +59,10 @@ std::vector<std::string> secret_values(const Secrets& secrets, std::size_t room)
     std::vector<std::string> values;
     // No growth, here or when the caller adds its `room` values: a
     // reallocation would leave the short values' bytes behind.
-    values.reserve(4 + room);
+    values.reserve(6 + room);
     for (const std::optional<std::string>* secret :
          {&secrets.veeam_password, &secrets.graph_cert_pfx_base64, &secrets.graph_cert_password,
-          &secrets.signing_key_base64}) {
+          &secrets.signing_key_base64, &secrets.cloud_install_token, &secrets.cloud_api_token}) {
         if (*secret && !(*secret)->empty()) {
             values.push_back(**secret);
         }

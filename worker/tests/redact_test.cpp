@@ -809,6 +809,25 @@ TEST_CASE("redact treats signing_key, signing_key_base64 and signing_private_key
     })));
 }
 
+TEST_CASE("redact treats the Cloud's tokens as secret key names (W5.1)", "[redact][cloud]")
+{
+    // api_token and install_token, and any name ending in them after a
+    // separator: the vault's cloud_api_token and cloud_install_token.
+    check_row(GENERATE(values<Row>({
+        {R"({"worker_id":"65fd","api_token":"Zm9vYmFy-_x","key_id":"06e3"})",
+         R"({"worker_id":"65fd","api_token":"[REDACTED]","key_id":"06e3"})"},
+        {R"({"install_token" : "Zm9vYmFy-_x","version":"0.0.0"})",
+         R"({"install_token" : "[REDACTED]","version":"0.0.0"})"},
+        {"cloud_api_token=Zm9vYmFy-_x&a=1", "cloud_api_token=[REDACTED]&a=1"},
+        {"vault cloud_install_token = Zm9vYmFy-_x next", "vault cloud_install_token = [REDACTED] next"},
+        // No colon form: the Cloud's audit names an install token's row so.
+        {"install_token.create install_token:b2e92b1d", "install_token.create install_token:b2e92b1d"},
+        {R"({"Cloud_Api_Token":"Zm9vYmFy"})", R"({"Cloud_Api_Token":"[REDACTED]"})"},
+        // A name running on past one isn't it.
+        {R"({"api_tokens_left":3})", R"({"api_tokens_left":3})"},
+    })));
+}
+
 TEST_CASE("redact masks a PEM private key block whole, whatever kind of key it says it is",
           "[redact][signing]")
 {

@@ -50,7 +50,8 @@ const std::string kUsage =
     "rpworker service run [--config <path>]\n";
 
 const std::string kNames = "veeam_username, veeam_password, graph_cert_pfx_base64, "
-                           "graph_cert_password, signing_key_base64";
+                           "graph_cert_password, signing_key_base64, cloud_install_token, "
+                           "cloud_api_token";
 
 std::string utf8(const std::filesystem::path& path)
 {
@@ -107,13 +108,16 @@ struct Lab {
 };
 
 std::string five_masked(std::string_view user, std::string_view password, std::string_view pfx,
-                        std::string_view pfx_password, std::string_view key)
+                        std::string_view pfx_password, std::string_view key,
+                        std::string_view install = "(not set)", std::string_view api = "(not set)")
 {
     return "veeam_username            " + std::string{user} + "\n" +
            "veeam_password            " + std::string{password} + "\n" +
            "graph_cert_pfx_base64     " + std::string{pfx} + "\n" +
            "graph_cert_password       " + std::string{pfx_password} + "\n" +
-           "signing_key_base64        " + std::string{key} + "\n";
+           "signing_key_base64        " + std::string{key} + "\n" +
+           "cloud_install_token       " + std::string{install} + "\n" +
+           "cloud_api_token           " + std::string{api} + "\n";
 }
 
 } // namespace
@@ -139,7 +143,7 @@ TEST_CASE("rpworker vault prints usage and exits 64 for a command line it doesn'
     REQUIRE(lab.prompts_for.empty());
 }
 
-TEST_CASE("rpworker vault set and remove take one of the five names, never echoing another",
+TEST_CASE("rpworker vault set and remove take one of the seven names, never echoing another",
           "[vault_command]")
 {
     const std::string_view subcommand = GENERATE("set", "remove");

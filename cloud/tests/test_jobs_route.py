@@ -212,6 +212,35 @@ async def test_each_job_carries_the_run_the_client_s_profile_the_connector_and_t
     assert VALIDATOR.is_valid(document)
 
 
+async def test_a_plan_opted_in_to_canaries_sends_its_cursor_and_a_plain_one_none(lab):
+    """C6.8 (docs/decisions.md 2026-10-15, point 10): the job's `canary_cursor`
+    is the plan's three columns, the key's presence the Worker's opt-in
+    (W6.2); a plan without a cursor leaves the key out, never `null`, which
+    the Worker's reader refuses."""
+    opted = (await PlanRepo(lab.session).create(
+        lab.msp_id, lab.client_id, lab.connector_id, sample_mail=2, sample_sp=2, sample_od=2, cadence_cron="0 5 * * *", now=NOW,
+        canary_cursor=(0, 0, 0),
+    )).id
+    plain_run = await lab.run()
+    opted_run = (await RunRepo(lab.session).create(
+        lab.msp_id, plan_id=opted, client_id=lab.client_id, connector_id=lab.connector_id, worker_id=lab.worker_id
+    )).id
+    await lab.session.execute(text("UPDATE test_run SET created_at = :at WHERE id = :id"), {"at": lab.clock + dt.timedelta(minutes=1), "id": opted_run})
+    await lab.session.execute(
+        text("UPDATE test_plan SET canary_cursor_mail = 3, canary_cursor_sp = 1, canary_cursor_od = 999999 WHERE id = :id"), {"id": opted}
+    )
+
+    response = await lab.get(lab.token)
+
+    document = response.json()
+    assert VALIDATOR.is_valid(document), sorted(error.json_path for error in VALIDATOR.iter_errors(document))
+    plain, with_canaries = document["jobs"]
+    assert (plain["run_id"], with_canaries["run_id"]) == (str(plain_run), str(opted_run))
+    assert sorted(plain) == JOB_KEYS and "canary_cursor" not in plain
+    assert sorted(with_canaries) == sorted(JOB_KEYS + ["canary_cursor"])
+    assert with_canaries["canary_cursor"] == [3, 1, 999999]
+
+
 async def test_a_run_id_names_a_folder_on_the_worker(lab):
     run_id = str(await lab.run())
     (answered,) = await lab.poll()

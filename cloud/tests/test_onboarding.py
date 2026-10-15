@@ -90,7 +90,7 @@ class Lab:
 
     async def plan(self, default_connector, **changes):
         values = {"client_id": self.client_id, "connector_id": default_connector, "sample_mail": 5, "sample_sp": 3, "sample_od": 2,
-                  "cadence_cron": DEFAULT_CADENCE, "enabled": True, "run_now": False}
+                  "cadence_cron": DEFAULT_CADENCE, "enabled": True, "run_now": False, "canaries": False}
         return await create_plan(self.session, self.msp_id, **{**values, **changes})
 
 
@@ -304,6 +304,22 @@ async def test_create_plan_makes_the_row_and_its_audit_row(session, clock):
     assert (plan.cadence_cron, plan.enabled) == ("*/5 * * * *", False)
     assert ("plan.create", f"plan:{plan_id}") in await audit_actions(session, lab.msp_id)
     assert await RunRepo(session).list(lab.msp_id) == []
+
+
+async def test_create_plan_with_canaries_starts_the_cursor_at_zero_and_prints_it(session, clock):
+    """C6.8 (docs/decisions.md 2026-10-15, point 9): the opt-in is a cursor of
+    0,0,0, which every manifest takes; without it the plan has none."""
+    lab = await Lab.make(session)
+    connector_id = await lab.connector()
+
+    opted = await lab.plan(connector_id, canaries=True)
+    plain = await lab.plan(connector_id)
+
+    assert [key for key, _ in opted.lines] == ["plan_id", "canary_cursor"] and opted.values["canary_cursor"] == "0,0,0"
+    assert [key for key, _ in plain.lines] == ["plan_id"]
+    plans = PlanRepo(session)
+    assert (await plans.get(lab.msp_id, uuid.UUID(opted.values["plan_id"]))).canary_cursor == (0, 0, 0)
+    assert (await plans.get(lab.msp_id, uuid.UUID(plain.values["plan_id"]))).canary_cursor is None
 
 
 async def test_run_now_queues_one_run_made_by_hand(session, clock):

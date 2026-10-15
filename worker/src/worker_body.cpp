@@ -2,7 +2,9 @@
 
 #include "atomic_file.hpp"
 #include "folder_ops.hpp"
+#include "file_read.hpp"
 #include "heartbeat.hpp"
+#include "http_exchange.hpp"
 #include "path_utf8.hpp"
 #include "run_folder_tail.hpp"
 #include "run_pipeline.hpp"
@@ -12,6 +14,7 @@
 
 #include <rp/cert_export.hpp>
 #include <rp/cli.hpp>
+#include <rp/cloud_api.hpp>
 #include <rp/cloud_command.hpp>
 #include <rp/connector_registry.hpp>
 #include <rp/evidence_builder.hpp>
@@ -158,8 +161,9 @@ RecordFiles record_files()
     return files;
 }
 
-// The heartbeat's word when the vault holds no API token (W5.1): nothing sent.
-constexpr std::string_view kNoApiToken = "no_api_token";
+// W5.1 point 7: the poll's one request, and the kept document's name.
+constexpr std::chrono::milliseconds kJobsPollTimeout{30000};
+constexpr std::string_view kKeptJobsName = "jobs.json";
 
 // Everything the env's functions share, kept by each of them.
 struct Body {
@@ -458,20 +462,88 @@ struct Body {
         }
     }
 
-    // Point 10: one pass under the flush mutex.
-    std::optional<FlushReport> flush(const std::function<bool()>& stop)
+    // Point 10: one pass under the flush mutex, the uploader carrying the
+    // token the loop hands it (W5.1).
+    std::optional<FlushReport> flush(const std::function<bool()>& stop, std::string_view token,
+                                     bool token_is_new)
     {
         const std::unique_ptr<RunLock> lock = take_outbox_flush_lock(options.take_flush_lock);
         if (!lock) {
             return std::nullopt;
         }
-        std::string token = api_token();
-        CloudUploader uploader(cloud(), config().cloud_url, token);
-        secure_wipe(token);
-        return outbox().flush(uploader, wall_now(), stop);
+        CloudUploader uploader(cloud(), config().cloud_url, std::string{token});
+        return outbox().flush(uploader, wall_now(), stop, token_is_new);
     }
 
-    std::string heartbeat(const LoopHeartbeat& beat)
+    // W5.1 point 7: GET <cloud_url>/v1/jobs with the token, sent once, at
+    // most kMaxJobsFileBytes of the answer read; what it means is the loop's.
+    CloudJobsAnswer poll_jobs(std::string_view token)
+    {
+        HttpRequest request;
+        request.method = HttpMethod::get;
+        request.url = cloud_endpoint(config().cloud_url, kJobsPath);
+        request.headers["Authorization"] = bearer(token);
+        request.headers["Accept"] = "application/json";
+        request.timeout = kJobsPollTimeout;
+        request.retry_on_status = false;
+        request.max_attempts = 1;
+        request.max_body_bytes = kMaxJobsFileBytes;
+        Exchange answer = exchange(cloud(), request);
+        secure_wipe(request.headers["Authorization"]);
+        CloudJobsAnswer jobs;
+        jobs.word = std::move(answer.word);
+        if (answer.response) {
+            jobs.status = answer.response->status;
+            jobs.kind = cloud_answer_kind(*answer.response);
+            jobs.other_value = other_contract_text(*answer.response);
+            jobs.body = std::move(answer.response->body);
+        }
+        return jobs;
+    }
+
+    std::filesystem::path kept_jobs_file() const { return state_dir / std::string{kKeptJobsName}; }
+
+    // state\jobs.json written whole, over the one there.
+    bool keep_jobs(std::string_view bytes) const
+    {
+        if (!make_folder(state_dir)) {
+            return false;
+        }
+        AtomicWriteOptions replace;
+        replace.replace = true;
+        return write_file_atomically(kept_jobs_file(), bytes, replace);
+    }
+
+    void drop_jobs() const
+    {
+        std::error_code ec;
+        std::filesystem::remove(kept_jobs_file(), ec);
+    }
+
+    // Its age by its last write; nullopt when it isn't there or can't be told.
+    std::optional<std::chrono::system_clock::duration> kept_jobs_age() const
+    {
+        std::error_code ec;
+        const std::filesystem::file_time_type written =
+            std::filesystem::last_write_time(kept_jobs_file(), ec);
+        if (ec) {
+            return std::nullopt;
+        }
+        return wall_now() - std::chrono::clock_cast<std::chrono::system_clock>(written);
+    }
+
+    // state\worker.json's worker_id, when it reads.
+    std::optional<std::string> worker_id() const
+    {
+        const FileRead file = read_whole_file(state_dir / std::string{kWorkerFileName}, 64u * 1024u);
+        if (file.state != FileState::read) {
+            return std::nullopt;
+        }
+        const std::optional<WorkerRecord> record = parse_worker_record(file.bytes);
+        return record ? std::optional<std::string>{record->worker_id} : std::nullopt;
+    }
+
+    std::string heartbeat(const LoopHeartbeat& beat, std::string_view token)
     {
         Heartbeat heartbeat;
         heartbeat.version = std::string{version()};
@@ -479,14 +551,9 @@ struct Body {
         heartbeat.last_error_at = beat.last_error_at;
         heartbeat.outbox_depth = beat.outbox_depth;
         heartbeat.uptime_s = beat.uptime_s;
-        std::string token = api_token();
-        if (token.empty()) {
-            // W5.1 point 6: no token, no heartbeat.
-            return std::string{kNoApiToken};
-        }
         const HeartbeatAnswer answer = send_heartbeat(cloud(), config().cloud_url, token, heartbeat);
-        secure_wipe(token);
-        return answer.error;
+        // W5.1 point 5: taken, and the loop says it once.
+        return answer.not_cloud ? std::string{kHeartbeatNotCloud} : answer.error;
     }
 
     // The runs under outbox\, the ones that can't be sent included.
@@ -616,8 +683,27 @@ ServiceLoopEnv make_worker_loop_env(const std::shared_ptr<ServiceContext>& conte
             body->config(), *record.client, body->vault, out, body->pipeline_env()))};
     };
 
-    env.flush = [body](const std::function<bool()>& stop) { return body->flush(stop); };
-    env.heartbeat = [body](const LoopHeartbeat& beat) { return body->heartbeat(beat); };
+    env.flush = [body](const std::function<bool()>& stop, std::string_view token, bool token_is_new) {
+        return body->flush(stop, token, token_is_new);
+    };
+    env.heartbeat = [body](const LoopHeartbeat& beat, std::string_view token) {
+        return body->heartbeat(beat, token);
+    };
+    // W5.1: the token at each use, the Cloud as the job source without a
+    // jobs_file, its answer kept in state\jobs.json, the Worker's id.
+    env.api_token = [body]() -> std::optional<std::string> {
+        std::string token = body->api_token();
+        if (token.empty()) {
+            return std::nullopt;
+        }
+        return token;
+    };
+    env.poll_jobs = [body](std::string_view token) { return body->poll_jobs(token); };
+    env.kept_jobs_file = body->kept_jobs_file();
+    env.keep_jobs = [body](std::string_view bytes) { return body->keep_jobs(bytes); };
+    env.drop_jobs = [body] { body->drop_jobs(); };
+    env.kept_jobs_age = [body] { return body->kept_jobs_age(); };
+    env.worker_id = body->worker_id();
     return env;
 }
 

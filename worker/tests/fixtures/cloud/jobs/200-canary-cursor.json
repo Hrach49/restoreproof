@@ -1,0 +1,42 @@
+{
+  "source": "docs/api/cloud-lab/w5.1-record/record_cloud.py against the Compose stack through Caddy",
+  "request": "GET /v1/jobs",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json",
+    "X-Restoreproof-Api": "1"
+  },
+  "body": {
+    "format": "restoreproof.jobs.v1",
+    "jobs": [
+      {
+        "run_id": "951a96c0-ceaf-4df9-a1cd-4472775eea87",
+        "client_id": "c5110000-0000-4000-8000-000000000002",
+        "client": {
+          "format": "restoreproof.client-profile.v1",
+          "test_mailbox": "restoretest@RestoreProofLab.onmicrosoft.com",
+          "test_site_id": "restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+          "veeam_org_name": "RestoreProofLab.onmicrosoft.com",
+          "graph_client_id": "737da5ef-baf2-4198-b009-e160d8ca77c9",
+          "graph_tenant_id": "bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+          "test_library_id": "b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6",
+          "test_onedrive_drive_id": "b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3",
+          "test_onedrive_folder_id": "01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH"
+        },
+        "connector": {
+          "type": "veeam_m365"
+        },
+        "sample_mail": 0,
+        "sample_sp": 1,
+        "sample_od": 1,
+        "restore_point": "latest",
+        "screenshots_enabled": false,
+        "canary_cursor": [
+          0,
+          0,
+          0
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "source": "docs/api/cloud-lab/w5.1-record/record_cloud.py against the Compose stack through Caddy",
+  "request": "POST /v1/workers/register",
+  "status": 422,
+  "headers": {
+    "Content-Type": "application/json",
+    "X-Restoreproof-Api": "1"
+  },
+  "body": {
+    "detail": [
+      {
+        "type": "missing",
+        "loc": [
+          "body",
+          "public_key_pem"
+        ],
+        "msg": "Field required",
+        "input": {
+          "install_token": "SCRUBBED"
+        }
+      },
+      {
+        "type": "missing",
+        "loc": [
+          "body",
+          "worker_name"
+        ],
+        "msg": "Field required",
+        "input": {
+          "install_token": "SCRUBBED"
+        }
+      },
+      {
+        "type": "missing",
+        "loc": [
+          "body",
+          "version"
+        ],
+        "msg": "Field required",
+        "input": {
+          "install_token": "SCRUBBED"
+        }
+      }
+    ]
+  }
+}

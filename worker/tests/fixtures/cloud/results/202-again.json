@@ -1,0 +1,13 @@
+{
+  "source": "docs/api/cloud-lab/w5.1-record/record_cloud.py against the Compose stack through Caddy",
+  "request": "POST /v1/results",
+  "status": 202,
+  "headers": {
+    "Content-Type": "application/json",
+    "X-Restoreproof-Api": "1"
+  },
+  "body": {
+    "run_id": "c5110000-0000-4000-8000-000000000001",
+    "state": "pass"
+  }
+}

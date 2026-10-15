@@ -27,12 +27,16 @@ FAILED_STATES = ("fail", "error")
 
 class TypeCount(NamedTuple):
     """How many items of one type and one expected kind one run has (C6.4's
-    Test log; C6.8: the kind, so the report says what each test compared)."""
+    Test log; C6.8: the kind, so the report says what each test compared),
+    and how many of them were compared: found, with `match` known (the C6.8
+    code review's finding 1: a missing item or one nobody checked was not
+    compared by anything)."""
 
     run_id: UUID
     type: str
     expected_kind: str
     count: int
+    compared: int
 
 
 @dataclass(frozen=True)
@@ -122,12 +126,19 @@ class ItemRepo(Repo):
         Method read). One statement."""
         statement = (
             self._of_period(msp_id, client_id, start, end)
-            .with_only_columns(TestItem.run_id, TestItem.type, TestItem.expected_kind, func.count())
+            .with_only_columns(
+                TestItem.run_id,
+                TestItem.type,
+                TestItem.expected_kind,
+                func.count(),
+                func.count().filter(TestItem.found.is_(True), TestItem.match.is_not(None)),
+            )
             .group_by(TestItem.run_id, TestItem.type, TestItem.expected_kind, period_time(), TestRun.id)
             .order_by(period_time(), TestRun.id, TestItem.type, TestItem.expected_kind)
         )
         return [
-            TypeCount(run_id, type_, kind, int(count)) for run_id, type_, kind, count in await self._rows(statement)
+            TypeCount(run_id, type_, kind, int(count), int(compared))
+            for run_id, type_, kind, count, compared in await self._rows(statement)
         ]
 
     async def unmatched_in_period(

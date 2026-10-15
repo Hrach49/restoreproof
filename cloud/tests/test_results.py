@@ -1215,6 +1215,36 @@ async def test_a_put_that_fails_rolls_the_cursor_back_with_the_run(lab):
     assert await cursor_now(lab) == SENT
 
 
+async def test_the_cursor_moves_after_the_objects_are_put(lab, monkeypatch):
+    """The plan's row is locked from the advance to the commit: the advance
+    comes after every put, so another upload of the plan never waits on this
+    one's objects (the C6.8 code review's finding 5)."""
+    await set_cursor(lab, SENT)
+    run_id = await lab.run()
+    parts = lab.bundle(run_id)
+    lab.expect_puts(run_id, parts)
+    order: list[str] = []
+    storage = lab.app.state.storage
+    put = storage.put
+    advance = PlanRepo.advance_canary_cursor
+
+    def recorded_put(key, body, content_type):
+        order.append("put")
+        return put(key, body, content_type)
+
+    async def recorded_advance(self, *args, **kwargs):
+        order.append("advance")
+        return await advance(self, *args, **kwargs)
+
+    monkeypatch.setattr(storage, "put", recorded_put)
+    monkeypatch.setattr(PlanRepo, "advance_canary_cursor", recorded_advance)
+
+    assert (await lab.upload(parts)).status_code == 202
+
+    assert order[-1] == "advance" and order.count("advance") == 1 and "put" in order
+    assert await cursor_now(lab) == NEXT
+
+
 def with_canaries(**changes) -> dict:
     document = copy.deepcopy(BUNDLE_RESULT)
     for key, value in changes.items():

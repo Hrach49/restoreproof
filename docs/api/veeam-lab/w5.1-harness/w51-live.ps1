@@ -105,7 +105,7 @@ try {
     if (-not $installToken) { throw 'no install token' }
     $set = $installToken | & $script:Worker vault set cloud_install_token 2>&1
     $t += "rpworker vault set cloud_install_token (the token on stdin): exit $LASTEXITCODE $(($set | ForEach-Object { "$_" }) -join ' ')"
-    $t += "rpworker vault list:`n$((Invoke-W48 @('vault', 'list')) -split "`n" | Where-Object { $_ -match '^(cloud_|exit code)' })"
+    $t += "rpworker vault list, its cloud_ names: $(((Invoke-W48 @('vault', 'list')) -split "`n" | Where-Object { $_ -match '^cloud_' } | ForEach-Object { $_.Trim() }) -join ', ') (names only)"
 
     # 4
     $t += "`n== 4. the service's config copy =="
@@ -133,7 +133,7 @@ try {
     $workerId = [regex]::Match($start, 'registered worker ([0-9a-f-]{36}) key ([0-9a-f]{64})').Groups[1].Value
     if (-not $workerId) { throw 'service start did not register' }
     $installToken = $null
-    $t += "rpworker vault list after the first start:`n$((Invoke-W48 @('vault', 'list')) -split "`n" | Where-Object { $_ -match '^(cloud_|exit code)' })"
+    $t += "rpworker vault list after the first start, its cloud_ names: $(((Invoke-W48 @('vault', 'list')) -split "`n" | Where-Object { $_ -match '^cloud_' } | ForEach-Object { $_.Trim() }) -join ', ') (names only)"
     $t += "state\worker.json: $([IO.File]::ReadAllText((Join-Path $script:W48State 'worker.json')))"
     Push-Location $CloudDir
     try { docker compose cp $LabProfile api:/tmp/w51-profile.json 2>&1 | Out-Null } finally { Pop-Location }

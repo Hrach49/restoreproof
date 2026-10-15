@@ -228,7 +228,7 @@ TEST_CASE("secret audit C: test --evidence --outbox --record, a pass; outbox flu
     int calls = 0;
     cloud.on(rp::HttpMethod::post, "https://cloud.example.invalid/v1/results",
              [&calls](const rp::HttpRequest&) {
-                 return rp::test::make_response(++calls == 1 ? 500 : 202);
+                 return rp::test::cloud_answer(++calls == 1 ? 500 : 202);
              });
     long long now = 0;
     rp::OutboxCommandEnv env;
@@ -242,6 +242,9 @@ TEST_CASE("secret audit C: test --evidence --outbox --record, a pass; outbox flu
         struct Lock final : rp::RunLock {};
         return std::make_unique<Lock>();
     };
+    // W5.1: the flush reads the API token from the audit's vault.
+    env.default_vault_path = [&] { return lab.dir.path() / "vault.bin"; };
+    env.load_secrets = [](const std::filesystem::path&) { return audit::secrets(); };
     const auto outbox = [&](const Args& words) {
         std::ostringstream out;
         std::ostringstream err;
@@ -265,7 +268,7 @@ TEST_CASE("secret audit C: test --evidence --outbox --record, a pass; outbox flu
     lab.collect("outbox flush (refused)", refused);
     lab.collect("outbox flush (sent)", sent);
     lab.collect("outbox list", listed);
-    lab.outputs.add_requests("cloud", cloud);
+    lab.outputs.add_requests("cloud", cloud, "Bearer " + std::string{audit::kApiToken});
 
     // graph list --hash --record on the same targets, which hold the run's
     // copies the clean after didn't take (the fake lists them still).
@@ -509,7 +512,7 @@ struct ServiceAudit {
         log->flush();
         log->close();
         outputs.add_folder(lab.h.dir.path(), "temp");
-        outputs.add_requests("cloud", lab.cloud);
+        outputs.add_requests("cloud", lab.cloud, "Bearer " + std::string{audit::kApiToken});
         outputs.add_requests("tsa", lab.h.tsa_http);
         audit::add_client_assertions(searched, lab.h.targets.graph);
         audit::expect_clean(searched, outputs);

@@ -584,7 +584,7 @@ TEST_CASE("worker body: a stop that comes during an upload ends the flush before
     // The Cloud takes the first run; the stop is asked for while it answers.
     lab.cloud.on(rp::HttpMethod::post, kResultsUrl, [&lab](const rp::HttpRequest&) {
         lab.context->stop.request();
-        return rp::test::make_response(202);
+        return rp::test::cloud_answer(202);
     });
 
     lab.run_loop(5);
@@ -798,7 +798,9 @@ TEST_CASE("worker body: a job that is no job is reported as error job_invalid, s
     CHECK(has(log, "[info] skipped bad-1: already queued"));
     CHECK(lab.h.make_connector_calls == 0);
     CHECK(lab.h.graph_clients == 0);
-    CHECK(lab.h.load_secrets_calls == 1);
+    // The close's key once; the rest are the API token, read at each of the
+    // three flushes (two polls' and the run's own; W5.1).
+    CHECK(lab.h.load_secrets_calls == 4);
     CHECK_FALSE(std::filesystem::exists(lab.record_file()));
     const std::filesystem::path queued = lab.queued("bad-1");
     CHECK(names_in(queued) == kQueuedFolder);

@@ -141,6 +141,8 @@ struct Box {
     rp::Outbox outbox() const { return rp::Outbox({root, files, nullptr}); }
     path queued(const std::string& id) const { return root / "outbox" / id; }
     path sent(const std::string& id) const { return root / "sent" / id; }
+    // W5.1: a run the Cloud refused for good.
+    path refused(const std::string& id) const { return root / "failed" / id; }
 
     // <runs>\<id> as a signed run leaves it: items.csv and veeam-session.log,
     // a result.json that lists them, a signature.json naming its hash and,

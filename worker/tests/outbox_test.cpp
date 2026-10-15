@@ -57,7 +57,8 @@ TEST_CASE("outbox: an upload error is one of three words or upload_http_ and thr
           "[outbox]")
 {
     for (const char* code : {"upload_unreachable", "upload_timeout", "upload_internal",
-                             "upload_http_500", "upload_http_200", "upload_http_999"}) {
+                             "upload_http_500", "upload_http_200", "upload_http_999",
+                             "upload_not_cloud"}) {
         CAPTURE(code);
         CHECK(rp::is_upload_error(code));
     }
@@ -1366,4 +1367,222 @@ TEST_CASE("outbox flush: with the real file system a sent run over the age is re
     CHECK(report.out == Lines{"pruned old"});
     CHECK(report.sent == 0);
     CHECK_FALSE(std::filesystem::exists(old));
+}
+
+
+// --- W5.1: the Cloud's answers (docs/decisions.md 2026-10-15, point 8) ----------------
+
+TEST_CASE("outbox: 400, 404, 409, 415 and 422 are the Cloud's refusals for good; nothing else is",
+          "[outbox][w51]")
+{
+    for (const char* code : {"upload_http_400", "upload_http_404", "upload_http_409",
+                             "upload_http_415", "upload_http_422"}) {
+        CAPTURE(code);
+        CHECK(rp::is_refused_for_good(code));
+    }
+    for (const char* code : {"upload_http_401", "upload_http_411", "upload_http_413",
+                             "upload_http_500", "upload_http_502", "upload_http_200",
+                             "upload_not_cloud", "upload_timeout", "upload_unreachable",
+                             "upload_internal", "folder_changed", ""}) {
+        CAPTURE(code);
+        CHECK_FALSE(rp::is_refused_for_good(code));
+    }
+}
+
+TEST_CASE("outbox flush: a refusal for good moves the run whole to failed\\, never to be sent again",
+          "[outbox][flush][w51]")
+{
+    const std::string code = GENERATE("upload_http_400", "upload_http_404", "upload_http_409",
+                                      "upload_http_415", "upload_http_422");
+    CAPTURE(code);
+    Box box;
+    const path folder = box.queue_run(kId);
+    const std::map<std::string, std::string> before = files_of(folder);
+    FakeUploader uploader;
+    uploader.answers = {failed(code)};
+
+    const rp::FlushReport report = box.outbox().flush(uploader, at(100));
+
+    CHECK(uploader.runs == Lines{kId});
+    CHECK(report.out == Lines{"failed run-0001: " + code});
+    CHECK(report.err ==
+          Lines{"outbox error: run-0001: refused by the Cloud (" + code + "); moved to failed"});
+    CHECK(report.errors);
+    CHECK(report.queued == 0);
+    CHECK(report.failed == 1);
+    CHECK(report.sent == 0);
+    CHECK_FALSE(std::filesystem::exists(folder));
+    // The signed files as they were; only the manifest says what happened.
+    std::map<std::string, std::string> after = files_of(box.refused(kId));
+    std::map<std::string, std::string> before_files = before;
+    after.erase("manifest.json");
+    before_files.erase("manifest.json");
+    CHECK(after == before_files);
+    const rp::OutboxManifest manifest = box.manifest_of(box.refused(kId));
+    CHECK(manifest.attempts == 1);
+    CHECK(manifest.last_error == code);
+    CHECK(manifest.last_attempt_at == text_at(100));
+    CHECK_FALSE(manifest.next_attempt_at);
+    CHECK_FALSE(manifest.sent_at);
+
+    // Never tried again, and counted at every flush.
+    const rp::FlushReport again = box.outbox().flush(uploader, at(100000));
+    CHECK(uploader.runs == Lines{kId});
+    CHECK(again.out.empty());
+    CHECK(again.err.empty());
+    CHECK(again.failed == 1);
+    CHECK(again.queued == 0);
+}
+
+TEST_CASE("outbox flush: 411, 413 and a 5xx are retried by the schedule as before", "[outbox][flush][w51]")
+{
+    const std::string code = GENERATE("upload_http_411", "upload_http_413", "upload_http_503",
+                                      "upload_not_cloud");
+    CAPTURE(code);
+    Box box;
+    box.queue_run(kId);
+    FakeUploader uploader;
+    uploader.answers = {failed(code)};
+
+    const rp::FlushReport report = box.outbox().flush(uploader, at(100));
+
+    CHECK(report.out == Lines{"kept run-0001: " + code + "; attempt 1, next at " + text_at(160)});
+    CHECK(report.queued == 1);
+    CHECK(report.failed == 0);
+    CHECK(box.manifest_of(box.queued(kId)).last_error == code);
+}
+
+TEST_CASE("outbox flush: a refused run whose move fails stays queued; the next flush only moves it",
+          "[outbox][flush][w51]")
+{
+    Box box;
+    const path folder = box.queue_run(kId);
+    box.files.move_folder = [](const path&, const path&) { return 5ul; };
+    FakeUploader uploader;
+    uploader.answers = {failed("upload_http_409")};
+
+    const rp::FlushReport report = box.outbox().flush(uploader, at(10));
+
+    CHECK(report.out == Lines{"kept run-0001: upload_http_409"});
+    CHECK(report.err == Lines{"outbox error: run-0001: refused by the Cloud (upload_http_409), but "
+                              "couldn't be moved to failed (error 5)"});
+    CHECK(report.queued == 1);
+    CHECK(report.failed == 0);
+    const rp::OutboxManifest manifest = box.manifest_of(folder);
+    CHECK(manifest.last_error == "upload_http_409");
+    CHECK_FALSE(manifest.next_attempt_at);
+
+    box.files.move_folder = nullptr;
+    const rp::FlushReport later = box.outbox().flush(uploader, at(20));
+
+    CHECK(uploader.runs == Lines{kId});
+    CHECK(later.out == Lines{"moved run-0001 to failed"});
+    CHECK(later.err.empty());
+    CHECK(later.queued == 0);
+    CHECK(later.failed == 1);
+    CHECK(std::filesystem::exists(box.refused(kId) / "result.json"));
+}
+
+TEST_CASE("outbox flush: a 401 is kept by the schedule and stops the pass: no other run is sent "
+          "with that token",
+          "[outbox][flush][w51]")
+{
+    Box box;
+    box.queue_run("run-0001", 0);
+    box.queue_run("run-0002", 1);
+    FakeUploader uploader;
+    uploader.answers = {failed("upload_http_401")};
+
+    const rp::FlushReport report = box.outbox().flush(uploader, at(100));
+
+    CHECK(uploader.runs == Lines{"run-0001"});
+    CHECK(report.out == Lines{"kept run-0001: upload_http_401; attempt 1, next at " + text_at(160)});
+    CHECK(report.token_refused);
+    CHECK(report.queued == 2);
+    CHECK_FALSE(report.errors);
+    CHECK_FALSE(box.manifest_of(box.queued("run-0002")).last_attempt_at);
+}
+
+TEST_CASE("outbox flush: told the token is new, a run kept by a 401 is tried at once", "[outbox][flush][w51]")
+{
+    Box box;
+    box.queue_run("run-0001", 0);
+    box.queue_run("run-0002", 1);
+    FakeUploader uploader;
+    uploader.answers = {failed("upload_http_401"), failed("upload_http_500")};
+    static_cast<void>(box.outbox().flush(uploader, at(100)));
+    REQUIRE(box.manifest_of(box.queued("run-0001")).next_attempt_at == text_at(160));
+
+    // Not yet due: without the word the 401-kept run isn't tried.
+    FakeUploader quiet;
+    quiet.answers = {failed("upload_http_500")};
+    const rp::FlushReport waiting = box.outbox().flush(quiet, at(110));
+    CHECK(quiet.runs == Lines{"run-0002"});
+    CHECK(waiting.out.front() == "waiting run-0001: next at " + text_at(160));
+
+    // With it, the 401-kept run goes; the 500-kept one keeps its schedule.
+    FakeUploader fresh;
+    const rp::FlushReport sent = box.outbox().flush(fresh, at(111), {}, true);
+    CHECK(fresh.runs == Lines{"run-0001"});
+    CHECK(sent.out == Lines{"sent run-0001", "waiting run-0002: next at " + text_at(170)});
+    CHECK_FALSE(sent.token_refused);
+}
+
+TEST_CASE("outbox holds: anything at failed\\<run_id> is failed, after outbox and sent", "[outbox][holds][w51]")
+{
+    Box box;
+    std::filesystem::create_directories(box.refused(kId));
+
+    CHECK(box.outbox().holds(kId) == rp::OutboxHolds::failed);
+    std::filesystem::create_directories(box.sent(kId));
+    CHECK(box.outbox().holds(kId) == rp::OutboxHolds::sent);
+}
+
+TEST_CASE("outbox queue and prepare: a run already failed is refused and its folder stays",
+          "[outbox][queue][w51]")
+{
+    Box box;
+    std::filesystem::create_directories(box.refused(kId));
+    const path run = box.make_run(kId);
+
+    const rp::QueueOutcome outcome = box.outbox().queue(run, kId, at(), true, "");
+
+    CHECK(outcome.result == rp::QueueResult::already_failed);
+    CHECK(box.outbox().queue_error(outcome, run) ==
+          "outbox error: " + utf8_of(box.refused(kId)) + ": already failed");
+    CHECK(std::filesystem::exists(run / "result.json"));
+    CHECK(box.outbox().prepare(box.runs, kId) ==
+          "outbox error: " + utf8_of(box.refused(kId)) + ": already failed; nothing was done");
+}
+
+TEST_CASE("outbox list: the runs under failed\\ are counted", "[outbox][list][w51]")
+{
+    Box box;
+    std::filesystem::create_directories(box.refused("a"));
+    std::filesystem::create_directories(box.refused("b"));
+
+    const rp::OutboxListing listing = box.outbox().list();
+    CHECK(listing.readable);
+    CHECK(listing.failed == 2);
+}
+
+TEST_CASE("outbox flush: failed\\ counts under the cap and is never pruned", "[outbox][prune][w51]")
+{
+    Box box;
+    box.queue_run("q");
+    box.sent_run("s1", -100);
+    std::filesystem::create_directories(box.refused("f"));
+    std::map<std::string, std::uintmax_t> mb{{"q", 100}, {"s1", 100}, {"f", 450}};
+    box.files.folder_bytes = [&](const path& folder) -> std::optional<std::uintmax_t> {
+        return mb.at(utf8_of(folder.filename())) * 1024u * 1024u;
+    };
+    FakeUploader uploader;
+    uploader.answers = {failed("upload_timeout")};
+
+    const rp::FlushReport report = box.outbox().flush(uploader, at());
+
+    CHECK(report.out == Lines{"pruned s1", "kept q: upload_timeout; attempt 1, next at " + text_at(60)});
+    CHECK(report.err == Lines{"outbox warning: the outbox holds 550 MB, over the 500 MB cap"});
+    CHECK(report.failed == 1);
+    CHECK(std::filesystem::exists(box.refused("f")));
 }

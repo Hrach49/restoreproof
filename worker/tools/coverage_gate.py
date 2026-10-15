@@ -59,6 +59,8 @@ STRICT_NAMES = (
     "client_profile",
     "strict_json",
     "client_check",
+    # W5.1: the Cloud's answers and the registration (cloud_api, cloud_command).
+    "cloud",
 )
 SOURCE_DIRS = ("src", "include", "app")
 SOURCE_EXTS = (".cpp", ".cc", ".cxx", ".c")
@@ -66,7 +68,7 @@ HEADER_EXTS = (".h", ".hpp", ".hh", ".hxx", ".ipp", ".inl")
 BRANCH_NOTE = (
     "Branch coverage is not measured: OpenCppCoverage reports line coverage only. "
     "`vault`, `signer`, `target_guard`, `run_status`, `cleaner`, `timestamper`, `outbox`, `service`, "
-    "`client_profile`, `strict_json` and `client_check` are held "
+    "`client_profile`, `strict_json`, `client_check` and `cloud` are held "
     "to 100% **line** "
     "coverage as a proxy for the required 100% branch coverage."
 )

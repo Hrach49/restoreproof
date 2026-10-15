@@ -6,16 +6,20 @@
 #include "path_utf8.hpp"
 #include "run_folder_tail.hpp"
 #include "run_pipeline.hpp"
+#include "scm.hpp"
 #include "service_log_stream.hpp"
 #include "text_util.hpp"
 
+#include <rp/cert_export.hpp>
 #include <rp/cli.hpp>
+#include <rp/cloud_command.hpp>
 #include <rp/connector_registry.hpp>
 #include <rp/evidence_builder.hpp>
 #include <rp/outbox_command.hpp>
 #include <rp/rfc3161.hpp>
 #include <rp/secrets.hpp>
 #include <rp/service_jobs.hpp>
+#include <rp/service_command.hpp>
 #include <rp/service_recovery.hpp>
 #include <rp/signer.hpp>
 #include <rp/uploader.hpp>
@@ -168,10 +172,10 @@ struct Body {
     std::string vault_arg;
     std::string config_arg;
 
-    // The Cloud's client and its uploader, from the first flush or heartbeat
-    // to the service's end.
+    // The Cloud's client, from the first flush or heartbeat to the service's
+    // end. The uploader is made per flush with the token the vault then holds
+    // (W5.1).
     std::unique_ptr<IHttpClient> cloud_http;
-    std::optional<CloudUploader> uploader;
     // The hold's one connector and the account it signs in with (point 9).
     std::unique_ptr<connector::IConnector> hold_connector;
     std::string hold_account;
@@ -427,9 +431,28 @@ struct Body {
                 throw std::logic_error("no cloud client");
             }
             cloud_http = std::move(made);
-            uploader.emplace(*cloud_http, config().cloud_url);
         }
         return *cloud_http;
+    }
+
+    // W5.1 (docs/decisions.md 2026-10-15, point 6): the vault's
+    // cloud_api_token, read at each use, so a token registered or replaced
+    // while the service runs is the next request's; empty for none or a vault
+    // that can't be read. The other values read with it are wiped.
+    std::string api_token() const
+    {
+        try {
+            Secrets secrets = pipeline_env().load_secrets(vault);
+            std::string token = secrets.cloud_api_token.value_or(std::string{});
+            for (const std::string_view name : kSecretNames) {
+                if (std::optional<std::string>* field = secret_field(secrets, name); *field) {
+                    secure_wipe(**field);
+                }
+            }
+            return token;
+        } catch (const ConfigError&) {
+            return {};
+        }
     }
 
     // Point 10: one pass under the flush mutex.
@@ -439,8 +462,10 @@ struct Body {
         if (!lock) {
             return std::nullopt;
         }
-        cloud();
-        return outbox().flush(*uploader, wall_now(), stop);
+        std::string token = api_token();
+        CloudUploader uploader(cloud(), config().cloud_url, token);
+        secure_wipe(token);
+        return outbox().flush(uploader, wall_now(), stop);
     }
 
     std::string heartbeat(const LoopHeartbeat& beat)
@@ -592,6 +617,26 @@ ServiceBody make_worker_body(WorkerBodyOptions options)
         ServiceLoop loop(make_worker_loop_env(context, options));
         loop.run();
     };
+}
+
+int service_first_start(std::ostream& out, std::ostream& err)
+{
+    ServiceSetup setup;
+    if (scm::read_setup(kServiceName, setup).error != 0) {
+        return exit_code::ok;
+    }
+    std::filesystem::path config;
+    std::filesystem::path vault;
+    try {
+        const std::optional<std::string> arg = service_config_argument(setup.command_line);
+        const std::optional<std::filesystem::path> named = arg ? path_from_utf8(*arg) : std::nullopt;
+        config = named ? *named : default_config_path();
+        vault = default_vault_path();
+    } catch (const ConfigError& e) {
+        err << "config error: " << e.what() << '\n';
+        return exit_code::config;
+    }
+    return first_start(config, vault, out, err, default_cloud_command_env());
 }
 
 } // namespace rp

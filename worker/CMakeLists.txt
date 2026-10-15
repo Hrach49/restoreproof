@@ -71,6 +71,10 @@ add_library(rpcore STATIC
     src/office_v1.cpp
     src/outbox.cpp
     src/outbox_command.cpp
+    src/cloud_api.cpp
+    src/cloud_command.cpp
+    src/http_exchange.cpp
+    src/host_name.cpp
     src/recording_http_client.cpp
     src/redact.cpp
     src/restore_command.cpp
@@ -229,6 +233,8 @@ add_executable(rptests
     tests/name_key_test.cpp
     tests/office_v1_test.cpp
     tests/outbox_command_test.cpp
+    tests/cloud_api_test.cpp
+    tests/cloud_command_test.cpp
     tests/outbox_test.cpp
     tests/recording_http_client_test.cpp
     tests/redact_test.cpp
@@ -338,7 +344,7 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>]")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] [--record <dir>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
     ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"
@@ -686,16 +692,16 @@ rp_add_exe_test("rpworker test --outbox needs --evidence"
     ARGS test --outbox ${RP_OUTBOX_EXE}/empty-root EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker outbox list on an empty root"
     ARGS outbox list --outbox ${RP_OUTBOX_EXE}/empty-root
-    EXIT_CODE 0 STDOUT "0 queued, 0 sent" STDERR "")
+    EXIT_CODE 0 STDOUT "0 queued, 0 sent, 0 failed" STDERR "")
 rp_add_exe_test("rpworker outbox list on a root that isn't there"
     ARGS outbox list --outbox ${RP_OUTBOX_EXE}/no-such-root
-    EXIT_CODE 0 STDOUT "0 queued, 0 sent" STDERR "")
+    EXIT_CODE 0 STDOUT "0 queued, 0 sent, 0 failed" STDERR "")
 rp_add_exe_test("rpworker outbox flush reports a missing config file"
     ARGS outbox flush --config no-such-config.json --outbox ${RP_OUTBOX_EXE}/empty-root
     EXIT_CODE 1 STDOUT "" STDERR "config error: no-such-config.json: cannot read config file")
 rp_add_exe_test("rpworker outbox flush with nothing queued"
     ARGS outbox flush --config ${RP_OUTBOX_EXE}/config.json --outbox ${RP_OUTBOX_EXE}/empty-root
-    EXIT_CODE 0 STDOUT "0 queued, 0 sent" STDERR "")
+    EXIT_CODE 0 STDOUT "0 queued, 0 sent, 0 failed" STDERR "")
 
 # `rpworker service` (W4.7). No test here names install, uninstall, start or
 # stop: with valid arguments they would act on this machine's real service.

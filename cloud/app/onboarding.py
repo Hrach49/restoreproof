@@ -61,6 +61,10 @@ NO_SUCH_USER = "no such user"
 SHOWN_ONCE = "the install token is shown once; the Cloud stores its hash alone"
 NO_SUCH_WORKER = "no such Worker or already revoked"
 NO_SUCH_CONNECTOR = "not the client's connector"
+# C6.8 (docs/decisions.md 2026-10-15, point 9): a plan opted in to canaries
+# starts its cursor here, which every manifest takes (0 is the Worker's rule
+# for a type with no canaries too).
+CANARY_START = (0, 0, 0)
 
 T = TypeVar("T")
 
@@ -183,6 +187,7 @@ async def create_plan(
     cadence_cron: str = DEFAULT_CADENCE,
     enabled: bool = True,
     run_now: bool = False,
+    canaries: bool = False,
 ) -> Created:
     # The repo holds the cadence; the database's key holds the connector to
     # the client (`connector_id: not the client's connector`, an absent one
@@ -199,10 +204,13 @@ async def create_plan(
             cadence_cron=cadence_cron,
             now=at,
             enabled=enabled,
+            canary_cursor=CANARY_START if canaries else None,
         )
     )
     await _audit(session, msp_id, "plan.create", f"plan:{plan.id}")
     lines: list[tuple[str, str]] = [("plan_id", str(plan.id))]
+    if canaries:
+        lines.append(("canary_cursor", ",".join(str(value) for value in CANARY_START)))
     if run_now:
         # A run made by hand (no period): the pilot's first test without
         # waiting for the cadence, since the scheduler makes no run for a

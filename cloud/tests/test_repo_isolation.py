@@ -105,8 +105,10 @@ async def make_world(session, name: str, *, clock: dt.datetime | None = None) ->
     connector = await ConnectorRepo(session).create(
         msp.id, client.id, worker.id, profile_for(client.tenant_id), user_id=user.id
     )
+    # C6.8: opted in to canaries, so the cursor's advance has a row to move.
     plan = await PlanRepo(session).create(
-        msp.id, client.id, connector.id, sample_mail=5, sample_sp=3, sample_od=2, cadence_cron="0 2 * * *", now=NOW
+        msp.id, client.id, connector.id, sample_mail=5, sample_sp=3, sample_od=2, cadence_cron="0 2 * * *", now=NOW,
+        canary_cursor=(0, 0, 0),
     )
     run = await RunRepo(session).create(
         msp.id, plan_id=plan.id, client_id=client.id, connector_id=connector.id, worker_id=worker.id
@@ -311,6 +313,8 @@ WRITES = [
     Write(ConnectorRepo, "delete", lambda w: w.spare_connector, lambda w: (w.spare_connector.id,)),
     Write(PlanRepo, "set_enabled", lambda w: w.plan, lambda w: (w.plan.id, False)),
     Write(PlanRepo, "delete", lambda w: w.spare_plan, lambda w: (w.spare_plan.id,)),
+    # C6.8: the canary cursor's compare-and-set.
+    Write(PlanRepo, "advance_canary_cursor", lambda w: w.plan, lambda w: (w.plan.id,), lambda w: {"sent": (0, 0, 0), "next": (1, 2, 3)}),
     Write(RunRepo, "set_state", lambda w: w.run, lambda w: (w.run.id, "dispatched")),
     # C5.6: with A's msp_id and B's Worker the dispatch answers [] and B's run
     # stays queued; the sweep with A's msp_id leaves B's stale run dispatched.
@@ -500,6 +504,7 @@ async def test_a_write_on_a_row_that_does_not_exist_answers_zero(session, worlds
     assert await ConnectorRepo(session).delete(a.msp.id, nothing) == 0
     assert await PlanRepo(session).set_enabled(a.msp.id, nothing, True) == 0
     assert await PlanRepo(session).delete(a.msp.id, nothing) == 0
+    assert await PlanRepo(session).advance_canary_cursor(a.msp.id, nothing, sent=(0, 0, 0), next=(1, 1, 1)) == 0
     assert await RunRepo(session).set_state(a.msp.id, nothing, "error") == 0
     assert await RunRepo(session).dispatch(a.msp.id, nothing, NOW) == []
     assert await RunRepo(session).requeue_stale(a.msp.id, NOW - dt.timedelta(days=1)) == (0, 0)
@@ -589,8 +594,8 @@ async def test_counts_by_type_in_period_with_one_msp_s_id_counts_nothing_of_the_
 
     assert await ItemRepo(session).counts_by_type_in_period(a.msp.id, b.client.id, start=MONTH_START, end=MONTH_END) == []
     own = await ItemRepo(session).counts_by_type_in_period(a.msp.id, a.client.id, start=MONTH_START, end=MONTH_END)
-    assert sorted((str(count.run_id), count.type, count.count) for count in own) == sorted(
-        [(str(a.run.id), "mail", 2), (str(a.failed_run.id), "mail", 1)]
+    assert sorted((str(count.run_id), count.type, count.expected_kind, count.count) for count in own) == sorted(
+        [(str(a.run.id), "mail", "manifest", 2), (str(a.failed_run.id), "mail", "manifest", 1)]
     )
 
 

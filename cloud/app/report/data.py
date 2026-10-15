@@ -52,6 +52,19 @@ RESULT_WORDS = {
 # The runs whose restore ran: the ones a recovery time and a restore point
 # are read from (an error is a test that could not run; the review's finding 5).
 RAN_STATES = ("pass", "fail")
+# C6.8 (docs/decisions.md 2026-10-15, points 1 to 4): the expected kinds as
+# the Worker names them (`shared/schemas/result.v1.json`): a canary is
+# `manifest` and only a canary; a random mail `fields`; a random file the
+# backup gave no copy of `metadata`; one it gave a copy of `backup_content`.
+CANARY = "manifest"
+FIELDS = "fields"
+METADATA = "metadata"
+BACKUP_CONTENT = "backup_content"
+# Compared by the SHA-256 of its content: what level 3 is claimed for.
+CONTENT_KINDS = (CANARY, BACKUP_CONTENT)
+# The client's own items, sampled at random: every kind but a canary's.
+OWN_KINDS = (FIELDS, METADATA, BACKUP_CONTENT)
+FILE_TYPES = ("sharepoint", "onedrive")
 # C6.6 (docs/decisions.md 2026-10-13, point 3, and its build notes): the Test
 # log, the Failures and the Integrity run list show the first this many runs
 # of the month, in the month's order, and say how many more there were; the
@@ -224,7 +237,19 @@ class ReportData:
     failures_left_out: int
     plans: list[PlanSizes]
     ran: int
-    files_sampled: bool
+    # C6.8, over the tests that passed or failed: how many sampled a canary
+    # and how many the client's own items, the client's own files tested and
+    # how many of them were compared by content, which kinds were sampled,
+    # and whether anything (and a file) was compared by the SHA-256 of its
+    # content. Compared means found with `match` known: a missing item or
+    # one nobody checked was not (the C6.8 code review's finding 1).
+    canary_tests: int
+    own_tests: int
+    own_files: int
+    content_files: int
+    kinds: frozenset[str]
+    content_compared: bool
+    file_content_compared: bool
     late: int
     cleanup_incomplete: int
     workers: list[WorkerLine]
@@ -293,7 +318,9 @@ def build(
     unmatched: list[TestItem],
 ) -> ReportData:
     """The report's data from the rows, pure."""
-    by_type: dict[tuple[UUID, str], int] = {(c.run_id, c.type): c.count for c in counts}
+    by_type: dict[tuple[UUID, str], int] = {}
+    for c in counts:
+        by_type[(c.run_id, c.type)] = by_type.get((c.run_id, c.type), 0) + c.count
     lines = [
         RunLine(
             run_id=run.id,
@@ -338,6 +365,12 @@ def build(
             failures.append(Failure(line, unmatched_of.get(line.run_id, []), later_pass.get(line.plan_id)))
     failures.reverse()
     tested_plans = {line.plan_id for line in tested}
+    # C6.8, point 1: what the tests that passed or failed compared; an error
+    # is a test that could not run, and its items may never have been.
+    ran_ids = {line.run_id for line in ran}
+    ran_counts = [c for c in counts if c.run_id in ran_ids]
+    own = [c for c in ran_counts if c.type in FILE_TYPES and c.expected_kind in (METADATA, BACKUP_CONTENT)]
+    content = [c for c in ran_counts if c.expected_kind in CONTENT_KINDS and c.compared]
     sources = []
     for connector in connectors:
         word = BACKUP_SOURCES.get(connector.type, UNKNOWN_SOURCE)
@@ -369,7 +402,13 @@ def build(
         failures_left_out=max(0, len(failures) - MAX_LOG_ROWS),
         plans=[PlanSizes(plan.sample_mail, plan.sample_sp, plan.sample_od) for plan in plans if plan.id in tested_plans],
         ran=len(ran),
-        files_sampled=any(line.sp or line.od for line in ran),
+        canary_tests=len({c.run_id for c in ran_counts if c.expected_kind == CANARY}),
+        own_tests=len({c.run_id for c in ran_counts if c.expected_kind in OWN_KINDS}),
+        own_files=sum(c.count for c in own),
+        content_files=sum(c.compared for c in own if c.expected_kind == BACKUP_CONTENT),
+        kinds=frozenset(c.expected_kind for c in ran_counts),
+        content_compared=bool(content),
+        file_content_compared=any(c.type in FILE_TYPES for c in content),
         late=sum(1 for line in tested if line.date < period.start_at),
         cleanup_incomplete=sum(1 for line in tested if line.cleanup_ok is False),
         workers=[WorkerLine(w.id, w.name, w.key_id) for w in workers if w.id in run_workers],

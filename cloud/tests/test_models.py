@@ -737,6 +737,35 @@ async def test_a_plan_that_samples_nothing_is_refused(session):
     )
 
 
+@pytest.mark.parametrize(
+    "cursor",
+    [(0, None, None), (None, None, 0), (0, 0, None), (-1, 0, 0), (0, 1_000_000, 0), (0, 0, -7)],
+    ids=["mail alone", "od alone", "two of three", "negative", "over the largest", "negative od"],
+)
+async def test_a_canary_cursor_is_three_values_of_0_to_999999_or_none(session, cursor):
+    """C6.8 (docs/decisions.md 2026-10-15, point 8): the three columns are the
+    opt-in together; one of them alone, or a value the Worker's job rule
+    refuses, is never stored."""
+    world = await World.make(session)
+    mail, sp, od = cursor
+
+    await refused(
+        session,
+        a_plan(world.msp, world.client, world.connector, canary_cursor_mail=mail, canary_cursor_sp=sp, canary_cursor_od=od),
+        "ck_test_plan_canary_cursor",
+    )
+
+
+@pytest.mark.parametrize("cursor", [(None, None, None), (0, 0, 0), (999_999, 0, 999_999)])
+async def test_the_canary_cursors_a_plan_may_have(session, cursor):
+    world = await World.make(session)
+    mail, sp, od = cursor
+
+    plan = await add(session, a_plan(world.msp, world.client, world.connector, canary_cursor_mail=mail, canary_cursor_sp=sp, canary_cursor_od=od))
+
+    assert plan.canary_cursor == (None if mail is None else cursor)
+
+
 @pytest.mark.parametrize("sizes", [(100, 100, 100), (1, 0, 0), (0, 1, 0), (0, 0, 1)])
 async def test_the_sample_sizes_a_job_may_have(session, sizes):
     world = await World.make(session)

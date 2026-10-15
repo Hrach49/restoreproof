@@ -852,6 +852,43 @@ async def test_a_fail_s_items_and_columns(lab):
     ]
 
 
+def a_content_fail(document):
+    """C6.8 step 1: the two random files the backup gave a copy of
+    (`backup_content`, one by `bytes`, one by `office-v1`) restored with other
+    content: each a `sha256` mismatch, the run `fail` (W6.3 point 5)."""
+    items = document["check"]["items"]
+    for index in (3, 5):
+        items[index] = {"index": index, "outcome": "mismatch", "found": True, "mismatches": ["sha256"], "reason": "fields did not match: sha256", "ms": 9}
+    document["check"]["counts"] = {"match": 4, "mismatch": 2, "missing": 0, "error": 0}
+    document["status"] = {
+        "status": "fail", "message": "4 of 6 item(s) verified; 2 failed", "restore_sent": True,
+        "counts": {"items": 6, "verified": 4, "failed": 2, "unchecked": 0}, "verified": {"manifest": 3, "fields": 1, "metadata": 0, "backup_content": 0},
+        "failed_items": [3, 5], "unchecked_items": [], "warnings": [],
+    }
+
+
+async def test_a_backup_content_file_whose_restored_copy_differs_is_stored_as_a_mismatch_with_its_hash(lab):
+    """C6.8 (docs/decisions.md 2026-10-15, step 1): the Cloud takes the
+    fourth kind as it takes the other three: the row keeps the kind and the
+    backup's hash, and a changed copy is `match` false with the Worker's
+    reason, which the report's Failures section reads as "mismatch"."""
+    run_id = await lab.run()
+    parts = lab.bundle(run_id, patch=a_content_fail)
+    lab.expect_puts(run_id, parts)
+
+    response = await lab.upload(parts)
+
+    assert response.json() == {"run_id": str(run_id), "state": "fail"}
+    expected = {item["index"]: item for item in json.loads(parts["result"])["expected"]["items"]}
+    items = await lab.items(run_id)
+    assert [(i.position, i.expected_kind, i.expected_sha256, i.found, i.match, i.reason) for i in items if i.position in (3, 5)] == [
+        (3, "backup_content", expected[3]["sha256"], True, False, "fields did not match: sha256"),
+        (5, "backup_content", expected[5]["sha256"], True, False, "fields did not match: sha256"),
+    ]
+    assert [i.match for i in items] == [True, True, True, False, True, False]
+    assert all(i.found_sha256 is None for i in items)
+
+
 @pytest.mark.parametrize(
     ("span", "stored"),
     [
@@ -1002,7 +1039,8 @@ async def test_an_accepted_upload_is_six_statements_after_the_token_s_lookup_and
     finally:
         event.remove(test_engine.sync_engine, "before_cursor_execute", record)
 
-    assert with_items == ["SELECT", "SELECT", "SELECT", "UPDATE", "INSERT", "INSERT"]
+    # C6.8: the bundle has canaries, so one UPDATE more: the plan's cursor (0 rows: the lab's plan has none).
+    assert with_items == ["SELECT", "SELECT", "SELECT", "UPDATE", "INSERT", "INSERT", "UPDATE"]
     assert without == ["SELECT", "SELECT", "SELECT", "UPDATE", "INSERT"]
 
 
@@ -1115,6 +1153,142 @@ async def test_a_put_that_fails_leaves_no_row_and_answers_500(lab):
     assert response.status_code == 500
     assert await lab.counts() == before
     assert (await lab.run_row(run_id)).state == "dispatched"
+
+
+# --- C6.8: the canary cursor's advance (docs/decisions.md 2026-10-15, point 11) -------------------
+
+# The re-signed bundle's rotation: mail 0 -> 1, SharePoint 1 -> 2, OneDrive 0 -> 1.
+SENT, NEXT = (0, 1, 0), (1, 2, 1)
+
+
+async def set_cursor(lab, cursor) -> None:
+    mail, sp, od = cursor if cursor is not None else (None, None, None)
+    await lab.session.execute(
+        text("UPDATE test_plan SET canary_cursor_mail = :m, canary_cursor_sp = :s, canary_cursor_od = :o WHERE id = :id"),
+        {"m": mail, "s": sp, "o": od, "id": lab.plan_id},
+    )
+
+
+async def cursor_now(lab):
+    row = (await lab.session.execute(
+        text("SELECT canary_cursor_mail, canary_cursor_sp, canary_cursor_od FROM test_plan WHERE id = :id"), {"id": lab.plan_id}
+    )).one()
+    return None if row[0] is None else tuple(row)
+
+
+@pytest.mark.parametrize("patch", [None, a_content_fail], ids=["pass", "fail"])
+async def test_a_result_with_canaries_moves_its_plan_s_cursor_to_the_worker_s_cursor_next(lab, patch):
+    await set_cursor(lab, SENT)
+    run_id = await lab.run()
+    parts = lab.bundle(run_id, patch=patch)
+    lab.expect_puts(run_id, parts)
+
+    assert (await lab.upload(parts)).status_code == 202
+
+    assert await cursor_now(lab) == NEXT
+    # The same bundle again moves nothing (and writes nothing, the repeat's rule).
+    assert (await lab.upload(parts)).status_code == 202
+    assert await cursor_now(lab) == NEXT
+
+
+@pytest.mark.parametrize("stored", [(5, 5, 5), NEXT, None], ids=["another cursor", "already moved", "no canaries"])
+async def test_a_result_sent_with_another_cursor_moves_nothing_and_is_taken(lab, stored):
+    """Two runs of one plan out with one cursor: the first result moves it,
+    the second finds it moved; a plan opted out meanwhile stays out."""
+    await set_cursor(lab, stored)
+    run_id = await lab.run()
+    parts = lab.bundle(run_id)
+    lab.expect_puts(run_id, parts)
+
+    assert (await lab.upload(parts)).status_code == 202
+
+    assert await cursor_now(lab) == stored
+
+
+async def test_a_put_that_fails_rolls_the_cursor_back_with_the_run(lab):
+    await set_cursor(lab, SENT)
+    run_id = await lab.run()
+    lab.stubber.add_client_error("put_object", service_error_code="AccessDenied", http_status_code=403)
+
+    assert (await lab.upload(lab.bundle(run_id))).status_code == 500
+
+    assert await cursor_now(lab) == SENT
+
+
+async def test_the_cursor_moves_after_the_objects_are_put(lab, monkeypatch):
+    """The plan's row is locked from the advance to the commit: the advance
+    comes after every put, so another upload of the plan never waits on this
+    one's objects (the C6.8 code review's finding 5)."""
+    await set_cursor(lab, SENT)
+    run_id = await lab.run()
+    parts = lab.bundle(run_id)
+    lab.expect_puts(run_id, parts)
+    order: list[str] = []
+    storage = lab.app.state.storage
+    put = storage.put
+    advance = PlanRepo.advance_canary_cursor
+
+    def recorded_put(key, body, content_type):
+        order.append("put")
+        return put(key, body, content_type)
+
+    async def recorded_advance(self, *args, **kwargs):
+        order.append("advance")
+        return await advance(self, *args, **kwargs)
+
+    monkeypatch.setattr(storage, "put", recorded_put)
+    monkeypatch.setattr(PlanRepo, "advance_canary_cursor", recorded_advance)
+
+    assert (await lab.upload(parts)).status_code == 202
+
+    assert order[-1] == "advance" and order.count("advance") == 1 and "put" in order
+    assert await cursor_now(lab) == NEXT
+
+
+def with_canaries(**changes) -> dict:
+    document = copy.deepcopy(BUNDLE_RESULT)
+    for key, value in changes.items():
+        if key == "status":
+            document["status"]["status"] = value
+        else:
+            kind, field = key.split("__")
+            document["sample"][kind]["canary"][field] = value
+    return document
+
+
+def test_cursor_advance_reads_a_pass_or_a_fail_s_three_cursors():
+    assert results.cursor_advance(with_canaries()) == (SENT, NEXT)
+    assert results.cursor_advance(with_canaries(status="fail")) == (SENT, NEXT)
+    assert results.cursor_advance(with_canaries(mail__cursor=999_999, onedrive__cursor_next=0)) == ((999_999, 1, 0), (1, 2, 0))
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        with_canaries(status="error"),
+        {**copy.deepcopy(BUNDLE_RESULT), "sample": None},
+        CLOSED_RESULT,
+        with_canaries(sharepoint__cursor_next=1_000_000),
+        with_canaries(mail__cursor=2**53 - 1),
+        with_canaries(onedrive__cursor=-1),
+    ],
+    ids=["error", "no sample", "a result written afterwards", "next over the rule", "sent over an integer column", "negative"],
+)
+def test_cursor_advance_is_none_for_what_must_not_move_a_cursor(document):
+    """An error's canaries may never have been compared; a result without a
+    rotation has none to hand on; a value outside the Worker's job rule can't
+    be stored (the CHECK) or compared (an `integer` column), so the cursor is
+    left as it is rather than the upload being a 500."""
+    assert results.cursor_advance(document) is None
+
+
+def test_cursor_advance_is_none_without_the_canary_objects():
+    document = copy.deepcopy(BUNDLE_RESULT)
+    del document["sample"]["manifest_sha256"]
+    for kind in ("mail", "sharepoint", "onedrive"):
+        del document["sample"][kind]["canary"]
+
+    assert results.cursor_advance(document) is None
 
 
 # --- The unit level of app/results.py ------------------------------------------------------------

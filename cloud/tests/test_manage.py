@@ -454,10 +454,11 @@ async def test_create_plan_run_now_prints_the_run_and_create_msp_takes_retention
 
     plan = lines(await cli(
         "create-plan", "--msp-id", msp["msp_id"], "--client-id", client["client_id"], "--connector-id", connector["connector_id"],
-        "--mail", "1", "--sp", "0", "--od", "0", "--cron", "*/5 * * * *", "--disabled", "--run-now",
+        "--mail", "1", "--sp", "0", "--od", "0", "--cron", "*/5 * * * *", "--disabled", "--run-now", "--canaries",
     ))
 
-    assert list(plan) == ["plan_id", "run_id"]
+    # C6.8: --canaries opts the plan in, its cursor 0,0,0, printed after the plan.
+    assert list(plan) == ["plan_id", "canary_cursor", "run_id"] and plan["canary_cursor"] == "0,0,0"
     msp_id = uuid.UUID(msp["msp_id"])
     async def read(s):
         return (
@@ -467,7 +468,7 @@ async def test_create_plan_run_now_prints_the_run_and_create_msp_takes_retention
 
     msp_row, client_row, plan_row, runs = await rows.read(read)
     assert msp_row.retention_days == 30 and client_row.screenshots_enabled is True
-    assert (plan_row.cadence_cron, plan_row.enabled) == ("*/5 * * * *", False)
+    assert (plan_row.cadence_cron, plan_row.enabled, plan_row.canary_cursor) == ("*/5 * * * *", False, (0, 0, 0))
     assert [(str(r.id), r.state, r.scheduled_for) for r in runs] == [(plan["run_id"], "queued", None)]
 
 

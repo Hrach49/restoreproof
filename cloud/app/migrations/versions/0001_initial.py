@@ -258,6 +258,10 @@ def upgrade() -> None:
         _text("cadence_cron"),
         _boolean("enabled", nullable=False, default="true"),
         _time("created_at", nullable=False, default_now=True),
+        # C6.8: the canary opt-in, the cursor itself.
+        sa.Column("canary_cursor_mail", sa.Integer(), nullable=True),
+        sa.Column("canary_cursor_sp", sa.Integer(), nullable=True),
+        sa.Column("canary_cursor_od", sa.Integer(), nullable=True),
         _pk("test_plan"),
         _fk_msp("test_plan"),
         _fk("test_plan", ("client_id",), "client", ("id",)),
@@ -268,6 +272,13 @@ def upgrade() -> None:
         _check("test_plan", "sample_sp_range", "sample_sp BETWEEN 0 AND 100"),
         _check("test_plan", "sample_od_range", "sample_od BETWEEN 0 AND 100"),
         _check("test_plan", "sample_not_empty", "sample_mail + sample_sp + sample_od > 0"),
+        _check(
+            "test_plan",
+            "canary_cursor",
+            "(canary_cursor_mail IS NULL AND canary_cursor_sp IS NULL AND canary_cursor_od IS NULL) OR "
+            "(canary_cursor_mail IS NOT NULL AND canary_cursor_sp IS NOT NULL AND canary_cursor_od IS NOT NULL AND "
+            "canary_cursor_mail BETWEEN 0 AND 999999 AND canary_cursor_sp BETWEEN 0 AND 999999 AND canary_cursor_od BETWEEN 0 AND 999999)",
+        ),
     )
 
     op.create_table(

@@ -162,3 +162,49 @@ async def test_list_with_workers_answers_each_plan_with_its_connector_s_worker(s
     assert [(plan.id, worker.id) for plan, worker in enabled] == [(p1.id, w1.id)]
     assert [(plan.id, worker.id, worker.revoked_at) for plan, worker in disabled] == [(p2.id, w2.id, now)]
     assert await plans.list_with_workers(other.id) == []
+
+
+# --- create: the canary opt-in (C6.8, docs/decisions.md 2026-10-15, points 8 and 9) ---------
+
+
+async def test_a_plan_has_no_canaries_unless_asked_and_its_cursor_is_stored_as_given(session):
+    lab = await Lab.make(session)
+
+    plain = await lab.create()
+    opted = await lab.create(canary_cursor=(0, 0, 0))
+    moved = await lab.create(canary_cursor=(999_999, 3, 0))
+
+    for plan in (plain, opted, moved):
+        await session.refresh(plan)
+    assert (plain.canary_cursor_mail, plain.canary_cursor_sp, plain.canary_cursor_od) == (None, None, None)
+    assert [plan.canary_cursor for plan in (plain, opted, moved)] == [None, (0, 0, 0), (999_999, 3, 0)]
+
+
+@pytest.mark.parametrize("cursor", [(-1, 0, 0), (0, 1_000_000, 0), (0, 0, -1)])
+async def test_a_cursor_outside_the_job_rule_is_refused_before_any_row(session, cursor):
+    lab = await Lab.make(session)
+
+    with pytest.raises(RepoError) as raised:
+        await lab.create(canary_cursor=cursor)
+
+    assert (raised.value.key, raised.value.reason) == ("canary_cursor", "not 0 to 999999")
+    assert await lab.plans.list(lab.msp.id) == []
+
+
+# --- advance_canary_cursor (C6.8, point 11): a compare-and-set ---------------------------------
+
+
+async def test_the_cursor_moves_only_from_the_value_the_result_was_sent_with(session):
+    lab = await Lab.make(session)
+    opted = await lab.create(canary_cursor=(0, 1, 0))
+    plain = await lab.create()
+
+    assert await lab.plans.advance_canary_cursor(lab.msp.id, opted.id, sent=(0, 1, 0), next=(1, 2, 1)) == 1
+    # The same step again (a second run sent with the old cursor): nothing.
+    assert await lab.plans.advance_canary_cursor(lab.msp.id, opted.id, sent=(0, 1, 0), next=(1, 2, 1)) == 0
+    # A plan without canaries is never opted in by a result.
+    assert await lab.plans.advance_canary_cursor(lab.msp.id, plain.id, sent=(0, 0, 0), next=(1, 1, 1)) == 0
+
+    for plan in (opted, plain):
+        await session.refresh(plan)
+    assert (opted.canary_cursor, plain.canary_cursor) == ((1, 2, 1), None)

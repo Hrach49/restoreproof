@@ -1495,8 +1495,9 @@ A complete, signed run folder is queued in a local outbox and uploaded later, ol
 with retries. Nothing signed is ever lost or changed on the way. The decisions are
 `docs/decisions.md` 2026-10-07, W4.6, and its build notes; the commands, their lines and exit
 codes are in `docs/worker-config.md` ("`--outbox <root>`", "`rpworker outbox`"). The code is
-`rp::Outbox` (`rp/outbox.hpp`, strict) and `rp::CloudUploader` (`rp/uploader.hpp`). The upload's
-endpoint is a stub until W5.1: the Worker posts to `<cloud_url>/v1/results` with no credential.
+`rp::Outbox` (`rp/outbox.hpp`, strict) and `rp::CloudUploader` (`rp/uploader.hpp`). Since W5.1
+the Worker posts to `<cloud_url>/v1/results` with its API token (`Authorization: Bearer`), and a
+run the Cloud refuses for good goes to `failed\` ("What the Worker does with each answer").
 
 ### The layout
 
@@ -1881,8 +1882,8 @@ word.
 `result`, `signature`, `timestamp` (when there) and one per listed attachment under its own
 name, posted under the Worker's API token. The decisions are `docs/decisions.md` 2026-10-10,
 "C5.7"; the code is `cloud/app/results.py` (every decision, strict at 100% line and branch) and
-`cloud/app/routers/results.py` (the request and the statements). The Worker is not changed by
-it: what W5.1 does with each answer is recorded in the entry's point 15.
+`cloud/app/routers/results.py` (the request and the statements). What the Worker does with
+each answer is W5.1's (below).
 
 ### The third verifier is the second one
 
@@ -2028,14 +2029,20 @@ leaves (so the Worker's move to `sent\` never outruns the row):
   part's bytes under the prefix. A put that fails rolls the rows back (the app's 500; the Worker
   retries); an object already written is overwritten by the next upload of the same bundle.
 
-### What the Worker will do with each answer (W5.1, built nowhere yet)
+### What the Worker does with each answer (W5.1)
 
-The status alone decides; the Worker may log the body's `detail` word and relies on nothing else
-in a body. 202, first or repeated: `sent`. 401: never retried by schedule, one warning, the run
-stays queued. 400 (any word), 404, 409, 415, 422: permanent, the folder to `failed\<run_id>` for
-the operator's `rpworker signer verify`. 411, 413, 5xx, a timeout, no connection: retried by
-today's schedule. C5.11 adds the header to this (below): a 2xx without `X-RestoreProof-API: 1`
-is not the Cloud's answer and never moves a run to `sent\`.
+Built by W5.1 (`docs/decisions.md` 2026-10-15, point 8; `rp::Outbox::flush`, strict). The status
+alone decides; the body is never read. 202 with `X-RestoreProof-API: 1`, first or repeated:
+`sent`. Any 2xx without the header (or with another value): `upload_not_cloud`, retried by the
+schedule, never `sent`. 401: the attempt counted and scheduled, the pass stops, and the service
+sends nothing more with that token (but the heartbeat) until the vault holds another, when the
+runs a 401 kept are due at once. 400 (any word), 404, 409, 415, 422: refused for good, the
+manifest written with no next attempt and the folder moved whole to `failed\<run_id>` for the
+operator's `rpworker signer verify`; never sent, pruned or deleted by the Worker. 411, 413, 5xx,
+a timeout, no connection: retried by the schedule. **The wire bytes** of one Worker upload (the
+shared vector's bundle, as cpr and curl framed it) are `shared/testdata/signing-v1/
+dispatched-run.wire`, posted unchanged by `cloud/tests/test_contract.py` to 202 `pass` (C5.11's
+finding 3, closed).
 
 ## The contract (C5.11)
 
@@ -2100,12 +2107,15 @@ made-up one: its `job` and result carry the identifiers of `lab/tenant.md` (none
 person), and its `description` says so. It is the one shared folder that reaches 202; every other shared case is
 404 after the whole verification, as before.
 
-**What the Worker will do with the header (W5.1, W7.2; built nowhere yet).** A 2xx of the
-upload without `X-RestoreProof-API: 1` is not the Cloud's answer: the run is not moved to
-`sent\`, the attempt is `upload_not_cloud` (retried by the schedule like `upload_unreachable`),
-one warning once. A jobs document from an answer without the header is not read. The heartbeat
-takes any 2xx and warns once of a missing header. A header with another value is treated as
-absent, with its own warning naming the number. `rpworker doctor` asks `GET <cloud_url>/v1/version`
+**What the Worker does with the header (W5.1 built; W7.2's `doctor` not yet).** One rule,
+`rp::cloud_answer_kind` (`worker/include/rp/cloud_api.hpp`, strict): the name in any case (Caddy
+hands it on as `X-Restoreproof-Api`), the value exactly `1`. A 2xx of the upload without it is
+not the Cloud's answer: the run is not moved to `sent\`, the attempt is `upload_not_cloud`
+(retried by the schedule like `upload_unreachable`), one warning once. A jobs document from an
+answer without the header is not kept or read. The heartbeat takes any 2xx and warns once of a
+missing header. A registration's 201 without it stores nothing. A header with another value is
+treated as absent, its warning naming the number (when it is 1 to 9 digits). `rpworker doctor`
+(W7.2) will ask `GET <cloud_url>/v1/version`
 without a token and prints `cloud: RestoreProof Cloud <version>, API 1`, or `cloud: not a
 RestoreProof Cloud` for a 2xx without the header. Every one of these rules reads the header on
 a 2xx alone: an answer that is no 2xx is handled by its status as before (the upload's table
@@ -2115,8 +2125,8 @@ confused server of this Cloud answers a 503 or a 400 without it.
 ## The Cloud receives a heartbeat (C5.8)
 
 `POST /v1/heartbeat` is the Cloud's side of "The heartbeat" in `docs/worker-config.md`: the
-service's five-key body, posted every `heartbeat_interval_s` under the Worker's API token (from
-W5.1; until then the service sends no header and hears 401). The decisions are
+service's five-key body, posted every `heartbeat_interval_s` under the Worker's API token
+(W5.1). The decisions are
 `docs/decisions.md` 2026-10-11, "C5.8"; the code is `cloud/app/routers/heartbeat.py` (the body
 model and the route) and `WorkerRepo.heartbeat` (`cloud/app/repo/workers.py`, strict at 100%
 line and branch). The Worker is not changed by it.
@@ -2163,10 +2173,33 @@ therefore stops at the revoke: the Cloud's record of when its word was last take
 holds the request line (method, path, status, duration, request ID) and nothing of the body or
 the token.
 
-**What the Worker does with each answer (W5.1, built nowhere yet):** 204 taken; 401 one
+**What the Worker does with each answer (W5.1):** 204 taken; 401 one
 warning once and the heartbeat keeps going (it is the Cloud's only word of a Worker whose token
 was revoked); 422 the Worker's `http_422` word (the two sides disagree on the body, which an
 upgrade fixes); 5xx, a timeout, no connection: the next interval is the retry, as today.
+
+## The Worker reaches the Cloud (W5.1)
+
+`docs/decisions.md` 2026-10-15, "W5.1 (#66)"; the Worker's guide is `docs/worker-config.md`
+("`rpworker cloud register`", "The Cloud as the job source", "`rpworker outbox`").
+
+- **Over HTTPS, always.** On this laptop the Cloud is the Compose stack behind Caddy
+  (`cloud/docker/Caddyfile`, the `proxy` service) at `https://localhost:8443`, by Caddy's own CA;
+  the Worker trusts its root through `cloud_ca_file` and checks the host name `localhost` as for
+  any host. `cloud_url` is never `http`.
+- **Registration** (`rpworker cloud register`, or the first `rpworker service start`): the
+  install token from the vault, the signing key's public half, the Worker's name and version to
+  `POST /v1/workers/register`; a 201 with the header and this key's `key_id` puts the API token in
+  the vault in the same write that removes the install token, and writes `state\worker.json`.
+  The vault is written only at the operator's console; the service reads it.
+- **The token** is `Authorization: Bearer <cloud_api_token>` on `GET /v1/jobs`, `POST
+  /v1/results` and `POST /v1/heartbeat`, and nowhere else: no line, file, recording or message
+  holds it (the secret audit's two sentinels, J8 the poll).
+- **The poll** replaces `jobs_file` when none is set: the Cloud's 200 is kept in
+  `state\jobs.json` and read by the jobs file's reader until its jobs are settled or it is six
+  hours old.
+- **A 401** of the poll or an upload stops both for that token until the vault holds another;
+  the heartbeat goes on.
 
 ## The Cloud makes a run (C5.9)
 

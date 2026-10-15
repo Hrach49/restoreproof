@@ -214,3 +214,14 @@ TEST_CASE("state\\worker.json is canonical JSON and reads back; anything else is
         CHECK_FALSE(rp::parse_worker_record(bad));
     }
 }
+
+TEST_CASE("a worker name counts a character outside the BMP once", "[cloud]")
+{
+    // U+1F600, a surrogate pair in UTF-16: one code point of the 128.
+    std::string smiles;
+    for (int i = 0; i < 128; ++i) {
+        smiles += "\xF0\x9F\x98\x80";
+    }
+    CHECK(rp::is_worker_name(smiles));
+    CHECK_FALSE(rp::is_worker_name(smiles + "a"));
+}

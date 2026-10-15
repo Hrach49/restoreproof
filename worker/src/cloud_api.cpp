@@ -39,15 +39,11 @@ bool is_key_id(std::string_view text) noexcept
 bool is_time_text(std::string_view text) noexcept
 {
     constexpr std::string_view kShape = "0000-00-00T00:00:00Z";
-    if (text.size() != kShape.size()) {
-        return false;
+    bool matches = text.size() == kShape.size();
+    for (std::size_t i = 0; matches && i < text.size(); ++i) {
+        matches = kShape[i] == '0' ? is_digit(text[i]) : text[i] == kShape[i];
     }
-    for (std::size_t i = 0; i < text.size(); ++i) {
-        if (kShape[i] == '0' ? !is_digit(text[i]) : text[i] != kShape[i]) {
-            return false;
-        }
-    }
-    return true;
+    return matches;
 }
 
 // The header's value, when the answer has it.

@@ -1586,3 +1586,25 @@ TEST_CASE("outbox flush: failed\\ counts under the cap and is never pruned", "[o
     CHECK(report.failed == 1);
     CHECK(std::filesystem::exists(box.refused("f")));
 }
+
+TEST_CASE("outbox flush: a refusal for good whose manifest can't be written still goes to failed\\",
+          "[outbox][flush][w51]")
+{
+    Box box;
+    box.queue_run(kId);
+    int writes = 0;
+    box.files.write_manifest = [&writes](const path&, std::string_view) {
+        ++writes;
+        return false;
+    };
+    FakeUploader uploader;
+    uploader.answers = {failed("upload_http_409")};
+
+    const rp::FlushReport report = box.outbox().flush(uploader, at(10));
+
+    CHECK(writes == 1);
+    CHECK(report.out == Lines{"failed run-0001: upload_http_409"});
+    CHECK(report.err == Lines{"outbox error: " + utf8_of(box.queued(kId) / "manifest.json") + ": could not be written",
+                              "outbox error: run-0001: refused by the Cloud (upload_http_409); moved to failed"});
+    CHECK(std::filesystem::exists(box.refused(kId) / "result.json"));
+}

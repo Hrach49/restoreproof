@@ -5,7 +5,7 @@ C5.9", points 1 to 5; docs/onboarding.md). From cloud/:
     uv run python manage.py create-client --msp-id <uuid> --name Fabrikam --tenant-id <guid>
     uv run python manage.py create-worker-token --msp-id <uuid> --label veeam-vm
     uv run python manage.py create-connector --msp-id <uuid> --client-id <uuid> --worker-id <uuid> --profile-file <path>
-    uv run python manage.py create-plan --msp-id <uuid> --client-id <uuid> --connector-id <uuid> --mail 10 --sp 10 --od 10
+    uv run python manage.py create-plan --msp-id <uuid> --client-id <uuid> --connector-id <uuid> --mail 10 --sp 10 --od 10 [--canaries]
     uv run python manage.py revoke-worker --msp-id <uuid> --worker-id <uuid>
     uv run python manage.py create-user --msp-id <uuid> --email admin@example.test --role admin
     uv run python manage.py reset-password --email admin@example.test
@@ -172,8 +172,11 @@ def create_plan(
     cron: Annotated[str, typer.Option(help="five cron fields, UTC, at least monthly")] = DEFAULT_CADENCE,
     disabled: Annotated[bool, typer.Option("--disabled", help="make the plan disabled")] = False,
     run_now: Annotated[bool, typer.Option("--run-now", help="also queue one run at once")] = False,
+    canaries: Annotated[
+        bool, typer.Option("--canaries", help="sample canaries too (the Worker needs the tenant's manifest)")
+    ] = False,
 ) -> None:
-    """Make a test plan on the client's connector; prints plan_id (and run_id with --run-now)."""
+    """Make a test plan on the client's connector; prints plan_id (canary_cursor with --canaries, run_id with --run-now)."""
     run(
         lambda session: onboarding.create_plan(
             session,
@@ -186,6 +189,7 @@ def create_plan(
             cadence_cron=cron,
             enabled=not disabled,
             run_now=run_now,
+            canaries=canaries,
         )
     )
 

@@ -1964,8 +1964,10 @@ as long as every pass names them, not at every pass. While another flush holds t
 The job source is a file, `jobs_file` in `config.json`, until W5.1 puts `GET
 <cloud_url>/v1/jobs` in its place. Its shape is the Cloud's answer as C5.6 built it: the Cloud
 sends the run's own id as `run_id` (a UUID, so a folder name) and the client's id as
-`client_id`, the connector's profile as `client`, the plan's sizes, `latest`, and no
-`canary_cursor`.
+`client_id`, the connector's profile as `client`, the plan's sizes, `latest`, and
+`canary_cursor` only for a plan opted in to canaries (C6.8: `manage.py create-plan --canaries`,
+the cursor starting at `[0, 0, 0]` and moved on by the Cloud from each `pass` or `fail`'s signed
+`cursor_next`); every other job has no `canary_cursor`.
 The code is `worker/include/rp/service_jobs.hpp`. Without the key the loop runs no job; it
 still flushes, deals with a record and sends heartbeats.
 
@@ -2009,7 +2011,7 @@ A job is a closed object:
 | `sample_mail`, `sample_sp`, `sample_od` | yes | JSON integers 0 to 100 (`5.0` and `"5"` are wrong kinds), not all three 0 |
 | `restore_point` | yes | `latest` in any case, or a restore point ID by `--point`'s rule (1 to 128 ASCII letters, digits and hyphens) |
 | `screenshots_enabled` | yes | `true` or `false`; replaces the config's value for this run |
-| `canary_cursor` | no | an array of three integers, each 0 to 999999. `null` is a wrong kind. **Its presence is the opt-in to canaries** (W6.2): with it the run has canaries from `canaries\<the client's tenant>.json` beside the config, rotated from this cursor; without it the run has none and its whole sample is random items, which is every job the Cloud dispatches today. The cursor is the Cloud's to keep and hand on; the Worker stores none |
+| `canary_cursor` | no | an array of three integers, each 0 to 999999. `null` is a wrong kind. **Its presence is the opt-in to canaries** (W6.2): with it the run has canaries from `canaries\<the client's tenant>.json` beside the config, rotated from this cursor; without it the run has none and its whole sample is random items, which is every job the Cloud dispatches for a plan not opted in (C6.8: the opt-in is the plan's, `create-plan --canaries`). The cursor is the Cloud's to keep and hand on (the plan's three columns, moved to the result's `cursor_next`); the Worker stores none |
 
 Any other key makes the job invalid. The run uses the job's profile and never the config's
 client keys, which the service's config may lack (W4.10); the guard still resolves every

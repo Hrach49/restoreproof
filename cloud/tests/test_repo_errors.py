@@ -55,6 +55,8 @@ class FakeIntegrityError(IntegrityError):
         ("ck_test_plan_sample_sp_range", "sample_sp", "not 0 to 100"),
         ("ck_test_plan_sample_od_range", "sample_od", "not 0 to 100"),
         ("ck_test_plan_sample_not_empty", "sample sizes", "all 0"),
+        # C6.8
+        ("ck_test_plan_canary_cursor", "canary_cursor", "not 0 to 999999"),
         ("fk_test_plan_msp_id_connector_id_client_id_connector", "connector_id", "not the client's connector"),
         ("fk_test_plan_msp_id_client_id_client", "client_id", "no such client"),
         ("ck_msp_retention_days_positive", "retention_days", "not positive"),

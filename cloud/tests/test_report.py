@@ -123,6 +123,9 @@ async def test_a_pdf_renders_for_a_client_with_one_failure_and_one_error_in_the_
         "<h1>Restore test report</h1>", "<dt>Client</dt><dd>contoso</dd>", "<dt>MSP</dt><dd>contract</dd>", "<dt>Period</dt><dd>September 2026 (2026-09)</dd>",
         "<p class=\"overall fail\">1 of 4 tests failed</p>", "<dt>Tests run</dt><dd>4</dd>", "<dt>Average recovery time</dt><dd>7:25</dd>",
         "<dt>Maximum recovery time</dt><dd>20:30</dd>", "<dt>Backup source</dt><dd>Veeam Backup for Microsoft 365</dd>",
+        # C6.8: the vector's two random files, compared by content; the fail's and the later pass's canaries not counted.
+        "<dt>Client's own files tested</dt><dd>2</dd>", "<dt>Of those, compared by content</dt><dd>2 of 2</dd>",
+        "Canary items are not counted in these two rows.",
         "<dt>Restore points covered</dt><dd>3, from 2026-09-09 23:00 UTC to 2026-09-29 22:00 UTC</dd>",
     ):
         assert needle in html, needle
@@ -156,7 +159,12 @@ async def test_a_pdf_renders_for_a_client_with_one_failure_and_one_error_in_the_
     # Method
     method = html[html.index('<h2 id="method">'):html.index('<h2 id="integrity">')]
     for needle in (
-        "up to 0 mails, 1 SharePoint file and 1 OneDrive file", "canary", "random", "<code>restoretest</code>", "<code>RestoreTarget</code>",
+        "up to 0 mails, 1 SharePoint file and 1 OneDrive file", "random", "<code>restoretest</code>", "<code>RestoreTarget</code>",
+        # One of the two tests sampled a file of the client's own: counted, never "each test" (the C6.8 code review's finding 2).
+        "<p>In 1 of the tests that passed or failed, the sample included the client's own items, chosen at random from the backup's own listing."
+        " In 2 of the tests that passed or failed, the sample included canary items",
+        "A canary is compared by the SHA-256 of its content.",
+        "A file of the client's own compared by content is compared by the SHA-256 of its content against the backup's copy",
         "Verification levels covered: 1, 2, 3; level 4 partially (files opened and read via Microsoft Graph).",
     ):
         assert needle in method, needle
@@ -915,7 +923,7 @@ async def test_a_month_in_which_nothing_ran_claims_no_restore_no_level_and_no_pl
     data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
     html = render_html(data, None)
 
-    assert (data.ran, data.files_sampled) == (0, False)
+    assert (data.ran, data.content_compared, data.file_content_compared, data.own_files) == (0, False, False, 0)
     assert "restored and verified" not in html and "Verification levels covered" not in html
     assert "<p>No test of this period reached the comparison, so no verification level was covered.</p>" in html
     assert "It records what each test listed here found for the items it sampled, on the dates shown." in html
@@ -941,12 +949,16 @@ async def test_the_method_names_the_plans_that_were_tested_and_level_four_only_w
     assert [(p.mail, p.sp, p.od) for p in data.plans] == [(100, 0, 0)]
     assert "<p>Verification levels covered: 1, 2, 3.</p>" in html and "level 4" not in html
     assert "<p>In 1 test of this period the removal from the restore target did not complete.</p>" in html
-    assert "by its sender's name when the backup lists one" in html and "unless it is an Office document, its size" in html
-    # The W6.3 review's finding 3: no month is said to hold canaries, and a random file's hash comparison is named.
-    assert "plus items chosen at random" not in html and "copy the backup gave of it before the restore" in html
-    # A file sampled by a test that ran: level 4 partially; two tests whose clean-up did not complete.
+    # C6.8: the month's one item is a canary mail: its sentences alone, no random file's or mail's.
+    # The C6.8 code review's finding 2: a sample of canaries alone says nothing of the client's own items.
+    assert "In 1 of the tests that passed or failed, the sample included canary items" in html
+    assert "client's own items" not in html
+    assert "A canary is compared by the SHA-256 of its content." in html
+    assert "A mail of the client's own is compared" not in html and "A file of the client's own" not in html
+    # A file compared by content by a test that ran: level 4 partially; two tests whose clean-up did not complete.
+    # Found and differing: compared (a file never found was not; the C6.8 code review's finding 1).
     files = await lab.tested("fail", finished_at=at(4), recovery_ms=1000, cleanup_ok=False)
-    await lab.items(files, [an_item(0, type="sharepoint", name="a.docx", found=False, match=False)])
+    await lab.items(files, [an_item(0, type="sharepoint", name="a.docx", found=True, match=False)])
     both = render_html(await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time), None)
     assert "<p>Verification levels covered: 1, 2, 3; level 4 partially (files opened and read via Microsoft Graph).</p>" in both
     assert "<p>In 2 tests of this period the removal from the restore target did not complete.</p>" in both
@@ -1017,6 +1029,261 @@ async def test_no_text_of_the_report_is_laid_out_past_the_page(lab):
     assert past_the_page(render_html(wide, "3" * 64)) == []
     assert past_the_page(render_html(data, None)) == []
 
+
+# --- C6.8: the report for real-data runs (docs/decisions.md 2026-10-15, "C6.8 (#184)", points 1 to 7) ---
+
+
+def mail(position: int, **changes):
+    return an_item(position, name=f"Quarterly figures {position}", expected_kind="fields", **changes)
+
+
+def own_file(position: int, kind: str, *, type: str = "sharepoint", **changes):
+    return an_item(position, **{"type": type, "name": f"Budget {position}.xlsx", "expected_kind": kind, **changes})
+
+
+def method_of(html: str) -> str:
+    return html[html.index('<h2 id="method">'):html.index('<h2 id="integrity">')]
+
+
+async def test_a_report_of_a_month_without_canaries_names_no_canary_and_states_how_many_of_the_client_s_files_were_compared_by_content(lab):
+    """The Done-when's first line: a month of real data alone (W6.2's
+    default): a pass with a mail, two files compared by content and one the
+    backup gave no copy of, and a fail whose file compared by content
+    differs. The PDF's text has no "canary" in any case; the Summary says
+    "3 of 4"; the Method names the three comparisons the month used."""
+    passed = await lab.tested("pass", finished_at=at(3), recovery_ms=60000, restore_point_at=at(2, 23))
+    await lab.items(passed, [
+        mail(0), own_file(1, "backup_content"), own_file(2, "metadata", type="onedrive"), own_file(3, "backup_content", type="onedrive"),
+    ])
+    failed = await lab.tested("fail", finished_at=at(4), recovery_ms=60000, restore_point_at=at(3, 23))
+    await lab.items(failed, [own_file(0, "backup_content", found=True, match=False, reason="fields did not match: sha256")])
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
+    rendered = render_report(data)
+    html, words = rendered.html_2, pdf_text(rendered.pdf)
+
+    assert (data.canary_tests, data.own_files, data.content_files) == (0, 4, 3)
+    assert "canar" not in html.lower() and "canar" not in words.lower()
+    assert "<dt>Client's own files tested</dt><dd>4</dd>" in html and "<dt>Of those, compared by content</dt><dd>3 of 4</dd>" in html
+    assert "3 of 4" in words
+    method = method_of(html)
+    for sentence in (
+        "<p>The items of each test are a sample of the client's own items, chosen at random from the backup's own listing. A test restores",
+        "A file of the client's own compared by content is compared by the SHA-256 of its content against the backup's copy",
+        "A file of the client's own that the backup gave no copy of is compared by its name and, unless it is an Office document, its size.",
+        "A mail of the client's own is compared by its subject and received time, and by its sender's name when the backup lists one.",
+        "<p>Verification levels covered: 1, 2, 3; level 4 partially (files opened and read via Microsoft Graph).</p>",
+    ):
+        assert sentence in method, sentence
+    # The fail's file is in the Failures section as a mismatch on its content.
+    failures = html[html.index('<h2 id="failures">'):html.index('<h2 id="method">')]
+    assert "<td>sharepoint</td><td>Budget 0.xlsx</td><td>mismatch</td><td>fields did not match: sha256</td>" in failures
+
+
+async def test_a_report_of_a_month_with_no_item_compared_by_content_claims_no_content_check(lab):
+    """The Done-when's second line: every file checked by its name and size
+    (the backup gave no copy) and the mails by their fields: "0 of 2", no
+    content sentence in the Method, and level 3 not claimed, in so many
+    words."""
+    passed = await lab.tested("pass", finished_at=at(3), recovery_ms=60000)
+    await lab.items(passed, [mail(0), own_file(1, "metadata")])
+    failed = await lab.tested("fail", finished_at=at(4), recovery_ms=60000)
+    await lab.items(failed, [own_file(0, "metadata", type="onedrive", found=False, match=False, reason="no restored copy found")])
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
+    rendered = render_report(data)
+    html, words = rendered.html_2, pdf_text(rendered.pdf)
+    method = method_of(html)
+
+    assert (data.own_files, data.content_files, data.content_compared, data.file_content_compared) == (2, 0, False, False)
+    assert "<dt>Of those, compared by content</dt><dd>0 of 2</dd>" in html and "0 of 2" in words
+    assert "SHA-256" not in method and "compared by content" not in method
+    assert "<p>Verification levels covered: 1, 2. No item of this period was compared by its content, so level 3 is not covered.</p>" in method
+    assert "1, 2, 3" not in html and "level 4" not in html
+    assert "No item of this period was compared by its content" in " ".join(words.split())
+    assert "canar" not in words.lower()
+
+
+async def test_a_month_with_canaries_says_in_how_many_tests_and_never_counts_them_as_the_client_s_files(lab):
+    """A plan opted in to canaries: the sampling sentence's second half with
+    its count, the canary sentence, the line under the two rows; the canary
+    file compared by content is not one of the client's own files, and the
+    month's level 4 comes from it."""
+    with_canaries = await lab.tested("pass", finished_at=at(3), recovery_ms=60000)
+    await lab.items(with_canaries, [an_item(0), an_item(1, type="sharepoint", name="rp-canary-04.docx"), own_file(2, "metadata", type="onedrive")])
+    without = await lab.tested("pass", finished_at=at(4), recovery_ms=60000)
+    await lab.items(without, [mail(0)])
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
+    html = render_html(data, None)
+    method = method_of(html)
+
+    assert (data.canary_tests, data.own_files, data.content_files) == (1, 1, 0)
+    assert "<dt>Of those, compared by content</dt><dd>0 of 1</dd>" in html
+    assert "Canary items are not counted in these two rows." in html
+    assert "listing. In 1 of the tests that passed or failed, the sample also included canary items, seeded in the tenant for this purpose, whose content is known in advance." in method
+    assert "A canary is compared by the SHA-256 of its content." in method
+    assert "A file of the client's own compared by content" not in method
+    assert "<p>Verification levels covered: 1, 2, 3; level 4 partially (files opened and read via Microsoft Graph).</p>" in method
+
+
+async def test_an_error_s_items_are_not_counted_and_a_month_with_no_own_file_prints_a_dash(lab):
+    """Point 1: the counts are the tests that passed or failed; an error's
+    items may never have been compared."""
+    errored = await lab.tested("error", finished_at=at(3), error_code="graph_transient")
+    await lab.items(errored, [own_file(0, "backup_content"), an_item(1)])
+    passed = await lab.tested("pass", finished_at=at(4), recovery_ms=60000)
+    await lab.items(passed, [mail(0)])
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
+    html = render_html(data, None)
+
+    assert (data.canary_tests, data.own_files, data.content_files, data.kinds) == (0, 0, 0, frozenset({"fields"}))
+    assert "<dt>Client's own files tested</dt><dd>0</dd>" in html and "<dt>Of those, compared by content</dt><dd>—</dd>" in html
+    assert "canar" not in html.lower()
+    assert "<p>Verification levels covered: 1, 2. No item of this period was compared by its content, so level 3 is not covered.</p>" in html
+
+
+async def test_a_missing_or_unchecked_content_item_is_not_counted_as_compared_and_claims_no_level(lab):
+    """The C6.8 code review's finding 1: an item is compared by content only
+    when it was found and its `match` is known. A file the restore never
+    brought back and a canary nobody checked are counted as tested, never as
+    compared, and earn no level 3 or 4."""
+    failed = await lab.tested("fail", finished_at=at(3), recovery_ms=60000)
+    await lab.items(failed, [
+        own_file(0, "backup_content", found=False, match=False, reason="no restored copy found"),
+        an_item(1, type="sharepoint", name="rp-canary-04.docx", found=None, match=None),
+        mail(2),
+    ])
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
+    html = render_html(data, None)
+
+    assert (data.own_files, data.content_files, data.content_compared, data.file_content_compared) == (1, 0, False, False)
+    assert "<dt>Of those, compared by content</dt><dd>0 of 1</dd>" in html
+    assert "<p>Verification levels covered: 1, 2. No item of this period was compared by its content, so level 3 is not covered.</p>" in html
+    assert "1, 2, 3" not in html and "level 4" not in html
+
+
+async def test_a_found_content_item_that_differs_was_compared(lab):
+    """A mismatch is a comparison that failed: compared, and level 3 holds."""
+    failed = await lab.tested("fail", finished_at=at(3), recovery_ms=60000)
+    await lab.items(failed, [own_file(0, "backup_content", found=True, match=False, reason="fields did not match: sha256")])
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
+
+    assert (data.own_files, data.content_files, data.content_compared, data.file_content_compared) == (1, 1, True, True)
+
+
+async def test_a_month_of_canaries_alone_never_says_the_client_s_own_items_were_sampled(lab):
+    """The C6.8 code review's finding 2: a canary plan of one item per type
+    takes one canary and no random item. The Method does not say the
+    client's own items were sampled, and the canary sentence has no "also";
+    the Summary has no sentence on the client's files (finding 3)."""
+    run = await lab.tested("pass", finished_at=at(3), recovery_ms=60000)
+    await lab.items(run, [an_item(0), an_item(1, type="sharepoint", name="rp-canary-04.docx")])
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
+    html = render_html(data, None)
+    method = method_of(html)
+
+    assert (data.ran, data.own_tests, data.canary_tests, data.own_files) == (1, 0, 1, 0)
+    assert "client's own items" not in method and "chosen at random" not in method
+    assert "<p>In 1 of the tests that passed or failed, the sample included canary items, seeded in the tenant for this purpose, whose content is known in advance. A test restores" in method
+    assert "The client's own files tested are" not in html and "A file counted as compared by content" not in html
+    assert "Canary items are not counted in these two rows." in html
+
+
+async def test_a_month_where_only_some_tests_sampled_the_client_s_items_counts_them(lab):
+    """One test of canaries alone and one of the client's items: the
+    sampling sentence is counted, never "each test"."""
+    canaries = await lab.tested("pass", finished_at=at(3), recovery_ms=60000)
+    await lab.items(canaries, [an_item(0)])
+    own = await lab.tested("pass", finished_at=at(4), recovery_ms=60000)
+    await lab.items(own, [mail(0)])
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
+    method = method_of(render_html(data, None))
+
+    assert (data.ran, data.own_tests, data.canary_tests) == (2, 1, 1)
+    assert "The items of each test are" not in method
+    assert (
+        "<p>In 1 of the tests that passed or failed, the sample included the client's own items, chosen at random from the backup's own listing."
+        " In 1 of the tests that passed or failed, the sample included canary items, seeded in the tenant for this purpose, whose content is known in advance."
+    ) in method
+
+
+async def test_a_month_that_tested_no_file_does_not_say_how_files_were_compared(lab):
+    """The C6.8 code review's finding 3: mails alone, so the two rows read 0
+    and a dash and the Summary says nothing of how files are compared."""
+    passed = await lab.tested("pass", finished_at=at(3), recovery_ms=60000)
+    await lab.items(passed, [mail(0), mail(1)])
+
+    html = render_html(await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time), None)
+
+    assert "<dt>Of those, compared by content</dt><dd>—</dd>" in html
+    assert "The client's own files tested are" not in html and "A file counted as compared by content" not in html
+
+
+async def test_a_month_with_own_files_explains_the_two_rows(lab):
+    passed = await lab.tested("pass", finished_at=at(3), recovery_ms=60000)
+    await lab.items(passed, [own_file(0, "backup_content")])
+
+    html = render_html(await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time), None)
+
+    assert (
+        " The client's own files tested are the files the tests that passed or failed sampled from the backup."
+        " A file counted as compared by content was found and compared by the SHA-256 of its content against the backup's copy;"
+        " any other was compared by its name and, unless it is an Office document, its size, or was missing or not checked.</p>"
+    ) in html
+
+
+async def test_the_test_log_counts_an_item_of_every_kind_once(lab):
+    """The read groups by kind too; the Test log's mail / SP / OD adds the
+    kinds back up."""
+    run = await lab.tested("pass", finished_at=at(3), recovery_ms=60000)
+    await lab.items(run, [mail(0), an_item(1), own_file(2, "backup_content"), own_file(3, "metadata"), own_file(4, "backup_content", type="onedrive")])
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
+
+    assert [(line.mail, line.sp, line.od) for line in data.runs] == [(2, 2, 1)]
+
+
+async def test_a_recovery_time_is_said_to_be_a_sample_s_not_the_tenant_s(lab):
+    await lab.tested("pass", finished_at=at(3), recovery_ms=60000)
+
+    rendered = render_report(await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time))
+
+    sentence = (
+        "A recovery time is one test's time from the start of its restore to the last of its sampled items checked: "
+        "the time that sample took to come back, not the time it would take to restore the tenant."
+    )
+    assert sentence in rendered.html_2
+    assert "not the time it would take to restore the tenant" in " ".join(pdf_text(rendered.pdf).split())
+
+
+async def test_the_failures_section_prints_an_item_s_full_name_whatever_its_length(lab):
+    """Point 6, the owner's decision of 2026-10-14: an item's name is printed
+    whole (never shortened, masked or hashed), escaped, and laid out inside
+    the page, with spaces or with none."""
+    spaced = "Board minutes " + " ".join(f"part{n:03d}" for n in range(48)) + " <final>.docx"
+    solid = "Z" * 396 + ".pdf"
+    assert len(spaced) >= 400 and len(solid) == 400
+    failed = await lab.tested("fail", finished_at=at(3), recovery_ms=60000)
+    await lab.items(failed, [
+        own_file(0, "backup_content", name=spaced, found=True, match=False, reason="fields did not match: sha256"),
+        own_file(1, "metadata", type="onedrive", name=solid, found=False, match=False, reason="no restored copy found"),
+    ])
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
+    rendered = render_report(data)
+
+    assert [item.name for failure in data.failures for item in failure.items] == [spaced, solid]
+    for html in (rendered.html_1, rendered.html_2):
+        assert f"<td>{escape(spaced)}</td>" in html and f"<td>{solid}</td>" in html
+    flat = "".join(pdf_text(rendered.pdf).split())
+    assert "".join(spaced.split()) in flat and solid in flat
+    assert past_the_page(rendered.html_2) == []
 
 
 # --- C6.6: the job's read of a month's clients (docs/decisions.md 2026-10-13, "C6.6, C6.5 and C6.7", point 1) ---

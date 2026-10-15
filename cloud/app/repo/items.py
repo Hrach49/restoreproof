@@ -26,11 +26,17 @@ FAILED_STATES = ("fail", "error")
 
 
 class TypeCount(NamedTuple):
-    """How many items of one type one run has (C6.4's Test log)."""
+    """How many items of one type and one expected kind one run has (C6.4's
+    Test log; C6.8: the kind, so the report says what each test compared),
+    and how many of them were compared: found, with `match` known (the C6.8
+    code review's finding 1: a missing item or one nobody checked was not
+    compared by anything)."""
 
     run_id: UUID
     type: str
+    expected_kind: str
     count: int
+    compared: int
 
 
 @dataclass(frozen=True)
@@ -114,16 +120,26 @@ class ItemRepo(Repo):
     async def counts_by_type_in_period(
         self, msp_id: UUID, client_id: UUID, *, start: dt.datetime, end: dt.datetime
     ) -> list[TypeCount]:
-        """How many items of each type each of the month's runs has, in the
-        runs' order then by type (C6.4, point 5: the Test log's counts). One
-        statement."""
+        """How many items of each type and expected kind each of the month's
+        runs has, in the runs' order, then by type, then by kind (C6.4, point
+        5: the Test log's counts; C6.8, point 1: the kinds the Summary and the
+        Method read). One statement."""
         statement = (
             self._of_period(msp_id, client_id, start, end)
-            .with_only_columns(TestItem.run_id, TestItem.type, func.count())
-            .group_by(TestItem.run_id, TestItem.type, period_time(), TestRun.id)
-            .order_by(period_time(), TestRun.id, TestItem.type)
+            .with_only_columns(
+                TestItem.run_id,
+                TestItem.type,
+                TestItem.expected_kind,
+                func.count(),
+                func.count().filter(TestItem.found.is_(True), TestItem.match.is_not(None)),
+            )
+            .group_by(TestItem.run_id, TestItem.type, TestItem.expected_kind, period_time(), TestRun.id)
+            .order_by(period_time(), TestRun.id, TestItem.type, TestItem.expected_kind)
         )
-        return [TypeCount(run_id, type_, int(count)) for run_id, type_, count in await self._rows(statement)]
+        return [
+            TypeCount(run_id, type_, kind, int(count), int(compared))
+            for run_id, type_, kind, count, compared in await self._rows(statement)
+        ]
 
     async def unmatched_in_period(
         self, msp_id: UUID, client_id: UUID, *, start: dt.datetime, end: dt.datetime

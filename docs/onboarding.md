@@ -120,9 +120,20 @@ nothing and prints no secret but the one token it exists to print.
    plan's first run at its first cron time after the plan was made; `--run-now` queues one run
    at once for a first test today.
 
+   **Canaries are an opt-in, per plan** (C6.8, `docs/decisions.md` 2026-10-15). By default a
+   plan's runs sample the client's own items alone (W6.2). `--canaries` opts the plan in: its
+   jobs carry `canary_cursor`, starting at `0,0,0`, and each test then takes half of each type's
+   sample from the canaries seeded in that tenant. **The Worker must hold the tenant's manifest**,
+   `canaries\<graph_tenant_id>.json` beside its config (`docs/worker-config.md`), and the canaries
+   must be seeded in the tenant (`lab/README.md`); without it every run of the plan ends before
+   it starts, sends no result and expires after three attempts. The Cloud moves the cursor on
+   after each `pass` or `fail` with canaries, from the Worker's own signed `cursor_next`. No
+   command turns canaries on or off for an existing plan yet: make a new plan.
+
    ```
-   manage.py create-plan --msp-id <msp_id> --client-id <client_id> --connector-id <connector_id> --mail 10 --sp 10 --od 10 [--cron "0 2 * * *"] [--disabled] [--run-now]
+   manage.py create-plan --msp-id <msp_id> --client-id <client_id> --connector-id <connector_id> --mail 10 --sp 10 --od 10 [--cron "0 2 * * *"] [--disabled] [--run-now] [--canaries]
    plan_id c4a1…
+   canary_cursor 0,0,0     (with --canaries)
    run_id 61f2…            (with --run-now)
    ```
 
@@ -227,6 +238,7 @@ nothing and prints no secret but the one token it exists to print.
 | `create-plan` | `sample_mail: not 0 to 100` (`_sp`, `_od`) / `sample sizes: all 0` | the Worker's J3 rule |
 | `create-plan` | `connector_id: not the client's connector` | the connector is another client's or absent |
 | `create-plan` | `client_id: no such client` | not this MSP's |
+| `create-plan` | `canary_cursor: not 0 to 999999` | the Worker's cursor rule (`--canaries` always sets `0,0,0`; met only by a cursor written another way) |
 | `revoke-worker` | `worker_id: no such Worker or already revoked` | one line for both |
 | `create-user`, `reset-password` | `email: not an address` | the address's rule |
 | `create-user` | `email: already a user of this Cloud` | one address across the Cloud, in any case |

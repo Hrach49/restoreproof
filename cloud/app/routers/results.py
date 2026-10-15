@@ -9,9 +9,9 @@ Content-Length said), hands the parts to `app/results.py`, which decides
 everything (the verification in a thread: it is CPU work of up to seconds),
 and runs the statements: the run's one `UPDATE` (whose rowcount settles a
 race with another upload; it stamps `received_at` with the Cloud's clock,
-which a report's month goes by for a result that arrives late), the items in one `INSERT`, the audit row, then the
-objects under
-`msp/<msp_id>/runs/<run_id>/`; 202 `{"run_id", "state"}` once the transaction
+which a report's month goes by for a result that arrives late), the items in one `INSERT`, the audit row, the
+objects under `msp/<msp_id>/runs/<run_id>/`, then (C6.8) the plan's canary
+cursor; 202 `{"run_id", "state"}` once the transaction
 is committed (`SessionDep`). A refusal is returned, not raised, so its one
 audit row commits and nothing else (nothing was written before it). The
 transaction is `get_session`'s.
@@ -39,6 +39,7 @@ from app.models import Worker
 from app.repo.audit import AuditRepo
 from app.repo.clients import ClientRepo
 from app.repo.items import ItemRepo
+from app.repo.plans import PlanRepo
 from app.repo.runs import RunRepo
 from app.routers.errors import NOT_AUTHENTICATED, refusal
 
@@ -230,7 +231,6 @@ async def upload(request: Request, worker: Annotated[Worker, Depends(current_wor
         raise RuntimeError("the run's UPDATE touched nothing and the run holds no bundle")
     await ItemRepo(session).create_many(worker.msp_id, run.id, results.item_rows(verified.result))
     await audit.write(worker.msp_id, AUDIT_RECEIVED, f"run:{run.id}", ip=ip)
-
     storage = request.app.state.storage
 
     def put_all() -> None:
@@ -242,4 +242,13 @@ async def upload(request: Request, worker: Annotated[Worker, Depends(current_wor
             storage.put(key + name, data, results.OCTET_STREAM)
 
     await asyncio.to_thread(put_all)
+    # C6.8, point 11: a pass or fail with canaries moves its plan's cursor to
+    # the Worker's signed `cursor_next`, only from the cursor it was sent with;
+    # it commits or rolls back with the run's rows and objects. Last, after
+    # the puts, so the plan's row is locked from here to the commit alone and
+    # another upload of the same plan never waits on this one's objects (the
+    # C6.8 code review's finding 5).
+    advance = results.cursor_advance(verified.result)
+    if advance is not None:
+        await PlanRepo(session).advance_canary_cursor(worker.msp_id, run.plan_id, sent=advance[0], next=advance[1])
     return Accepted(run_id=str(run.id), state=update.state)

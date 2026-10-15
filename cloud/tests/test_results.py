@@ -852,6 +852,43 @@ async def test_a_fail_s_items_and_columns(lab):
     ]
 
 
+def a_content_fail(document):
+    """C6.8 step 1: the two random files the backup gave a copy of
+    (`backup_content`, one by `bytes`, one by `office-v1`) restored with other
+    content: each a `sha256` mismatch, the run `fail` (W6.3 point 5)."""
+    items = document["check"]["items"]
+    for index in (3, 5):
+        items[index] = {"index": index, "outcome": "mismatch", "found": True, "mismatches": ["sha256"], "reason": "fields did not match: sha256", "ms": 9}
+    document["check"]["counts"] = {"match": 4, "mismatch": 2, "missing": 0, "error": 0}
+    document["status"] = {
+        "status": "fail", "message": "4 of 6 item(s) verified; 2 failed", "restore_sent": True,
+        "counts": {"items": 6, "verified": 4, "failed": 2, "unchecked": 0}, "verified": {"manifest": 3, "fields": 1, "metadata": 0, "backup_content": 0},
+        "failed_items": [3, 5], "unchecked_items": [], "warnings": [],
+    }
+
+
+async def test_a_backup_content_file_whose_restored_copy_differs_is_stored_as_a_mismatch_with_its_hash(lab):
+    """C6.8 (docs/decisions.md 2026-10-15, step 1): the Cloud takes the
+    fourth kind as it takes the other three: the row keeps the kind and the
+    backup's hash, and a changed copy is `match` false with the Worker's
+    reason, which the report's Failures section reads as "mismatch"."""
+    run_id = await lab.run()
+    parts = lab.bundle(run_id, patch=a_content_fail)
+    lab.expect_puts(run_id, parts)
+
+    response = await lab.upload(parts)
+
+    assert response.json() == {"run_id": str(run_id), "state": "fail"}
+    expected = {item["index"]: item for item in json.loads(parts["result"])["expected"]["items"]}
+    items = await lab.items(run_id)
+    assert [(i.position, i.expected_kind, i.expected_sha256, i.found, i.match, i.reason) for i in items if i.position in (3, 5)] == [
+        (3, "backup_content", expected[3]["sha256"], True, False, "fields did not match: sha256"),
+        (5, "backup_content", expected[5]["sha256"], True, False, "fields did not match: sha256"),
+    ]
+    assert [i.match for i in items] == [True, True, True, False, True, False]
+    assert all(i.found_sha256 is None for i in items)
+
+
 @pytest.mark.parametrize(
     ("span", "stored"),
     [

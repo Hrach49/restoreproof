@@ -780,6 +780,10 @@ async def test_the_contract_test_passes_against_a_fixture_generated_by_the_cpp_w
     expected = RESULT["expected"]["items"]
     assert [(i.position, i.type) for i in items] == [(e["index"], e["kind"]) for e in expected]
     assert all((i.found, i.match) == (True, True) for i in items)
+    # C6.8 step 1: a run without canaries (W6.2), its files checked against
+    # the backup's own copy (W6.3), stored with the kind and the hash.
+    assert [(i.expected_kind, i.expected_sha256) for i in items] == [(e["expected_kind"], e.get("sha256")) for e in expected]
+    assert {i.expected_kind for i in items} == {"backup_content"} and "manifest_sha256" not in RESULT["sample"]
     assert await lab.wrote(before) == [("result.received", f"run:{VECTOR['run_id']}")]
     assert rows_only(await lab.counts()) == {
         **rows_only(before), "test_item": before["test_item"] + len(expected), "audit_log": before["audit_log"] + 1

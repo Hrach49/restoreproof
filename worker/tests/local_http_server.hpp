@@ -138,4 +138,107 @@ private:
     std::thread thread_;
 };
 
+// W5.1: a listener on 127.0.0.1 that takes one HTTP/1.1 request as its bytes
+// arrive (a request line, headers, then a body of its Content-Length; an
+// `Expect: 100-continue` answered first), keeps them, and answers `reply` (a
+// whole HTTP response). cpp-httplib parses a multipart body and never hands it
+// over raw; this is what holds the Worker's upload byte for byte. No Catch2
+// assertion runs on its thread.
+class RecordingServer {
+public:
+    explicit RecordingServer(std::string reply) : reply_(std::move(reply))
+    {
+        REQUIRE(WSAStartup(MAKEWORD(2, 2), &wsa_) == 0);
+        listener_ = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        REQUIRE(listener_ != INVALID_SOCKET);
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = 0;
+        inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+        REQUIRE(::bind(listener_, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) == 0);
+        REQUIRE(::listen(listener_, 1) == 0);
+        int length = sizeof(addr);
+        REQUIRE(::getsockname(listener_, reinterpret_cast<sockaddr*>(&addr), &length) == 0);
+        port_ = ntohs(addr.sin_port);
+        thread_ = std::thread([this] { serve(); });
+    }
+
+    ~RecordingServer()
+    {
+        ::closesocket(listener_);
+        wait();
+        WSACleanup();
+    }
+
+    // Until the one request is answered and its connection closed.
+    void wait()
+    {
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+    }
+
+    RecordingServer(const RecordingServer&) = delete;
+    RecordingServer& operator=(const RecordingServer&) = delete;
+
+    std::string url() const { return "http://127.0.0.1:" + std::to_string(port_); }
+    // After wait().
+    const std::string& head() const { return head_; }
+    const std::string& body() const { return body_; }
+
+private:
+    void serve()
+    {
+        const SOCKET client = ::accept(listener_, nullptr, nullptr);
+        if (client == INVALID_SOCKET) {
+            return;
+        }
+        std::string got;
+        char buffer[8192];
+        std::size_t end = std::string::npos;
+        while ((end = got.find("\r\n\r\n")) == std::string::npos) {
+            const int n = ::recv(client, buffer, sizeof(buffer), 0);
+            if (n <= 0) {
+                ::closesocket(client);
+                return;
+            }
+            got.append(buffer, static_cast<std::size_t>(n));
+        }
+        head_ = got.substr(0, end + 4);
+        std::string lower = head_;
+        for (char& c : lower) {
+            c = static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+        }
+        if (lower.find("\r\nexpect: 100-continue") != std::string::npos) {
+            const std::string go = "HTTP/1.1 100 Continue\r\n\r\n";
+            ::send(client, go.data(), static_cast<int>(go.size()), 0);
+        }
+        std::size_t want = 0;
+        if (const std::size_t at = lower.find("\r\ncontent-length:"); at != std::string::npos) {
+            want = std::stoull(head_.substr(at + 17));
+        }
+        body_ = got.substr(end + 4);
+        while (body_.size() < want) {
+            const int n = ::recv(client, buffer, sizeof(buffer), 0);
+            if (n <= 0) {
+                break;
+            }
+            body_.append(buffer, static_cast<std::size_t>(n));
+        }
+        ::send(client, reply_.data(), static_cast<int>(reply_.size()), 0);
+        ::shutdown(client, SD_SEND);
+        while (::recv(client, buffer, sizeof(buffer), 0) > 0) {
+        }
+        ::closesocket(client);
+    }
+
+    std::string reply_;
+    WSADATA wsa_{};
+    SOCKET listener_ = INVALID_SOCKET;
+    int port_ = 0;
+    std::string head_;
+    std::string body_;
+    std::thread thread_;
+};
+
 } // namespace rp::test

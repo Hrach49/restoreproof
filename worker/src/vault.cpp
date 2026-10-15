@@ -301,7 +301,7 @@ Secrets parse_vault(const std::string& text, const std::string& name)
     Secrets secrets;
     for (const auto& [key, value] : doc.items()) {
         if (secret_field(secrets, key) == nullptr) {
-            throw VaultError(name + ": the vault holds a name that isn't one of the five secrets");
+            throw VaultError(name + ": the vault holds a name that isn't one of the seven secrets");
         }
         if (!value.is_string() || value.get_ref<const std::string&>().empty() ||
             value.get_ref<const std::string&>().size() > kMaxVaultValueBytes) {

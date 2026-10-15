@@ -39,7 +39,7 @@
 
 namespace rp::test::secret_audit {
 
-// The five vault values (docs/decisions.md 2026-10-09 W4.9 point 2). The user
+// The vault values (docs/decisions.md 2026-10-09 W4.9 point 2; W5.1's two below). The user
 // name is no secret value and is only counted.
 inline constexpr std::string_view kUserName = "AUDIT-HOST\\rp-veeam-audit-2d7f";
 inline constexpr std::string_view kBareUserName = "rp-veeam-audit-2d7f";
@@ -53,6 +53,12 @@ inline constexpr std::string_view kVeeamRefreshToken =
 inline constexpr std::string_view kGraphAccessToken = "Sentinel-Audit-Graph-Access-Token-2d7f";
 inline constexpr std::string_view kExportedPfxPassword =
     "Sentinel-Audit-Exported-PFX-Password-2d7f";
+// The Cloud's two vault tokens (W5.1, docs/decisions.md 2026-10-15 point 10),
+// 43 base64url characters as the Cloud makes them, and the API token a fake
+// Cloud's registration answers with.
+inline constexpr std::string_view kInstallToken = "SentinelAuditInstallToken-2d7f-0123456789ab";
+inline constexpr std::string_view kApiToken = "SentinelAuditApiToken-2d7f-0123456789abcdef";
+inline constexpr std::string_view kIssuedApiToken = "SentinelAuditIssuedToken-2d7f-0123456789abc";
 
 // The exported restore credential: a restore body carries a Base64 PFX, so
 // the sentinel is the Base64 of its own words.
@@ -89,8 +95,9 @@ inline std::string signing_key_base64()
 
 inline rp::Secrets secrets()
 {
-    return rp::Secrets{std::string{kUserName}, std::string{kVeeamPassword}, pfx_base64(),
-                       std::string{kPfxPassword}, signing_key_base64()};
+    return rp::Secrets{std::string{kUserName},    std::string{kVeeamPassword}, pfx_base64(),
+                       std::string{kPfxPassword}, signing_key_base64(),        std::string{kInstallToken},
+                       std::string{kApiToken}};
 }
 
 // The recorded token replies with the audit's tokens in place of the
@@ -187,6 +194,9 @@ inline SecretSet searched()
     set.add("graph access token", std::string{kGraphAccessToken});
     set.add("exported pfx", exported_pfx());
     set.add("exported pfx password", std::string{kExportedPfxPassword});
+    set.add("cloud install token", std::string{kInstallToken});
+    set.add("cloud api token", std::string{kApiToken});
+    set.add("issued cloud api token", std::string{kIssuedApiToken});
     return set;
 }
 

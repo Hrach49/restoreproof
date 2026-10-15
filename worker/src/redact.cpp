@@ -28,7 +28,7 @@ struct SecretKey {
     bool colon_form;
 };
 
-constexpr std::array<SecretKey, 16> kSecretKeys{{
+constexpr std::array<SecretKey, 18> kSecretKeys{{
     {"client_secret", false, true},
     {"password", false, true},
     {"refresh_token", false, true},
@@ -58,6 +58,12 @@ constexpr std::array<SecretKey, 16> kSecretKeys{{
     {"signing_key", false, true},
     {"signing_key_base64", false, true},
     {"signing_private_key", false, true},
+    // The Cloud's tokens (W5.1): registration's install_token and the
+    // api_token it answers, and the vault's names for them, which end in these
+    // (cloud_install_token, cloud_api_token). No colon form: the Cloud's audit
+    // rows name an install token's row as "install_token:<id>".
+    {"api_token", false, false},
+    {"install_token", false, false},
 }};
 
 // A PEM block's header and footer (RFC 7468): "-----BEGIN <label>-----" and

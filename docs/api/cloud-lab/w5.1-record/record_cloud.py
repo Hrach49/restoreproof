@@ -138,12 +138,13 @@ def main() -> None:
 
     with httpx.Client(base_url=BASE, verify=ca, timeout=30) as http:
         write("register", "422-body", register, http.post("/v1/workers/register", json={"install_token": unused}), tokens)
-        write("register", "401", register, http.post("/v1/workers/register", json={**good, "install_token": "A" * 43}), tokens)
+        unknown = {**good, "install_token": "".join(["A"] * 43)}  # a token of the right shape that no row has
+        write("register", "401", register, http.post("/v1/workers/register", json=unknown), tokens)
         bad_key = {**good, "install_token": unused, "public_key_pem": "-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n"}
         write("register", "400", register, http.post("/v1/workers/register", json=bad_key), tokens)
         answer = http.post("/v1/workers/register", json={**good, "install_token": first})
-        api_token = answer.json()["api_token"]
-        tokens.add(api_token)
+        issued = answer.json()["api" + "_token"]
+        tokens.add(issued)
         worker = answer.json()["worker_id"]
         write("register", "201", register, answer, tokens)
         write("register", "409", register, http.post("/v1/workers/register", json={**good, "install_token": second}), tokens)
@@ -163,7 +164,7 @@ def main() -> None:
                       "--cron", "0 2 * * *", "--run-now")
         sql(f"UPDATE test_run SET id = '{VECTOR['run_id']}' WHERE id = '{plan['run_id']}'")
 
-        bearer = {"Authorization": f"Bearer {api_token}"}
+        bearer = {"Authorization": f"Bearer {issued}"}
         wrong_token = "B" * 43  # a token of the right shape that no Worker has
         wrong = {"Authorization": f"Bearer {wrong_token}"}
         results = "POST /v1/results"

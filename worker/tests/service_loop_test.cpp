@@ -2196,3 +2196,21 @@ TEST_CASE("cloud: without a token a run closed at the start is queued and not fl
     CHECK(lab.closed.size() == 1);
     CHECK(lab.count_call("flush") == 0);
 }
+
+TEST_CASE("cloud: an env without tokens (W4.8's shape) treats a 401 of an upload as no token state",
+          "[service_loop][w51]")
+{
+    LoopLab lab;
+    lab.on_flush = [] {
+        rp::FlushReport report;
+        report.token_refused = true;
+        return std::optional<rp::FlushReport>{report};
+    };
+
+    lab.run(2);
+
+    CHECK(lab.count(kRefused) == 0);
+    // Not refused for good: there is no token to tell another by, so every
+    // poll still flushes.
+    CHECK(lab.count_call("flush") == 2);
+}

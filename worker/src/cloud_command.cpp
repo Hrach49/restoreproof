@@ -47,6 +47,19 @@ struct Wiped {
     ~Wiped() { secure_wipe(text); }
 };
 
+// The ConfigError `step` throws, as its message; nullopt when it ran. One
+// return after the handler (see signer.cpp): each refusal is decided outside it.
+template <typename Step> std::optional<std::string> config_problem(Step&& step)
+{
+    std::optional<std::string> problem;
+    try {
+        step();
+    } catch (const ConfigError& e) {
+        problem = e.what();
+    }
+    return problem;
+}
+
 bool is_set(const std::optional<std::string>& secret) noexcept
 {
     return secret && !secret->empty();
@@ -128,9 +141,7 @@ int store(const HttpResponse& answer, const Config& config, const std::string& k
     secure_wipe(*held.secrets.cloud_install_token);
     held.secrets.cloud_install_token.reset();
     held.secrets.cloud_api_token = registration->api_token;
-    try {
-        write_secrets(vault, held.secrets, env);
-    } catch (const ConfigError&) {
+    if (config_problem([&] { write_secrets(vault, held.secrets, env); })) {
         err << "cloud register: registered as worker " << registration->worker_id
             << ", but the API token couldn't be stored; revoke that Worker (manage.py "
                "revoke-worker) and register again with a new signing key and a new install "
@@ -152,6 +163,40 @@ int store(const HttpResponse& answer, const Config& config, const std::string& k
     return exit_code::ok;
 }
 
+// The install token there, and the signing key's public half and key id.
+// Throws ConfigError naming the secret that is missing or no key.
+void take_key(const Secrets& secrets, std::string& pem, std::string& key_id)
+{
+    if (!is_set(secrets.cloud_install_token)) {
+        throw ConfigError(std::string{kNameCloudInstallToken}, not_in_vault(kNameCloudInstallToken));
+    }
+    if (!is_set(secrets.signing_key_base64)) {
+        throw ConfigError(std::string{kNameSigningKeyBase64}, not_in_vault(kNameSigningKeyBase64));
+    }
+    const std::optional<SigningKey> key = SigningKey::from_base64(*secrets.signing_key_base64);
+    if (!key) {
+        throw ConfigError(std::string{kNameSigningKeyBase64},
+                          std::string{kNameSigningKeyBase64} +
+                              " is not an Ed25519 private key (Base64 of PKCS#8 DER)");
+    }
+    pem = key->public_key_pem();
+    key_id = key->key_id();
+}
+
+// --name (held to its rule by the caller), else this machine's name. Throws
+// ConfigError for a machine's name the Cloud wouldn't take.
+std::string worker_name(const RegisterRequest& request, const CloudCommandEnv& env)
+{
+    if (request.name) {
+        return *request.name;
+    }
+    const std::optional<std::string> host = env.host_name ? env.host_name() : dns_host_name();
+    if (!host || !is_worker_name(*host)) {
+        throw ConfigError("name", "this machine's name can't be the Worker's name; give --name");
+    }
+    return *host;
+}
+
 } // namespace
 
 CloudCommandEnv default_cloud_command_env()
@@ -168,57 +213,39 @@ int register_worker(const RegisterRequest& request, std::ostream& out, std::ostr
     std::string key_id;
     std::string pem;
     std::string name;
-    try {
+    std::optional<std::string> problem = config_problem([&] {
         config = env.load_config ? env.load_config(request.config) : load_config(request.config);
         held.secrets = read_secrets(request.vault, env);
-        if (is_set(held.secrets.cloud_api_token)) {
-            err << "cloud register: already registered (cloud_api_token is in the vault); nothing "
-                   "was done\n";
-            return exit_code::config;
-        }
-        if (!is_set(held.secrets.cloud_install_token)) {
-            throw ConfigError(std::string{kNameCloudInstallToken}, not_in_vault(kNameCloudInstallToken));
-        }
-        if (!is_set(held.secrets.signing_key_base64)) {
-            throw ConfigError(std::string{kNameSigningKeyBase64}, not_in_vault(kNameSigningKeyBase64));
-        }
-        const std::optional<SigningKey> key = SigningKey::from_base64(*held.secrets.signing_key_base64);
-        if (!key) {
-            throw ConfigError(std::string{kNameSigningKeyBase64},
-                              std::string{kNameSigningKeyBase64} +
-                                  " is not an Ed25519 private key (Base64 of PKCS#8 DER)");
-        }
-        pem = key->public_key_pem();
-        key_id = key->key_id();
-        if (request.name) {
-            if (!is_worker_name(*request.name)) {
-                err << "usage error: --name must be 1 to 128 characters with no control character\n";
-                return exit_code::usage;
-            }
-            name = *request.name;
-        } else {
-            const std::optional<std::string> host = env.host_name ? env.host_name() : dns_host_name();
-            if (!host || !is_worker_name(*host)) {
-                throw ConfigError("name", "this machine's name can't be the Worker's name; give --name");
-            }
-            name = *host;
-        }
-    } catch (const ConfigError& e) {
-        err << "config error: " << e.what() << '\n';
+    });
+    if (!problem && is_set(held.secrets.cloud_api_token)) {
+        err << "cloud register: already registered (cloud_api_token is in the vault); nothing "
+               "was done\n";
+        return exit_code::config;
+    }
+    if (!problem) {
+        problem = config_problem([&] { take_key(held.secrets, pem, key_id); });
+    }
+    if (!problem && request.name && !is_worker_name(*request.name)) {
+        err << "usage error: --name must be 1 to 128 characters with no control character\n";
+        return exit_code::usage;
+    }
+    if (!problem) {
+        problem = config_problem([&] { name = worker_name(request, env); });
+    }
+    if (problem) {
+        err << "config error: " << *problem << '\n';
         return exit_code::config;
     }
     // The vault as it is, written back before the token is spent: a vault this
     // account can't write is found while it can still be used.
-    try {
-        write_secrets(request.vault, held.secrets, env);
-    } catch (const ConfigError& e) {
-        err << "vault error: " << e.what() << '\n';
+    if (const std::optional<std::string> unwritten =
+            config_problem([&] { write_secrets(request.vault, held.secrets, env); })) {
+        err << "vault error: " << *unwritten << '\n';
         return exit_code::config;
     }
-    try {
-        recorder = open_recording(request.record, "cloud register", held.secrets);
-    } catch (const ConfigError& e) {
-        err << "config error: " << e.what() << '\n';
+    if (const std::optional<std::string> refused_record = config_problem(
+            [&] { recorder = open_recording(request.record, "cloud register", held.secrets); })) {
+        err << "config error: " << *refused_record << '\n';
         return exit_code::config;
     }
     const std::unique_ptr<IHttpClient> http = recorded(
@@ -252,10 +279,9 @@ int first_start(const std::filesystem::path& config, const std::filesystem::path
                 std::ostream& out, std::ostream& err, const CloudCommandEnv& env)
 {
     WipedSecrets held;
-    try {
-        held.secrets = read_secrets(vault, env);
-    } catch (const ConfigError& e) {
-        err << "config error: " << e.what() << '\n';
+    if (const std::optional<std::string> problem =
+            config_problem([&] { held.secrets = read_secrets(vault, env); })) {
+        err << "config error: " << *problem << '\n';
         return exit_code::config;
     }
     if (is_set(held.secrets.cloud_api_token) || !is_set(held.secrets.cloud_install_token)) {
@@ -278,15 +304,15 @@ int run_cloud_command(std::span<const std::string_view> args, std::ostream& out,
         return exit_code::usage;
     }
     RegisterRequest request;
-    try {
-        request.config = command_config_path(options->value("--config"), env.default_config_path
-                                                                              ? env.default_config_path
-                                                                              : default_config_path);
-        request.vault = command_vault_path(options->value("--vault"), env.default_vault_path
-                                                                          ? env.default_vault_path
-                                                                          : default_vault_path);
-    } catch (const ConfigError& e) {
-        err << "config error: " << e.what() << '\n';
+    if (const std::optional<std::string> problem = config_problem([&] {
+            request.config = command_config_path(
+                options->value("--config"),
+                env.default_config_path ? env.default_config_path : default_config_path);
+            request.vault = command_vault_path(
+                options->value("--vault"),
+                env.default_vault_path ? env.default_vault_path : default_vault_path);
+        })) {
+        err << "config error: " << *problem << '\n';
         return exit_code::config;
     }
     if (const std::optional<std::string_view> name = options->value("--name")) {

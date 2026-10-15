@@ -776,29 +776,30 @@ FlushReport Outbox::flush(IUploader& uploader, std::chrono::system_clock::time_p
         }
         manifest.last_error = is_upload_error(answer.error) ? answer.error
                                                             : std::string{upload_code::kInternal};
-        if (is_refused_for_good(*manifest.last_error)) {
-            // Never tried again: the manifest first, so a move that fails
-            // leaves a run the next flush only moves.
-            manifest.next_attempt_at.reset();
-            if (!files.write_manifest(manifest_file, manifest_text(manifest))) {
-                error(shown(manifest_file) + ": could not be written");
-            }
+        // W5.1: a refusal for good is never tried again; the manifest is
+        // written first, so a move that fails leaves a run the next flush only
+        // moves.
+        const bool for_good = is_refused_for_good(*manifest.last_error);
+        report.token_refused = *manifest.last_error == kTokenRefused;
+        manifest.next_attempt_at =
+            for_good ? std::nullopt
+                     : std::optional<std::string>{
+                           outbox_time_text(now + upload_retry_delay(manifest.attempts))};
+        if (!files.write_manifest(manifest_file, manifest_text(manifest))) {
+            error(shown(manifest_file) + ": could not be written");
+        }
+        if (for_good) {
             const std::string code = *manifest.last_error;
             const std::size_t errors_before = report.err.size();
             move_to_failed(code, "failed " + id + ": " + code);
             if (report.err.size() == errors_before) {
                 error(id + ": refused by the Cloud (" + code + "); moved to failed");
             }
-            continue;
+        } else {
+            report.out.push_back(std::format("kept {}: {}; attempt {}, next at {}", id,
+                                             *manifest.last_error, manifest.attempts,
+                                             *manifest.next_attempt_at));
         }
-        report.token_refused = *manifest.last_error == kTokenRefused;
-        manifest.next_attempt_at = outbox_time_text(now + upload_retry_delay(manifest.attempts));
-        if (!files.write_manifest(manifest_file, manifest_text(manifest))) {
-            error(shown(manifest_file) + ": could not be written");
-        }
-        report.out.push_back(std::format("kept {}: {}; attempt {}, next at {}", id,
-                                         *manifest.last_error, manifest.attempts,
-                                         *manifest.next_attempt_at));
     }
     return report;
 }

@@ -629,3 +629,32 @@ TEST_CASE("the cloud command's real environment is the defaults", "[cloud_comman
     CHECK_FALSE(env.wall_now);
     CHECK_FALSE(env.write_worker_file);
 }
+
+TEST_CASE("cloud register: a --record folder that isn't new or empty records nothing and sends nothing",
+          "[cloud_command]")
+{
+    Lab lab;
+    lab.dir.write("rec-full.txt", "x");
+    std::filesystem::create_directories(lab.dir.path() / "rec");
+    lab.dir.write("rec/already.json", "{}");
+    const std::string recording_arg = (lab.dir.path() / "rec").string();
+
+    const Run run = lab.reg({"--record", recording_arg});
+    CHECK(run.code == rp::exit_code::config);
+    CHECK_THAT(run.err, Catch::Matchers::StartsWith("config error: "));
+    CHECK(lab.cloud.requests().empty());
+    // The check write went; the install token is unspent.
+    CHECK(lab.secrets.cloud_install_token == kInstall);
+}
+
+TEST_CASE("cloud register: a --config or --vault path that isn't UTF-8 is a config error", "[cloud_command]")
+{
+    const std::string option = GENERATE(std::string{"--config"}, std::string{"--vault"});
+    Lab lab;
+    const std::string bad = "\xff";
+
+    const Run run = lab.run({"register", option, bad});
+    CHECK(run.code == rp::exit_code::config);
+    CHECK_THAT(run.err, Catch::Matchers::StartsWith("config error: the " + option));
+    CHECK(lab.cloud.requests().empty());
+}

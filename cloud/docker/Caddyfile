@@ -1,0 +1,18 @@
+# The local stack's HTTPS front (W5.1; docs/decisions.md 2026-10-15, "W5.1
+# (#66)", point 1). The Worker reaches the Cloud at https://localhost:8443 and
+# trusts this Caddy's own root through its cloud_ca_file; the host name is
+# checked as for any host. The root lives in the caddy-data volume:
+#
+#   docker compose cp proxy:/data/caddy/pki/authorities/local/root.crt <file>
+#
+# No body limit here: the app's caps (64 KiB, the upload's 96 MiB) are the
+# only ones. Local only, like every port of the stack.
+{
+	skip_install_trust
+	local_certs
+}
+
+localhost {
+	tls internal
+	reverse_proxy api:8000
+}

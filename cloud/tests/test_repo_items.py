@@ -120,12 +120,15 @@ async def a_month(session):
         return row
 
     passed = await run("pass", dt.datetime(2026, 10, 2, tzinfo=UTC))
-    await items.create_many(q.msp.id, passed.id, [item(0), item(1, type="sharepoint", name="a.docx"), item(2, type="onedrive", name="b.pdf")])
+    await items.create_many(q.msp.id, passed.id, [
+        item(0), item(1, type="sharepoint", name="a.docx", expected_kind="backup_content"), item(2, type="onedrive", name="b.pdf", expected_kind="metadata"),
+        item(3, type="onedrive", name="c.pdf", expected_kind="backup_content"),
+    ])
     failed = await run("fail", dt.datetime(2026, 10, 3, tzinfo=UTC))
     await items.create_many(q.msp.id, failed.id, [
         item(0, name="gone", found=False, match=False, reason="no restored copy found"),
-        item(1, type="sharepoint", name="changed.docx", found=True, match=False, reason="hash differs"),
-        item(2, type="sharepoint", name="fine.docx"),
+        item(1, type="sharepoint", name="changed.docx", expected_kind="backup_content", found=True, match=False, reason="hash differs"),
+        item(2, type="sharepoint", name="fine.docx", expected_kind="manifest"),
     ])
     errored = await run("error", dt.datetime(2026, 10, 4, tzinfo=UTC))
     await items.create_many(q.msp.id, errored.id, [item(0, name="unchecked", found=None, match=None, reason=None)])
@@ -141,17 +144,20 @@ async def a_month(session):
     return q, b, passed, failed, errored, expired, queued
 
 
-async def test_counts_by_type_in_period_counts_the_month_s_runs_items_per_run_and_type(session):
+async def test_counts_by_type_in_period_counts_the_month_s_runs_items_per_run_type_and_kind(session):
+    """C6.8 (docs/decisions.md 2026-10-15, point 1): grouped by the expected
+    kind too, so the report knows what each test compared from one read."""
     q, b, passed, failed, errored, expired, queued = await a_month(session)
 
     counts = await ItemRepo(session).counts_by_type_in_period(q.msp.id, q.client.id, start=OCT, end=NOV)
 
-    assert [(c.run_id, c.type, c.count) for c in counts] == [
-        (passed.id, "mail", 1), (passed.id, "onedrive", 1), (passed.id, "sharepoint", 1),
-        (failed.id, "mail", 1), (failed.id, "sharepoint", 2),
-        (errored.id, "mail", 1),
-        (expired.id, "mail", 1),
-        (queued.id, "mail", 1),
+    assert [(c.run_id, c.type, c.expected_kind, c.count) for c in counts] == [
+        (passed.id, "mail", "fields", 1), (passed.id, "onedrive", "backup_content", 1), (passed.id, "onedrive", "metadata", 1),
+        (passed.id, "sharepoint", "backup_content", 1),
+        (failed.id, "mail", "fields", 1), (failed.id, "sharepoint", "backup_content", 1), (failed.id, "sharepoint", "manifest", 1),
+        (errored.id, "mail", "fields", 1),
+        (expired.id, "mail", "fields", 1),
+        (queued.id, "mail", "fields", 1),
     ]
     assert await ItemRepo(session).counts_by_type_in_period(q.msp.id, b.client.id, start=OCT, end=NOV) == []
     assert await ItemRepo(session).counts_by_type_in_period(b.msp.id, q.client.id, start=OCT, end=NOV) == []

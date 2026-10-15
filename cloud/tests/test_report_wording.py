@@ -20,6 +20,14 @@ SUMMARY = (
     "A <span class=\"state fail\">fail</span> means an item was missing or did not match.",
     "An <span class=\"state error\">error</span> means the test itself could not run (the backup product, the tenant or the Worker was not available); it says nothing about the backup.",
     "The recovery times and the restore points above are those of the tests that passed or failed.",
+    # C6.8 (docs/decisions.md 2026-10-15, points 4 and 5): a recovery time is a sample's, and the two rows
+    # that count the client's own files and how many of them were compared by content.
+    "A recovery time is one test's time from the start of its restore to the last of its sampled items checked: the time that sample took to come back, not the time it would take to restore the tenant.",
+    "The client's own files tested are the files the tests that passed or failed sampled from the backup; a file compared by content was compared by the SHA-256 of its content against the backup's copy, and any other by its name and, unless it is an Office document, its size.",
+    # Only in a month whose tests sampled a canary (found in the build: a fixed clause would name canaries in every report).
+    "Canary items are not counted in these two rows.",
+    "<dt>Client's own files tested</dt>",
+    "<dt>Of those, compared by content</dt>",
     # The C6.4 review's finding 6 left the issue's "were restored and verified" (untrue of a month with a failure); C6.5's reviewer may say otherwise.
     "This report does not test full disaster recovery. It records what each test listed here found for the items it sampled, on the dates shown.",
     "The period is not over: this interim report covers the tests that have ended by",
@@ -32,16 +40,29 @@ SUMMARY = (
 
 METHOD = (
     "from one restore point of the backup.",
-    # The W6.3 review's finding 3: canaries are an opt-in (W6.2) and a random file is compared with the
-    # backup's own copy when the backup gave one (W6.3).
-    "The items of a test are a sample chosen at random from the backup's own listing; a test set up with canary items, seeded in the tenant for this purpose and whose content is known in advance, samples some of those too.",
+    # C6.8 (docs/decisions.md 2026-10-15, point 2): the sampling sentence, and the canary sentence only
+    # when a test of the month sampled one; the W6.3 review's two interim sentences are gone.
+    "The items of each test are a sample of the client's own items, chosen at random from the backup's own listing.",
+    " of the tests that passed or failed, the sample also included canary items, seeded in the tenant for this purpose, whose content is known in advance.",
     "A test restores each item into a restore target set aside for testing (the <code>restoretest</code> mailbox, the <code>RestoreTarget</code> library or the <code>RestoreTarget</code> OneDrive folder), reads it back through Microsoft Graph, compares it, and removes it from the target afterwards.",
-    "A canary is compared by the SHA-256 of its content. A random file is compared by the SHA-256 of the copy the backup gave of it before the restore (for a Word or Excel document, of the document's content, since the restore rewrites the rest of the file), or, when the backup gave no copy, by its name and, unless it is an Office document, its size. A random mail is compared by its subject and received time, and by its sender's name when the backup lists one.",
+    # One comparison sentence per kind a test of the month used.
+    "A canary is compared by the SHA-256 of its content.",
+    "A file of the client's own compared by content is compared by the SHA-256 of its content against the backup's copy, which the backup gave before the restore; for a Word or Excel document the SHA-256 is of the document's content, since the restore rewrites the rest of the file.",
+    "A file of the client's own that the backup gave no copy of is compared by its name and, unless it is an Office document, its size.",
+    "A mail of the client's own is compared by its subject and received time, and by its sender's name when the backup lists one.",
     "of this period the removal from the restore target did not complete.",
     "Verification levels covered: 1, 2, 3",
     "; level 4 partially (files opened and read via Microsoft Graph)",
+    # C6.8, point 3: level 3 only when an item was compared by the SHA-256 of its content.
+    "Verification levels covered: 1, 2. No item of this period was compared by its content, so level 3 is not covered.",
     "No test of this period reached the comparison, so no verification level was covered.",
     "No test of a plan has a result in this period.",
+)
+
+# The W6.3 review's interim sentences (C6.8 replaced them): never in the template again.
+RETIRED = (
+    "a test set up with canary items, seeded in the tenant for this purpose and whose content is known in advance, samples some of those too.",
+    "A random file is compared by the SHA-256 of the copy the backup gave of it before the restore",
 )
 
 # --- The cap's line and the Integrity sentence ---
@@ -96,6 +117,11 @@ def template() -> str:
 @pytest.mark.parametrize("sentence", SUMMARY + METHOD + OTHER)
 def test_each_reviewed_sentence_of_the_template_is_in_it_verbatim(sentence):
     assert sentence in template()
+
+
+@pytest.mark.parametrize("sentence", RETIRED)
+def test_the_w63_review_s_interim_sentences_are_gone(sentence):
+    assert sentence not in template()
 
 
 def test_the_mapping_is_the_reviewed_text_verbatim_control_by_control():

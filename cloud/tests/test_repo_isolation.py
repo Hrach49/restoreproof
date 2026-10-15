@@ -589,8 +589,8 @@ async def test_counts_by_type_in_period_with_one_msp_s_id_counts_nothing_of_the_
 
     assert await ItemRepo(session).counts_by_type_in_period(a.msp.id, b.client.id, start=MONTH_START, end=MONTH_END) == []
     own = await ItemRepo(session).counts_by_type_in_period(a.msp.id, a.client.id, start=MONTH_START, end=MONTH_END)
-    assert sorted((str(count.run_id), count.type, count.count) for count in own) == sorted(
-        [(str(a.run.id), "mail", 2), (str(a.failed_run.id), "mail", 1)]
+    assert sorted((str(count.run_id), count.type, count.expected_kind, count.count) for count in own) == sorted(
+        [(str(a.run.id), "mail", "manifest", 2), (str(a.failed_run.id), "mail", "manifest", 1)]
     )
 
 

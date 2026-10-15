@@ -189,3 +189,22 @@ async def test_a_cursor_outside_the_job_rule_is_refused_before_any_row(session, 
 
     assert (raised.value.key, raised.value.reason) == ("canary_cursor", "not 0 to 999999")
     assert await lab.plans.list(lab.msp.id) == []
+
+
+# --- advance_canary_cursor (C6.8, point 11): a compare-and-set ---------------------------------
+
+
+async def test_the_cursor_moves_only_from_the_value_the_result_was_sent_with(session):
+    lab = await Lab.make(session)
+    opted = await lab.create(canary_cursor=(0, 1, 0))
+    plain = await lab.create()
+
+    assert await lab.plans.advance_canary_cursor(lab.msp.id, opted.id, sent=(0, 1, 0), next=(1, 2, 1)) == 1
+    # The same step again (a second run sent with the old cursor): nothing.
+    assert await lab.plans.advance_canary_cursor(lab.msp.id, opted.id, sent=(0, 1, 0), next=(1, 2, 1)) == 0
+    # A plan without canaries is never opted in by a result.
+    assert await lab.plans.advance_canary_cursor(lab.msp.id, plain.id, sent=(0, 0, 0), next=(1, 1, 1)) == 0
+
+    for plan in (opted, plain):
+        await session.refresh(plan)
+    assert (opted.canary_cursor, plain.canary_cursor) == ((1, 2, 1), None)

@@ -40,11 +40,23 @@ copies before they are checked.
 `lab/seed-manifest.json` (mails `RP-CANARY-0001`…`0020`, files `rp-canary-01.pdf`…
 `rp-canary-20.png`, whose types cycle pdf, docx, xlsx, txt, png; see `lab/README.md`). Because the manifest holds the expected subject, sender, date and
 SHA-256, a canary can be checked against a known-correct answer rather than against the live
-tenant. Canaries are an opt-in per client since W6.2 (`docs/decisions.md` 2026-10-14): a job
+tenant. Canaries are an opt-in since W6.2 (`docs/decisions.md` 2026-10-14): a job
 with a `canary_cursor` (or a command line with `--canary-cursor` or `--manifest`) has them, and
 the manifest is then the Worker's `canaries\<tenant>.json`; a run with them takes half of each
 type's sample from them, rotated so all of them get tested over a few runs. A run without them
-plants nothing and tests the client's own data alone.
+plants nothing and tests the client's own data alone. On the Cloud the opt-in is a **plan's**
+(C6.8, `docs/decisions.md` 2026-10-15: `manage.py create-plan --canaries`), and the report
+names canaries only in a month whose tests sampled one and never counts them among the
+client's own files.
+
+**Canary cursor.** Where a run starts in each type's list of canaries: three numbers (mail,
+SharePoint, OneDrive), each below that type's canary count in the tenant's manifest. The Cloud
+keeps one per plan opted in (`test_plan.canary_cursor_mail`, `_sp`, `_od`; none for a plan
+without canaries), starts it at `0,0,0`, sends it as the job's `canary_cursor`, and after each
+`pass` or `fail` with canaries moves it to the run's signed `cursor_next`, which the Worker
+computes as `(cursor + canaries taken) mod count`; only while it is still the cursor the run was
+sent with, so two runs sent with one cursor move it once. An `error` leaves it, so the next run
+takes the same canaries.
 
 **Random item.** An item picked from the customer's real backed-up data, not seeded by us.
 Its expected values come from the backup's own listing (Veeam's browse of the restore point),
@@ -159,6 +171,12 @@ claim is never bigger than the test. Stage 1 covers levels 1, 2 and 3, and level
 
 These level numbers are ours. If a customer's framework uses a different ladder, map to it in
 the report rather than renumbering this table.
+
+The report claims level 3 only for a month in which an item was compared by the SHA-256 of its
+content (a canary, or a file of the client's compared with the backup's copy), and level 4
+partially only when such an item was a file; a month whose items were checked by their fields,
+names and sizes alone says "1, 2" and that level 3 is not covered (C6.8, `docs/decisions.md`
+2026-10-15, point 3: a subject or a size is what the backup listed, not the content).
 
 ## Run outcomes
 

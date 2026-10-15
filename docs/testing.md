@@ -1682,7 +1682,7 @@ docker compose stop postgres              # when done; `docker compose down -v` 
 | `tests/test_results_vectors.py` | C5.7: every case of `signing-v1/cases.json` and `timestamp-v1/cases.json` (61) posted as the Worker posts a folder, under the case's key and the case's TSA root: every failing case 400 with its own word, one audit row and nothing stored; every verified case passes the whole verification and is then 404 `run_id: no such run` (the vectors' `run_id` is no uuid); the two cases that differ by design named (`token-under-another-name` is `part_unexpected`, `token-and-no-ca` is checked under the root); the closed folder the same; the 404 after the fifteen words (the same folder under another Worker's token is `wrong_key`) |
 | `tests/test_public_keys.py` | C5.5's key reader: every row of `key-files.json` read or refused as `verify_bundle.py` reads it (the same DER or the same `None`); the fourteen small-order encodings of `tests/registration-keys.json` refused though the file rule takes them, and the library's own acceptance of them shown; a `y` at or above p refused; a `y` that is no point of the curve refused (a one-character slip of RFC 8032's test-1 key; the module's recovery of x held equal to an independent Legendre-symbol check on 200 random values; RFC 8032's tests 2 and 3 accepted; the review's finding 8); the ten accepted layouts of one key stored as one text under one `key_id`, the text the library's own serialisation |
 | `tests/test_registration.py` | C5.5's Done-when: a Worker registers with an install token and RFC 8032's test-1 key, gets 201 with a 43-character token that passes `current_worker`, and the same install token again is 401; the four answers in order (401 before 400 before 409); an unknown, a used and an expired token one 401; the token unused after a 400 and after a 409, and usable again; every small-order key the same 400; every accepted layout stored in the one form; a key registered in another MSP still 409; a body outside the model 422 before any lookup; the same lookup for every token; one audit row with the caller's address; neither token nor either hash in any log line; on a database of its own, one token sent twice at once, one key with two tokens at once, and the Worker's row committed before the 201's first ASGI message leaves; the 401 is `dependency.not_authenticated`'s; a name too long is `string_too_long`, not a pattern mismatch |
-| `tests/test_jobs_route.py` | C5.6's Done-when: two polls return the same job only if the first attempt expired (the sweep in between, `expired` after the third); the document validated against `jobs.v1.json` with the profile schema; field by field from the run, the connector, the plan and the client, no `canary_cursor`; the `run_id` a folder name on the Worker; at most five oldest first and the rest next; an empty document for a Worker with nothing queued or no connector; a revoked Worker, no token and an unknown token 401 with nothing dispatched; another Worker's and another MSP's runs never answered; `GET` only; the token in no log line; on a database of its own, two polls at once share no run (disjoint, six in all, none over five); a busy poll is three statements and an idle one two; the route takes the MSP from the Worker it was given; the document's limit is `DISPATCH_LIMIT` |
+| `tests/test_jobs_route.py` | C5.6's Done-when: two polls return the same job only if the first attempt expired (the sweep in between, `expired` after the third); the document validated against `jobs.v1.json` with the profile schema; field by field from the run, the connector, the plan and the client, no `canary_cursor` for a plan without canaries and the plan's cursor for one opted in (C6.8, validated against the shared schema); the `run_id` a folder name on the Worker; at most five oldest first and the rest next; an empty document for a Worker with nothing queued or no connector; a revoked Worker, no token and an unknown token 401 with nothing dispatched; another Worker's and another MSP's runs never answered; `GET` only; the token in no log line; on a database of its own, two polls at once share no run (disjoint, six in all, none over five); a busy poll is three statements and an idle one two; the route takes the MSP from the Worker it was given; the document's limit is `DISPATCH_LIMIT` |
 | `tests/test_heartbeat.py` | C5.8's Done-when by name, `test_the_dashboard_column_last_seen_updates_every_15_minutes`: the Worker's two recorded bodies (121 and 88 bytes, `docs/api/veeam-lab/w4.11-3-service-run.txt`) posted under the Worker's token with the router's clock at T and T + 900 s, `WorkerRepo.list` (what C6.2's `/workers` page will read) answering `last_seen_at` T then T + 15 min with every column as sent and the restart's nulls, the other Worker and the other MSP untouched. Failure paths first: no token, `Basic`, an unknown token and a revoked Worker one 401 with nothing written; a Worker revoked between the lookup and the `UPDATE` 401 with nothing written; forty-two bodies outside the five keys 422 with the row untouched (a key missing, a sixth, not an object, each field's rule, the error without its time and the time without its error, a 30th of February, an hour 24, a time in digits outside 0 to 9, a time with a line end, each count negative, over 2^53 − 1, a float, a string, a boolean, null); not JSON and `text/plain` 422; `GET` and `PUT` 405. The C5.8 review: the token before the body (a body nothing can read, that is not JSON, 100,000 brackets deep, a 5000-digit integer, not UTF-8 or empty, is 401 without a token or with an unknown one and 422 with the Worker's, never FastAPI's own 400; `text/plain` without a token 401; the media type in any case and with a parameter; no `Content-Type` 422; a streamed body without a token answered 401 with no chunk pulled); a key twice 422 with the row untouched, the same value twice included. Then: the 204 has no body and no `Content-Type`; `version` replaced and a null clearing a stored error; `last_seen_at` the Cloud's clock whatever `last_error_at` says; the time stored to the millisecond; the counts at 2^53 − 1 taken; the Worker's row and nothing else written (every table's count); two statements; the Worker from the dependency it was given; neither the token nor any body value in a log line on a 204, a 401 and a 422; on a database of its own, two heartbeats at once both 204 and the row one of them whole; the model closed, `last_error_at` parsed once into the Worker's time as aware UTC (a datetime given to the model refused), and the version rule registration's own type |
 | `tests/test_cadence.py` | C5.9: `app/cadence.py`, strict: `parse` refuses anything but five space-separated fields croniter takes (four, six, `@daily`, a 60th minute, a line end); `check_monthly` passes daily, 5-minute, the 1st, the 15th, `L`, weekly and refuses `0 2 31 * *`, `0 2 30 * *`, bi-monthly, yearly and a leap day, walking 400 day starts from `now` against a 31-day bound; `due_at` is the latest occurrence at or before `now` (at the occurrence, half a second after, a second before, across a month's end, `L` in February), aware UTC, a naive `now` refused; after the review: croniter's random `R` refused while a name with an `r` passes, a cron no date meets `never occurs` from every reader, `check_spacing` at most every five minutes (the tick) on the minute and hour fields |
 | `tests/test_repo_plans.py` | C5.9 and C5.10 in the repo: `PlanRepo.create` refuses a cadence outside the rule as `cadence_cron: not a cron expression` or `less than monthly` without the text, before any row, and needs `now`; a cadence within it stored as given with `created_at`; `list(enabled=)`; `MspRepo.list` every MSP by name then id |
@@ -1810,7 +1810,8 @@ While nothing is deployed, `0001` may be edited in place (C5.3 did, for `test_ru
 C5.5 and C5.6 did, for the key's id, the install token's columns and the dispatch columns; C5.7
 did, for `test_run.tsa_time`, `test_item.position` and the `received` state, which is gone;
 C5.8 did, for `worker.last_error_at`, `outbox_depth` and `uptime_s`; C5.9 did, for
-`test_run.scheduled_for` with its unique and `test_plan.created_at`).
+`test_run.scheduled_for` with its unique and `test_plan.created_at`; C6.8 did, for
+`test_plan.canary_cursor_mail`, `_sp` and `_od` with `ck_test_plan_canary_cursor`).
 A database that already ran the old `0001` keeps it: the api's `alembic upgrade head` sees the
 version and does nothing, and `alembic check` then fails. After such an edit, run the three
 commands above once on the stack's database (`downgrade -1`, `upgrade head`, `check`), or
@@ -2076,14 +2077,41 @@ database once (the edit of `0001`; nothing is deployed) and reads only the rows 
     container's two profile copies removed; the two MSPs and their rows stay in the stack's
     database.
 
-### The report (C6.4, C6.6, C6.7, C6.5)
+### The report (C6.4, C6.6, C6.7, C6.5, C6.8)
 
-`docs/decisions.md` 2026-10-12, "C6.4" and 2026-10-13, "C6.6, C6.5 and C6.7";
+`docs/decisions.md` 2026-10-12, "C6.4", 2026-10-13, "C6.6, C6.5 and C6.7" and 2026-10-15, "C6.8 (#184)";
 `docs/verification.md` "The Cloud's report". What the tests hold is in the table above
 (`tests/test_report.py`, `tests/test_reports_page.py` and `tests/test_report_wording.py` over
 `tests/report_lab.py`, the C6.6 rows of `tests/test_scheduler.py`, and the C6.4 and C6.6 rows of
 the older files; Q6.1's `tests/test_report_checks.py` and the `check-report` rows of
 `tests/test_manage.py`).
+
+**C6.8, the report for real-data runs.** In `tests/test_report.py`, the Done-when's two lines by
+name: `test_a_report_of_a_month_without_canaries_names_no_canary_and_states_how_many_of_the_client_s_files_were_compared_by_content`
+(a pass with a mail, two files compared by content and one by name and size, a fail whose file
+differs: no "canar" in any case in the HTML or the PDF's text, "3 of 4", the three comparison
+sentences, levels 1, 2, 3 and 4 partially, the mismatch in the Failures section) and
+`test_a_report_of_a_month_with_no_item_compared_by_content_claims_no_content_check` ("0 of 2",
+no SHA-256 in the Method, "Verification levels covered: 1, 2. No item of this period was
+compared by its content, so level 3 is not covered."); beside them a canary month (the count of
+tests, the canary sentence, the line under the two rows, the canary file not counted), an
+error's items counted for nothing, the Test log's counts summed over the kinds, the recovery
+sentence in the PDF, and the Failures section's full names (400 characters, with spaces and
+without, escaped, whole in both passes and the PDF's text, inside the page).
+`tests/test_report_wording.py` holds every new sentence verbatim and the W6.3 review's two
+interim sentences out of the template. `tests/test_repo_items.py` holds the read's grouping by
+kind. The Cloud's side of the kind (step 1): `tests/test_results.py`'s
+`test_a_backup_content_file_whose_restored_copy_differs_is_stored_as_a_mismatch_with_its_hash`
+and the contract test's rows. The canary opt-in: `tests/test_models.py` (the CHECK, one null of
+three and a value out of range refused), `tests/test_repo_plans.py` (`create`'s cursor and its
+rule; the compare-and-set), `tests/test_repo_errors.py` (the words), `tests/test_onboarding.py`
+and `tests/test_manage.py` (`--canaries`, `canary_cursor 0,0,0`), `tests/test_jobs_route.py`
+(the job's `canary_cursor` from the plan, absent for a plain plan, validated against
+`jobs.v1.json`), `tests/test_results.py` (a pass and a fail move the cursor to `cursor_next`; the
+same bundle again, another cursor, an already moved one and a plan without canaries move nothing;
+a failed put rolls it back; `cursor_advance`'s `None` for an error, no sample, no rotation, a
+value outside the rule) and `tests/test_repo_isolation.py` (`advance_canary_cursor` among the
+writes).
 
 **WeasyPrint on this laptop.** The rendering tests run natively under `uv run pytest` like every
 other test, and never skip: WeasyPrint needs Pango, GObject and HarfBuzz, which on Windows come
@@ -2158,12 +2186,17 @@ once (nothing is deployed) and reads only the rows it made:
    `/healthz`; the scheduler's environment by name (the five `S3_*` among them) and its start
    run's `tick` line on a database with no MSP.
 2. By CLI in the api container: `create-msp`; `create-user` for an admin and a member;
-   `create-client` of the lab tenant, its id then set by SQL to the kept C5.7 bundle's; the lab
+   `create-client` of the lab tenant, its id then set by SQL to the kept bundle's (since C6.8 the
+   W6.3 live run's, `C:\ProgramData\RestoreProof\c57\550fe89b-…`, a run without canaries with 14
+   files compared by content; the C5.7 one is no valid `result.v1` since W6.3); the lab
    Worker's own key registered with curl; `create-connector` on the lab profile (outside the
-   repository); `create-plan --run-now`, the run's id set to the bundle's; `GET /v1/jobs`; the
-   kept bundle's five files posted: 202 `pass`, the run moved into this month by SQL.
-3. By SQL, the newest closed month (computed from the clock) of the client: a `pass`, a `fail`
-   with a missing mail and a mismatched file, an `error` with its code, a later `pass`, an
+   repository); `create-plan --run-now`, the run's id set to the bundle's; `GET /v1/jobs` (its
+   job has no `canary_cursor`: the plan is not opted in); the kept bundle's five files posted:
+   202 `pass`, the run moved into this month by SQL.
+3. By SQL, the newest closed month (computed from the clock) of the client, a month of real data
+   (C6.8: mails by their fields, files compared by content and one by name and size, no canary;
+   6 files of the tests that passed or failed, 5 compared by content): a `pass`, a `fail` with a
+   missing mail and a file whose content differs, an `error` with its code, a later `pass`, an
    `expired` run, and a `pass` that ended on the last day of the month before and was received
    on the 1st at 05:00, after that month had closed.
 4. **The job in the real process:** `docker compose restart scheduler`; its start run's
@@ -2171,7 +2204,9 @@ once (nothing is deployed) and reads only the rows it made:
    the object fetched through the api's own client and its SHA-256 equal to `file_sha256`; the
    PDF's text through pypdf (`c64-pdf-text.py`): the six headings, the content hash printed,
    the file hash not, no banned phrase, the four controls' sentences, the late pass counted on
-   the Summary's line and listed by its hash; the job's audit row with no user; the scheduler restarted once more: `existing=1`, still one row.
+   the Summary's line and listed by its hash; C6.8: no "canar" in any case, "Client's own files
+   tested 6" and "5 of 6", the three comparison sentences, levels 1, 2, 3 and 4 partially; the
+   job's audit row with no user; the scheduler restarted once more: `existing=1`, still one row.
 5. The member logs in; `/reports` (the nav's "Reports") and `/clients/{id}/reports` as text;
    the client page's link.
 6. **The Done-when, timed:** `POST /clients/{id}/reports/generate` as the member (303); the
@@ -2179,7 +2214,7 @@ once (nothing is deployed) and reads only the rows it made:
    `Cache-Control: no-store` to the MinIO port on 127.0.0.1 (the signed query not shown), the
    link followed and the bytes' SHA-256 equal to the row's `file_sha256`; the seconds from the
    click to the downloaded bytes, under 60; "Interim report" and the kept bundle's hash in its
-   text.
+   text; C6.8: no canary named, "14 of 14", the recovery sentence.
 7. The click again at once: 429 with `Retry-After` and the line; a click with `Sec-Fetch-Site:
    cross-site` 403; MSP B by CLI with a report row by SQL: its page, its button and its file 404
    for MSP A's member, its row absent from `/reports`.

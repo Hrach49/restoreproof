@@ -7,9 +7,9 @@
 //   {"last_error": <word> | null, "last_error_at": <time> | null,
 //    "outbox_depth": <n>, "uptime_s": <n>, "version": "<rpworker's>"}
 //
-// C5.8's body plus the time. The endpoint is a stub until W5.1: no
-// Authorization header and no other credential is sent. Nothing is decided
-// here but which word an answer is; when a heartbeat is due, what its fields
+// C5.8's body plus the time, with the vault's API token as a bearer token
+// (W5.1, docs/decisions.md 2026-10-15, point 9). Nothing is decided here but
+// which word an answer is; when a heartbeat is due, what its fields
 // are and what is logged for a failed one is the loop's (rp/service_loop.hpp).
 // Not strict: the one HTTP call, as src/uploader.cpp is.
 
@@ -64,10 +64,14 @@ struct HeartbeatAnswer {
     bool ok = false;
     // Empty when ok; else http_<status>, unreachable, timeout or internal.
     std::string error;
+    // W5.1 point 5: a 2xx without X-RestoreProof-API: 1 (or with another
+    // value). Taken all the same: the heartbeat is the Cloud's only word of a
+    // revoked Worker and must keep going; the loop says so once.
+    bool not_cloud = false;
 };
 
 // POST <cloud_url>/v1/heartbeat (a '/' at the URL's end dropped) with
-// heartbeat_body, sent once (max_attempts 1, no retry on a status: the next
+// `Authorization: Bearer <token>` and heartbeat_body, sent once (max_attempts 1, no retry on a status: the next
 // interval is the retry), kHeartbeatTimeout. Any 2xx is ok. Else:
 // http_<status> for any other answer (three digits; a status outside 100 to
 // 999 is internal), timeout for a timeout, unreachable for no connection, a
@@ -76,6 +80,6 @@ struct HeartbeatAnswer {
 // has no canonical form included (nothing is sent then). Never throws but
 // for no memory.
 HeartbeatAnswer send_heartbeat(IHttpClient& http, std::string_view cloud_url,
-                               const Heartbeat& heartbeat);
+                               std::string_view token, const Heartbeat& heartbeat);
 
 } // namespace rp

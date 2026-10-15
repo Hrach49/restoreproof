@@ -799,8 +799,8 @@ TEST_CASE("worker body: a job that is no job is reported as error job_invalid, s
     CHECK(lab.h.make_connector_calls == 0);
     CHECK(lab.h.graph_clients == 0);
     // The close's key once; the rest are the API token, read at each of the
-    // three flushes (two polls' and the run's own; W5.1).
-    CHECK(lab.h.load_secrets_calls == 4);
+    // three flushes (two polls' and the run's own) and the heartbeat (W5.1).
+    CHECK(lab.h.load_secrets_calls == 5);
     CHECK_FALSE(std::filesystem::exists(lab.record_file()));
     const std::filesystem::path queued = lab.queued("bad-1");
     CHECK(names_in(queued) == kQueuedFolder);

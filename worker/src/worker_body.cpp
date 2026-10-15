@@ -158,6 +158,9 @@ RecordFiles record_files()
     return files;
 }
 
+// The heartbeat's word when the vault holds no API token (W5.1): nothing sent.
+constexpr std::string_view kNoApiToken = "no_api_token";
+
 // Everything the env's functions share, kept by each of them.
 struct Body {
     std::shared_ptr<ServiceContext> context;
@@ -476,7 +479,14 @@ struct Body {
         heartbeat.last_error_at = beat.last_error_at;
         heartbeat.outbox_depth = beat.outbox_depth;
         heartbeat.uptime_s = beat.uptime_s;
-        return send_heartbeat(cloud(), config().cloud_url, heartbeat).error;
+        std::string token = api_token();
+        if (token.empty()) {
+            // W5.1 point 6: no token, no heartbeat.
+            return std::string{kNoApiToken};
+        }
+        const HeartbeatAnswer answer = send_heartbeat(cloud(), config().cloud_url, token, heartbeat);
+        secure_wipe(token);
+        return answer.error;
     }
 
     // The runs under outbox\, the ones that can't be sent included.

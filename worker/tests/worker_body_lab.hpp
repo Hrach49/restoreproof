@@ -43,6 +43,8 @@ using std::chrono::milliseconds;
 
 const std::string kResultsUrl = "https://cloud.example.invalid/v1/results";
 const std::string kHeartbeatUrl = "https://cloud.example.invalid/v1/heartbeat";
+// W5.1: the token the loop hands the body's flush and heartbeat in a test.
+const std::string kBodyToken = "BodyToken-w51-0123456789abcdefABCDEF_-01234";
 const std::string kSessionA = "aaaaaaaa-0000-4000-8000-000000000001";
 const std::string kSessionB = "aaaaaaaa-0000-4000-8000-000000000002";
 
@@ -164,7 +166,7 @@ struct BodyLab {
         cloud.on(rp::HttpMethod::post, kResultsUrl,
                  [this](const rp::HttpRequest&) { return rp::test::cloud_answer(cloud_status); });
         cloud.on(rp::HttpMethod::post, kHeartbeatUrl,
-                 [](const rp::HttpRequest&) { return rp::test::make_response(204); });
+                 [](const rp::HttpRequest&) { return rp::test::cloud_answer(204); });
     }
 
     std::filesystem::path runs() const { return h.dir.path() / "runs"; }

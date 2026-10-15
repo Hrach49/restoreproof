@@ -794,3 +794,23 @@ TEST_CASE("secret audit J8: a job asking for a connector this Worker lacks, repo
     audit.finish();
     CHECK(audit.outputs.has_output("temp/box/sent/audit-j8/result.json"));
 }
+
+// W5.1 (docs/decisions.md 2026-10-15, point 10): the job comes from the Cloud's
+// poll and is kept in state\jobs.json; the poll carries the API token in its
+// Authorization header alone.
+TEST_CASE("secret audit J8: a job of the Cloud's poll, kept, run, sent", "[secret_audit]")
+{
+    ServiceAudit audit;
+    audit.lab.context->config.jobs_file.reset();
+    const json document{{"format", "restoreproof.jobs.v1"}, {"jobs", json::array({job("audit-j8")})}};
+    audit.lab.cloud.on(rp::HttpMethod::get, "https://cloud.example.invalid/v1/jobs",
+                       {rp::test::cloud_answer(200, document.dump())});
+
+    audit.lab.run_loop(2);
+
+    const std::string log = audit.log_text();
+    REQUIRE(has(log, "run audit-j8: ended pass; queued"));
+    REQUIRE(has(log, "sent audit-j8"));
+    audit.finish();
+    CHECK(audit.outputs.has_output("temp/state/jobs.json"));
+}

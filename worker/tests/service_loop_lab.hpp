@@ -166,6 +166,35 @@ struct LoopLab {
     std::optional<std::string> last_error;
     std::optional<Wall> last_error_at;
 
+    // W5.1. `token` unset: an env without api_token (W4.8's shape); set: what
+    // the vault holds (nullopt: no token). The tokens the flushes and the
+    // heartbeats were handed, and each flush's token_is_new.
+    std::optional<std::optional<std::string>> token;
+    std::vector<std::string> flush_tokens;
+    std::vector<bool> flush_token_new;
+    std::vector<std::string> heartbeat_tokens;
+    // `cloud`: the Cloud is the job source (poll_jobs and state\jobs.json).
+    bool cloud = false;
+    // The polls' answers, in turn, the last repeating; none: an empty
+    // document of the Cloud's.
+    std::vector<CloudJobsAnswer> polls;
+    std::vector<std::string> polled_with;
+    // state\jobs.json: its text, whether a write takes, and its age.
+    std::optional<std::string> kept;
+    bool keep_ok = true;
+    std::optional<std::chrono::system_clock::duration> kept_age = std::chrono::minutes{1};
+    std::optional<std::string> worker_id;
+
+    // A 200 of the Cloud's with `body`.
+    static CloudJobsAnswer cloud_jobs(std::string body)
+    {
+        CloudJobsAnswer answer;
+        answer.status = 200;
+        answer.kind = CloudAnswerKind::cloud;
+        answer.body = std::move(body);
+        return answer;
+    }
+
     LoopLab()
     {
         config.graph_tenant_id = "T";
@@ -321,7 +350,11 @@ struct LoopLab {
         env.hold_connector_type = [this](std::string_view type) {
             hold_types.emplace_back(type);
         };
-        env.read_jobs = [this](const std::filesystem::path&) {
+        env.read_jobs = [this](const std::filesystem::path& file) {
+            if (cloud && file == std::filesystem::path{"C:\\rp\\state\\jobs.json"}) {
+                calls.push_back("read kept jobs");
+                return kept ? parse_jobs(*kept) : JobsDocument{};
+            }
             calls.push_back("read jobs");
             if (jobs_fault) {
                 JobsDocument document;
@@ -406,8 +439,11 @@ struct LoopLab {
             return clean_word;
         };
 
-        env.flush = [this](const std::function<bool()>& asked) -> std::optional<FlushReport> {
+        env.flush = [this](const std::function<bool()>& asked, std::string_view token,
+                           bool token_is_new) -> std::optional<FlushReport> {
             calls.push_back("flush");
+            flush_tokens.emplace_back(token);
+            flush_token_new.push_back(token_is_new);
             ++flushes;
             flush_stop_answers.push_back(asked());
             stop = stop || flush_sets_stop;
@@ -424,12 +460,45 @@ struct LoopLab {
             report.sent = sent.size();
             return report;
         };
-        env.heartbeat = [this](const LoopHeartbeat& beat) {
+        env.heartbeat = [this](const LoopHeartbeat& beat, std::string_view token) {
             calls.push_back("heartbeat");
+            heartbeat_tokens.emplace_back(token);
             heartbeats.push_back(beat);
             heartbeat_at.push_back(elapsed());
             return heartbeat_word;
         };
+        if (token) {
+            env.api_token = [this] { return *token; };
+        }
+        if (cloud) {
+            env.poll_jobs = [this](std::string_view with) {
+                calls.push_back("poll jobs");
+                polled_with.emplace_back(with);
+                if (polls.empty()) {
+                    return cloud_jobs(R"({"format":"restoreproof.jobs.v1","jobs":[]})");
+                }
+                const CloudJobsAnswer answer = polls.front();
+                if (polls.size() > 1) {
+                    polls.erase(polls.begin());
+                }
+                return answer;
+            };
+            env.kept_jobs_file = "C:\\rp\\state\\jobs.json";
+            env.keep_jobs = [this](std::string_view bytes) {
+                calls.push_back("keep jobs");
+                if (keep_ok) {
+                    kept = std::string{bytes};
+                    kept_age = std::chrono::seconds{0};
+                }
+                return keep_ok;
+            };
+            env.drop_jobs = [this] {
+                calls.push_back("drop jobs");
+                kept.reset();
+            };
+            env.kept_jobs_age = [this] { return kept ? kept_age : std::nullopt; };
+        }
+        env.worker_id = worker_id;
         return env;
     }
 

@@ -235,6 +235,7 @@ add_executable(rptests
     tests/outbox_command_test.cpp
     tests/cloud_api_test.cpp
     tests/cloud_command_test.cpp
+    tests/upload_wire_test.cpp
     tests/outbox_test.cpp
     tests/recording_http_client_test.cpp
     tests/redact_test.cpp

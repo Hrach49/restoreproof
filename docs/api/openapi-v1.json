@@ -69,6 +69,17 @@
       "Job": {
         "additionalProperties": false,
         "properties": {
+          "canary_cursor": {
+            "items": {
+              "maximum": 999999.0,
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Canary Cursor",
+            "type": "array"
+          },
           "client": {
             "additionalProperties": true,
             "title": "Client",

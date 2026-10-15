@@ -275,6 +275,16 @@ class TestPlan(Base):
         CheckConstraint("sample_sp BETWEEN 0 AND 100", name="sample_sp_range"),
         CheckConstraint("sample_od BETWEEN 0 AND 100", name="sample_od_range"),
         CheckConstraint("sample_mail + sample_sp + sample_od > 0", name="sample_not_empty"),
+        # C6.8: the canary opt-in is the cursor itself, three values of the
+        # Worker's job rule (0 to 999999) or none at all. Every term is true or
+        # false (`IS NOT NULL` first): a CHECK that comes out null passes, so
+        # `BETWEEN` alone would let one null of three through.
+        CheckConstraint(
+            "(canary_cursor_mail IS NULL AND canary_cursor_sp IS NULL AND canary_cursor_od IS NULL) OR "
+            "(canary_cursor_mail IS NOT NULL AND canary_cursor_sp IS NOT NULL AND canary_cursor_od IS NOT NULL AND "
+            "canary_cursor_mail BETWEEN 0 AND 999999 AND canary_cursor_sp BETWEEN 0 AND 999999 AND canary_cursor_od BETWEEN 0 AND 999999)",
+            name="canary_cursor",
+        ),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -290,6 +300,21 @@ class TestPlan(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     # C5.9: the scheduler makes no run for a period that began before the plan.
     created_at: Mapped[dt.datetime] = _time(nullable=False, default_now=True)
+    # C6.8 (docs/decisions.md 2026-10-15, point 8): the plan's canary cursor,
+    # sent as the job's `canary_cursor`; null, the plan has no canaries (the
+    # default: real data alone, W6.2). Moved on by `POST /v1/results` from the
+    # Worker's own signed `cursor_next` (`PlanRepo.advance_canary_cursor`).
+    canary_cursor_mail: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    canary_cursor_sp: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    canary_cursor_od: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    @property
+    def canary_cursor(self) -> tuple[int, int, int] | None:
+        """The cursor as the job sends it (mail, SharePoint, OneDrive), or
+        None for a plan without canaries (the CHECK keeps the three together)."""
+        if self.canary_cursor_mail is None or self.canary_cursor_sp is None or self.canary_cursor_od is None:
+            return None
+        return (self.canary_cursor_mail, self.canary_cursor_sp, self.canary_cursor_od)
 
 
 class TestRun(Base):

@@ -6,6 +6,10 @@ minutes and at least monthly from `now`, refused as a `RepoError` naming the key
 any row is written. The rule lives here and not in the CLI so every writer of
 a plan is held, as a connector's profile is. The sizes are the database's
 CHECKs (the Worker's J3 rule), worded by `constraint_refusal`.
+
+C6.8 (docs/decisions.md 2026-10-15, points 8 to 11): a plan's canary opt-in is
+its cursor, three values of the Worker's job rule (0 to 999999) or none;
+`create` holds them before the database's CHECK.
 """
 
 from __future__ import annotations
@@ -19,6 +23,15 @@ from app.cadence import CadenceError, check_monthly, check_spacing, parse
 from app.models import Connector, TestPlan, Worker
 from app.repo.base import Repo
 from app.repo.errors import RepoError
+
+
+# The Worker's largest cursor value (worker/src/job_rules.hpp kMaxCursor).
+MAX_CURSOR = 999_999
+CURSOR_RULE = f"not 0 to {MAX_CURSOR}"
+
+
+def _cursor_in_rule(cursor: tuple[int, int, int]) -> bool:
+    return all(0 <= value <= MAX_CURSOR for value in cursor)
 
 
 def _check_cadence(cadence_cron: str, now: dt.datetime) -> None:
@@ -43,8 +56,12 @@ class PlanRepo(Repo):
         cadence_cron: str,
         now: dt.datetime,
         enabled: bool = True,
+        canary_cursor: tuple[int, int, int] | None = None,
     ) -> TestPlan:
         _check_cadence(cadence_cron, now)
+        if canary_cursor is not None and not _cursor_in_rule(canary_cursor):
+            raise RepoError("canary_cursor", CURSOR_RULE)
+        mail, sp, od = canary_cursor if canary_cursor is not None else (None, None, None)
         return await self._add(
             TestPlan(
                 msp_id=msp_id,
@@ -55,6 +72,9 @@ class PlanRepo(Repo):
                 sample_od=sample_od,
                 cadence_cron=cadence_cron,
                 enabled=enabled,
+                canary_cursor_mail=mail,
+                canary_cursor_sp=sp,
+                canary_cursor_od=od,
             )
         )
 

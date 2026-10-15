@@ -151,13 +151,17 @@ async def test_counts_by_type_in_period_counts_the_month_s_runs_items_per_run_ty
 
     counts = await ItemRepo(session).counts_by_type_in_period(q.msp.id, q.client.id, start=OCT, end=NOV)
 
-    assert [(c.run_id, c.type, c.expected_kind, c.count) for c in counts] == [
-        (passed.id, "mail", "fields", 1), (passed.id, "onedrive", "backup_content", 1), (passed.id, "onedrive", "metadata", 1),
-        (passed.id, "sharepoint", "backup_content", 1),
-        (failed.id, "mail", "fields", 1), (failed.id, "sharepoint", "backup_content", 1), (failed.id, "sharepoint", "manifest", 1),
-        (errored.id, "mail", "fields", 1),
-        (expired.id, "mail", "fields", 1),
-        (queued.id, "mail", "fields", 1),
+    # The last number counts the items compared: found, with `match` known
+    # (the C6.8 code review's finding 1): the missing mail and the item
+    # nobody checked were not.
+    assert [(c.run_id, c.type, c.expected_kind, c.count, c.compared) for c in counts] == [
+        (passed.id, "mail", "fields", 1, 1), (passed.id, "onedrive", "backup_content", 1, 1),
+        (passed.id, "onedrive", "metadata", 1, 1), (passed.id, "sharepoint", "backup_content", 1, 1),
+        (failed.id, "mail", "fields", 1, 0), (failed.id, "sharepoint", "backup_content", 1, 1),
+        (failed.id, "sharepoint", "manifest", 1, 1),
+        (errored.id, "mail", "fields", 1, 0),
+        (expired.id, "mail", "fields", 1, 1),
+        (queued.id, "mail", "fields", 1, 1),
     ]
     assert await ItemRepo(session).counts_by_type_in_period(q.msp.id, b.client.id, start=OCT, end=NOV) == []
     assert await ItemRepo(session).counts_by_type_in_period(b.msp.id, q.client.id, start=OCT, end=NOV) == []

@@ -62,6 +62,8 @@ METADATA = "metadata"
 BACKUP_CONTENT = "backup_content"
 # Compared by the SHA-256 of its content: what level 3 is claimed for.
 CONTENT_KINDS = (CANARY, BACKUP_CONTENT)
+# The client's own items, sampled at random: every kind but a canary's.
+OWN_KINDS = (FIELDS, METADATA, BACKUP_CONTENT)
 FILE_TYPES = ("sharepoint", "onedrive")
 # C6.6 (docs/decisions.md 2026-10-13, point 3, and its build notes): the Test
 # log, the Failures and the Integrity run list show the first this many runs
@@ -235,11 +237,14 @@ class ReportData:
     failures_left_out: int
     plans: list[PlanSizes]
     ran: int
-    # C6.8, over the tests that passed or failed: how many sampled a canary,
-    # the client's own files tested and how many of them were compared by
-    # content, which kinds were compared, and whether anything (and a file)
-    # was compared by the SHA-256 of its content.
+    # C6.8, over the tests that passed or failed: how many sampled a canary
+    # and how many the client's own items, the client's own files tested and
+    # how many of them were compared by content, which kinds were sampled,
+    # and whether anything (and a file) was compared by the SHA-256 of its
+    # content. Compared means found with `match` known: a missing item or
+    # one nobody checked was not (the C6.8 code review's finding 1).
     canary_tests: int
+    own_tests: int
     own_files: int
     content_files: int
     kinds: frozenset[str]
@@ -365,7 +370,7 @@ def build(
     ran_ids = {line.run_id for line in ran}
     ran_counts = [c for c in counts if c.run_id in ran_ids]
     own = [c for c in ran_counts if c.type in FILE_TYPES and c.expected_kind in (METADATA, BACKUP_CONTENT)]
-    content = [c for c in ran_counts if c.expected_kind in CONTENT_KINDS]
+    content = [c for c in ran_counts if c.expected_kind in CONTENT_KINDS and c.compared]
     sources = []
     for connector in connectors:
         word = BACKUP_SOURCES.get(connector.type, UNKNOWN_SOURCE)
@@ -398,8 +403,9 @@ def build(
         plans=[PlanSizes(plan.sample_mail, plan.sample_sp, plan.sample_od) for plan in plans if plan.id in tested_plans],
         ran=len(ran),
         canary_tests=len({c.run_id for c in ran_counts if c.expected_kind == CANARY}),
+        own_tests=len({c.run_id for c in ran_counts if c.expected_kind in OWN_KINDS}),
         own_files=sum(c.count for c in own),
-        content_files=sum(c.count for c in own if c.expected_kind == BACKUP_CONTENT),
+        content_files=sum(c.compared for c in own if c.expected_kind == BACKUP_CONTENT),
         kinds=frozenset(c.expected_kind for c in ran_counts),
         content_compared=bool(content),
         file_content_compared=any(c.type in FILE_TYPES for c in content),

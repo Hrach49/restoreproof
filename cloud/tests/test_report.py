@@ -160,7 +160,10 @@ async def test_a_pdf_renders_for_a_client_with_one_failure_and_one_error_in_the_
     method = html[html.index('<h2 id="method">'):html.index('<h2 id="integrity">')]
     for needle in (
         "up to 0 mails, 1 SharePoint file and 1 OneDrive file", "random", "<code>restoretest</code>", "<code>RestoreTarget</code>",
-        "In 2 of the tests that passed or failed, the sample also included canary items", "A canary is compared by the SHA-256 of its content.",
+        # One of the two tests sampled a file of the client's own: counted, never "each test" (the C6.8 code review's finding 2).
+        "<p>In 1 of the tests that passed or failed, the sample included the client's own items, chosen at random from the backup's own listing."
+        " In 2 of the tests that passed or failed, the sample included canary items",
+        "A canary is compared by the SHA-256 of its content.",
         "A file of the client's own compared by content is compared by the SHA-256 of its content against the backup's copy",
         "Verification levels covered: 1, 2, 3; level 4 partially (files opened and read via Microsoft Graph).",
     ):
@@ -947,12 +950,15 @@ async def test_the_method_names_the_plans_that_were_tested_and_level_four_only_w
     assert "<p>Verification levels covered: 1, 2, 3.</p>" in html and "level 4" not in html
     assert "<p>In 1 test of this period the removal from the restore target did not complete.</p>" in html
     # C6.8: the month's one item is a canary mail: its sentences alone, no random file's or mail's.
-    assert "In 1 of the tests that passed or failed, the sample also included canary items" in html
+    # The C6.8 code review's finding 2: a sample of canaries alone says nothing of the client's own items.
+    assert "In 1 of the tests that passed or failed, the sample included canary items" in html
+    assert "client's own items" not in html
     assert "A canary is compared by the SHA-256 of its content." in html
     assert "A mail of the client's own is compared" not in html and "A file of the client's own" not in html
     # A file compared by content by a test that ran: level 4 partially; two tests whose clean-up did not complete.
+    # Found and differing: compared (a file never found was not; the C6.8 code review's finding 1).
     files = await lab.tested("fail", finished_at=at(4), recovery_ms=1000, cleanup_ok=False)
-    await lab.items(files, [an_item(0, type="sharepoint", name="a.docx", found=False, match=False)])
+    await lab.items(files, [an_item(0, type="sharepoint", name="a.docx", found=True, match=False)])
     both = render_html(await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time), None)
     assert "<p>Verification levels covered: 1, 2, 3; level 4 partially (files opened and read via Microsoft Graph).</p>" in both
     assert "<p>In 2 tests of this period the removal from the restore target did not complete.</p>" in both
@@ -1136,6 +1142,100 @@ async def test_an_error_s_items_are_not_counted_and_a_month_with_no_own_file_pri
     assert "<dt>Client's own files tested</dt><dd>0</dd>" in html and "<dt>Of those, compared by content</dt><dd>—</dd>" in html
     assert "canar" not in html.lower()
     assert "<p>Verification levels covered: 1, 2. No item of this period was compared by its content, so level 3 is not covered.</p>" in html
+
+
+async def test_a_missing_or_unchecked_content_item_is_not_counted_as_compared_and_claims_no_level(lab):
+    """The C6.8 code review's finding 1: an item is compared by content only
+    when it was found and its `match` is known. A file the restore never
+    brought back and a canary nobody checked are counted as tested, never as
+    compared, and earn no level 3 or 4."""
+    failed = await lab.tested("fail", finished_at=at(3), recovery_ms=60000)
+    await lab.items(failed, [
+        own_file(0, "backup_content", found=False, match=False, reason="no restored copy found"),
+        an_item(1, type="sharepoint", name="rp-canary-04.docx", found=None, match=None),
+        mail(2),
+    ])
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
+    html = render_html(data, None)
+
+    assert (data.own_files, data.content_files, data.content_compared, data.file_content_compared) == (1, 0, False, False)
+    assert "<dt>Of those, compared by content</dt><dd>0 of 1</dd>" in html
+    assert "<p>Verification levels covered: 1, 2. No item of this period was compared by its content, so level 3 is not covered.</p>" in html
+    assert "1, 2, 3" not in html and "level 4" not in html
+
+
+async def test_a_found_content_item_that_differs_was_compared(lab):
+    """A mismatch is a comparison that failed: compared, and level 3 holds."""
+    failed = await lab.tested("fail", finished_at=at(3), recovery_ms=60000)
+    await lab.items(failed, [own_file(0, "backup_content", found=True, match=False, reason="fields did not match: sha256")])
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
+
+    assert (data.own_files, data.content_files, data.content_compared, data.file_content_compared) == (1, 1, True, True)
+
+
+async def test_a_month_of_canaries_alone_never_says_the_client_s_own_items_were_sampled(lab):
+    """The C6.8 code review's finding 2: a canary plan of one item per type
+    takes one canary and no random item. The Method does not say the
+    client's own items were sampled, and the canary sentence has no "also";
+    the Summary has no sentence on the client's files (finding 3)."""
+    run = await lab.tested("pass", finished_at=at(3), recovery_ms=60000)
+    await lab.items(run, [an_item(0), an_item(1, type="sharepoint", name="rp-canary-04.docx")])
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
+    html = render_html(data, None)
+    method = method_of(html)
+
+    assert (data.ran, data.own_tests, data.canary_tests, data.own_files) == (1, 0, 1, 0)
+    assert "client's own items" not in method and "chosen at random" not in method
+    assert "<p>In 1 of the tests that passed or failed, the sample included canary items, seeded in the tenant for this purpose, whose content is known in advance. A test restores" in method
+    assert "The client's own files tested are" not in html and "A file counted as compared by content" not in html
+    assert "Canary items are not counted in these two rows." in html
+
+
+async def test_a_month_where_only_some_tests_sampled_the_client_s_items_counts_them(lab):
+    """One test of canaries alone and one of the client's items: the
+    sampling sentence is counted, never "each test"."""
+    canaries = await lab.tested("pass", finished_at=at(3), recovery_ms=60000)
+    await lab.items(canaries, [an_item(0)])
+    own = await lab.tested("pass", finished_at=at(4), recovery_ms=60000)
+    await lab.items(own, [mail(0)])
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
+    method = method_of(render_html(data, None))
+
+    assert (data.ran, data.own_tests, data.canary_tests) == (2, 1, 1)
+    assert "The items of each test are" not in method
+    assert (
+        "<p>In 1 of the tests that passed or failed, the sample included the client's own items, chosen at random from the backup's own listing."
+        " In 1 of the tests that passed or failed, the sample included canary items, seeded in the tenant for this purpose, whose content is known in advance."
+    ) in method
+
+
+async def test_a_month_that_tested_no_file_does_not_say_how_files_were_compared(lab):
+    """The C6.8 code review's finding 3: mails alone, so the two rows read 0
+    and a dash and the Summary says nothing of how files are compared."""
+    passed = await lab.tested("pass", finished_at=at(3), recovery_ms=60000)
+    await lab.items(passed, [mail(0), mail(1)])
+
+    html = render_html(await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time), None)
+
+    assert "<dt>Of those, compared by content</dt><dd>—</dd>" in html
+    assert "The client's own files tested are" not in html and "A file counted as compared by content" not in html
+
+
+async def test_a_month_with_own_files_explains_the_two_rows(lab):
+    passed = await lab.tested("pass", finished_at=at(3), recovery_ms=60000)
+    await lab.items(passed, [own_file(0, "backup_content")])
+
+    html = render_html(await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time), None)
+
+    assert (
+        " The client's own files tested are the files the tests that passed or failed sampled from the backup."
+        " A file counted as compared by content was found and compared by the SHA-256 of its content against the backup's copy;"
+        " any other was compared by its name and, unless it is an Office document, its size, or was missing or not checked.</p>"
+    ) in html
 
 
 async def test_the_test_log_counts_an_item_of_every_kind_once(lab):

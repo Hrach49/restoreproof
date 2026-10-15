@@ -23,7 +23,10 @@ SUMMARY = (
     # C6.8 (docs/decisions.md 2026-10-15, points 4 and 5): a recovery time is a sample's, and the two rows
     # that count the client's own files and how many of them were compared by content.
     "A recovery time is one test's time from the start of its restore to the last of its sampled items checked: the time that sample took to come back, not the time it would take to restore the tenant.",
-    "The client's own files tested are the files the tests that passed or failed sampled from the backup; a file compared by content was compared by the SHA-256 of its content against the backup's copy, and any other by its name and, unless it is an Office document, its size.",
+    # The C6.8 code review's findings 1 and 3: only in a month that tested a file, and a file counted as
+    # compared by content was found and compared.
+    "The client's own files tested are the files the tests that passed or failed sampled from the backup.",
+    "A file counted as compared by content was found and compared by the SHA-256 of its content against the backup's copy; any other was compared by its name and, unless it is an Office document, its size, or was missing or not checked.",
     # Only in a month whose tests sampled a canary (found in the build: a fixed clause would name canaries in every report).
     "Canary items are not counted in these two rows.",
     "<dt>Client's own files tested</dt>",
@@ -43,7 +46,12 @@ METHOD = (
     # C6.8 (docs/decisions.md 2026-10-15, point 2): the sampling sentence, and the canary sentence only
     # when a test of the month sampled one; the W6.3 review's two interim sentences are gone.
     "The items of each test are a sample of the client's own items, chosen at random from the backup's own listing.",
-    " of the tests that passed or failed, the sample also included canary items, seeded in the tenant for this purpose, whose content is known in advance.",
+    # The C6.8 code review's finding 2: a canary plan of one item per type samples no item of the client's
+    # own, so the first sentence is printed only when every test that passed or failed sampled one, and
+    # counted when only some did; "also" only after the first sentence.
+    " of the tests that passed or failed, the sample included the client's own items, chosen at random from the backup's own listing.",
+    " of the tests that passed or failed, the sample ",
+    "included canary items, seeded in the tenant for this purpose, whose content is known in advance.",
     "A test restores each item into a restore target set aside for testing (the <code>restoretest</code> mailbox, the <code>RestoreTarget</code> library or the <code>RestoreTarget</code> OneDrive folder), reads it back through Microsoft Graph, compares it, and removes it from the target afterwards.",
     # One comparison sentence per kind a test of the month used.
     "A canary is compared by the SHA-256 of its content.",
@@ -63,6 +71,8 @@ METHOD = (
 RETIRED = (
     "a test set up with canary items, seeded in the tenant for this purpose and whose content is known in advance, samples some of those too.",
     "A random file is compared by the SHA-256 of the copy the backup gave of it before the restore",
+    # The C6.8 code review's findings 1 and 3 replaced it.
+    "a file compared by content was compared by the SHA-256 of its content against the backup's copy, and any other by its name",
 )
 
 # --- The cap's line and the Integrity sentence ---

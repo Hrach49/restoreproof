@@ -96,7 +96,7 @@ std::string expected_settings(const std::filesystem::path& path, std::string_vie
                               std::string_view tsa_url = "(not set)",
                               std::string_view tsa_ca_file = "(not set)",
                               std::string_view cloud_ca_file = "(not set)",
-                              std::string_view jobs_file = "(not set)")
+                              std::string_view jobs_file = "(not set: the jobs come from the Cloud)")
 {
     return "config file: " + utf8(path) + "\n" +
            "cloud_url                 https://cloud.example.invalid\n"
@@ -552,7 +552,8 @@ TEST_CASE("rpworker config check prints the Cloud's CA file when it is set",
     REQUIRE(result.exit_code == 0);
 }
 
-// W4.8: the stub job source. Its file needn't be there for the check.
+// W4.8: the stub job source. Its file needn't be there for the check. Without
+// it the jobs come from the Cloud (W5.1), which the line says.
 TEST_CASE("rpworker config check prints the jobs file when it is set, there or not",
           "[config_check][jobs]")
 {

@@ -524,17 +524,35 @@ signed byte. `tsa_token` is the guide's name for it; W4.4 names the file.
 Three different secrets, often confused, then the words for the Worker's Graph sign-in:
 
 **Install token.** A one-time, 7-day, single-use enrolment secret (32 random bytes,
-base64url) created by `manage.py create-worker-token` and printed once. The MSP types it into
-the Worker's setup wizard; the Worker calls `register`, receives its API token, and then
-deletes the install token. The Cloud stores only its SHA-256 hash, with a label (what the admin
+base64url) created by `manage.py create-worker-token` and printed once. The operator puts it in
+the Worker's vault (`rpworker vault set cloud_install_token`); `rpworker cloud register` (or the
+first `rpworker service start`, W5.1) calls `register`, stores the API token and removes the
+install token in one write of the vault. The Cloud stores only its SHA-256 hash, with a label (what the admin
 typed), when and by whom it was made; it names no client (a Worker is an MSP's; connectors bind
 clients later). A registration that fails (a bad key, a key already registered) leaves the token
 unused: the whole of it is one transaction (C5.5).
 
 **API token.** The Worker's long-lived credential for calling the Cloud (32 random bytes),
-issued once by `POST /v1/workers/register` (C5.5) and kept in the vault. The Cloud stores only
-its SHA-256 hash and compares in constant time; setting `revoked_at` blocks the worker
-immediately. Never logged.
+issued once by `POST /v1/workers/register` (C5.5) and kept in the vault as `cloud_api_token`
+(W5.1). The Worker sends it as `Authorization: Bearer` on the poll, the upload and the heartbeat,
+and nowhere else; a 401 stops the poll and the upload with that token until the vault holds
+another. The Cloud stores only its SHA-256 hash and compares in constant time; setting
+`revoked_at` blocks the worker immediately. Never logged.
+
+**`failed\` (W5.1).** The third folder of the Worker's outbox root, beside `outbox\` and
+`sent\`: a run the Cloud refused for good (400, 404, 409, 415, 422), moved whole for the
+operator's `rpworker signer verify`; never sent, pruned or deleted by the Worker.
+
+**Kept jobs document (W5.1).** `state\jobs.json`: the Cloud's last answer to `GET /v1/jobs`,
+kept and read by the jobs file's reader until every job in it is settled or it is six hours old,
+since the Cloud hands a run out once. `jobs_file`, set, replaces it (a lab without a Cloud).
+
+**`state\worker.json` (W5.1).** The Worker's registration as `rpworker cloud register` wrote
+it: its `worker_id`, `key_id`, `cloud_url` and time. No secret.
+
+**Contract header.** `X-RestoreProof-API: 1`, on every answer the Cloud's app sends (C5.11). The
+Worker counts a 2xx as the Cloud's only with it (W5.1): an upload's is otherwise
+`upload_not_cloud`, a jobs document isn't read, a registration stores nothing.
 
 **Key id.** The SHA-256 of a Worker's public key as SubjectPublicKeyInfo DER, 64 lower-case
 hex: the `key_id` of every `signature.json` the key makes, what `rpworker signer public-key`

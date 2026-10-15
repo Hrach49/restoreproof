@@ -1836,6 +1836,35 @@ uv run python tools/dump_openapi.py       # rewrites docs/api/openapi-v1.json
 uv run pytest tests/test_openapi.py       # holds the file equal to what the app serves
 ```
 
+### The Worker against the Cloud (W5.1)
+
+`docs/decisions.md` 2026-10-15, "W5.1 (#66)". **The Cloud's answers are recorded** from the
+Compose stack through Caddy by `docs/api/cloud-lab/w5.1-record/record_cloud.py` (it RE-MIGRATES
+the stack's database; the Caddy root as its CA) into `worker/tests/fixtures/cloud/<route>/<case>.json`,
+every token `SCRUBBED`; the Worker's tests (`cloud_api_test.cpp`, `cloud_command_test.cpp`,
+`uploader_test.cpp`, `heartbeat_test.cpp`, `outbox_command_test.cpp`, `worker_body_test.cpp`)
+serve them through `FakeHttpClient`. `rp::test::cloud_answer(status)` is a made-up answer with the
+contract header; a bare `make_response` has none, which the Worker treats as not the Cloud's.
+
+```powershell
+cd cloud; docker compose up -d --wait --build
+docker compose cp proxy:/data/caddy/pki/authorities/local/root.crt $env:LOCALAPPDATA\RestoreProof\lab\cloud-ca.pem
+cd ..; uv run --project cloud python docs/api/cloud-lab/w5.1-record/record_cloud.py --ca $env:LOCALAPPDATA\RestoreProof\lab\cloud-ca.pem
+curl.exe --ssl-revoke-best-effort --cacert $env:LOCALAPPDATA\RestoreProof\lab\cloud-ca.pem https://localhost:8443/v1/version
+```
+
+Git's curl uses Windows' TLS (Schannel), which can't tell the revocation status of Caddy's
+leaf: `--ssl-revoke-best-effort` is what the Worker's own client sets with a CA file.
+**The wire vector**: `rptests "[.write_shared_upload_wire]"` sends the shared vector's bundle
+through the real uploader to `rp::test::RecordingServer` (cpp-httplib never hands a multipart
+body over raw) and writes `shared/testdata/signing-v1/dispatched-run.wire` and its `.wire.json`;
+`rptests "[wire]"` holds the uploader's bytes to it (the boundary aside) and
+`tests/test_contract.py` posts it unchanged. Write it again after a change to the vector or an
+upgrade of cpr or curl. **The live Done-when**:
+`pwsh -File docs\api\veeam-lab\w5.1-harness\w51-live.ps1` from an elevated PowerShell 7 (it
+re-migrates the stack, installs the service and uninstalls it whatever happens, and removes both
+Cloud tokens from the vault at the end); its text is `docs/api/veeam-lab/w5.1-done-when.txt`.
+
 ### The upload (C5.7)
 
 `POST /v1/results` (`docs/decisions.md` 2026-10-10, "C5.7"; `docs/verification.md` "The Cloud

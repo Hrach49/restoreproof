@@ -103,7 +103,9 @@ int run_config_command(std::span<const std::string_view> args, std::ostream& out
     print_setting(out, "tsa_url", config.tsa_url.value_or("(not set)"));
     print_setting(out, "tsa_ca_file", config.tsa_ca_file.value_or("(not set)"));
     print_setting(out, "cloud_ca_file", config.cloud_ca_file.value_or("(not set)"));
-    print_setting(out, "jobs_file", config.jobs_file.value_or("(not set)"));
+    // W5.1: without a jobs file the service asks the Cloud.
+    print_setting(out, "jobs_file",
+                  config.jobs_file.value_or("(not set: the jobs come from the Cloud)"));
     print_setting(out, "screenshots_enabled", config.screenshots_enabled);
 
     // W4.5: the vault, after the settings, so a fresh installation's check

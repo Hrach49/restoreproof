@@ -281,6 +281,20 @@ TEST_CASE("a fixture keeps only the response headers a replay needs", "[record]"
     CHECK(doc["body"].is_null());
 }
 
+TEST_CASE("a fixture keeps the Cloud's contract header under its own spelling", "[record]")
+{
+    // W5.1 (docs/decisions.md 2026-10-15, point 10): the Worker reads
+    // X-RestoreProof-API on every 2xx, so a recording keeps it. Caddy hands it
+    // on as "X-Restoreproof-Api"; the names compare in any case.
+    HttpResponse resp = make_response(202, R"({"run_id":"r","state":"pass"})", "application/json");
+    resp.headers["X-Restoreproof-Api"] = "1";
+    resp.headers["Via"] = "1.1 Caddy";
+    const ordered_json doc =
+        parsed(scrub(request(HttpMethod::post, "https://localhost:8443/v1/results"), resp));
+    CHECK(doc["headers"] == ordered_json{{"Content-Type", "application/json"},
+                                         {"X-RestoreProof-API", "1"}});
+}
+
 TEST_CASE("no request header is ever recorded", "[record]")
 {
     HttpRequest req = request(HttpMethod::get, kVeeam + "/v8/Organizations");

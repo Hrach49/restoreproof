@@ -85,8 +85,11 @@ function Get-AclPaths {
     @($Root, (Join-Path $Root 'vault.bin')) + @('state', 'runs', 'outbox', 'sent', 'failed', 'logs' | ForEach-Object { Join-Path $Root $_ }) + @(Get-W48KeyFile | ForEach-Object File)
 }
 
-$t = @("W7.1 (#80) Done-when, live, on this laptop (the Veeam server): the release package installed by Install-RestoreProofWorker.ps1; the installer registers the Worker with the Compose stack over https://localhost:8443 (Caddy, its own CA); a plan's run goes queued -> dispatched -> pass under the installer's ACLs; a second run of the installer changes nothing. $(Get-Utc), commit $commit, branch $(git -C $script:Repo branch --show-current)")
-$t += "Windows, PowerShell $($PSVersionTable.PSVersion), Docker Desktop, the Compose stack on 127.0.0.1"
+# Every line goes to the console as it is made, so a run that dies still shows where.
+$t = [System.Collections.Generic.List[string]]::new()
+$t.Add("W7.1 (#80) Done-when, live, on this laptop (the Veeam server): the release package installed by Install-RestoreProofWorker.ps1; the installer registers the Worker with the Compose stack over https://localhost:8443 (Caddy, its own CA); a plan's run goes queued -> dispatched -> pass under the installer's ACLs; a second run of the installer changes nothing. $(Get-Utc), commit $commit, branch $(git -C $script:Repo branch --show-current)")
+function Add-Line { param([Parameter(ValueFromPipeline)]$Line) process { foreach ($l in @($Line)) { $script:t.Add("$l"); Write-Host "$l" } } }
+Add-Line ("Windows, PowerShell $($PSVersionTable.PSVersion), Docker Desktop, the Compose stack on 127.0.0.1")
 $ok = $false
 $installed = $false
 $installToken = $null
@@ -97,59 +100,60 @@ $after = ''
 $serviceSid = ''
 try {
     # 1
-    $t += "`n== 1. the restore targets and the ACLs before =="
+    Add-Line ("`n== 1. the restore targets and the ACLs before ==")
     $before = Get-W48Targets
-    $t += $before
+    Add-Line ($before)
     if ($before -notmatch '(?m)^0 item\(s\) in the three restore targets') { throw 'the restore targets are not empty (or graph list failed); nothing is cleaned' }
     $vaultList = Invoke-W48 @('vault', 'list')
     foreach ($name in 'cloud_api_token', 'cloud_install_token') {
         if ($vaultList -match "(?m)^$name\r?$") { throw "the vault already holds ${name}: remove it first" }
     }
     $vaultOurs = $true
-    $t += "rpworker vault list: $(((($vaultList -split "`n") | Where-Object { $_ -match '^[a-z_]+\r?$' } | ForEach-Object { $_.Trim() }) -join ', ')) (names only)"
-    $t += "-- icacls before`n$(Get-Acls (Get-AclPaths))"
+    Add-Line ("rpworker vault list: $(((($vaultList -split "`n") | Where-Object { $_ -match '^[a-z_]+\r?$' } | ForEach-Object { $_.Trim() }) -join ', ')) (names only)")
+    Add-Line ("-- icacls before`n$(Get-Acls (Get-AclPaths))")
 
     # the package
-    $t += "`n== the package =="
+    Add-Line ("`n== the package ==")
     if (-not $Package) {
         $packaged = & pwsh -NoProfile -File $Packager -Out $RunDir -NoBuild 2>&1 | ForEach-Object { "$_" }
         if ($LASTEXITCODE -ne 0) { throw "package.ps1 failed: $($packaged -join ' ')" }
-        $t += $packaged
+        Add-Line ($packaged)
         $zip = ($packaged | Where-Object { $_ -like 'package: *' }) -replace '^package: ', ''
         $Package = Join-Path $RunDir 'package'
         Expand-Archive -LiteralPath $zip -DestinationPath $Package
-        $t += "unpacked to $Package"
+        Add-Line ("unpacked to $Package")
     } else {
-        $t += "package given: $Package"
+        Add-Line ("package given: $Package")
     }
-    $t += "files: $((Get-ChildItem -LiteralPath $Package -File | Sort-Object Name | ForEach-Object Name) -join ', ')"
+    Add-Line ("files: $((Get-ChildItem -LiteralPath $Package -File | Sort-Object Name | ForEach-Object Name) -join ', ')")
 
     # 2
-    $t += "`n== 2. the stack, re-migrated; Caddy's root =="
-    $t += (Invoke-Compose @('up', '-d', '--wait', '--build')).Text -split "`n" | Where-Object { $_ -match 'Healthy|Exited|Running|Started' }
-    $t += "alembic downgrade base: exit $((Invoke-Compose @('exec', '-T', 'api', 'alembic', 'downgrade', 'base')).Code)"
-    $t += "alembic upgrade head: exit $((Invoke-Compose @('exec', '-T', 'api', 'alembic', 'upgrade', 'head')).Code)"
+    Add-Line ("`n== 2. the stack, re-migrated; Caddy's root ==")
+    Add-Line ((Invoke-Compose @('up', '-d', '--wait', '--build')).Text -split "`n" | Where-Object { $_ -match 'Healthy|Exited|Running|Started' })
+    Add-Line ("alembic downgrade base: exit $((Invoke-Compose @('exec', '-T', 'api', 'alembic', 'downgrade', 'base')).Code)")
+    Add-Line ("alembic upgrade head: exit $((Invoke-Compose @('exec', '-T', 'api', 'alembic', 'upgrade', 'head')).Code)")
     $copied = Invoke-Compose @('cp', 'proxy:/data/caddy/pki/authorities/local/root.crt', $CloudCa)
     if ($copied.Code -ne 0) { throw "Caddy's root couldn't be copied: $($copied.Text)" }
-    $root = [Security.Cryptography.X509Certificates.X509Certificate2]::new($CloudCa)
-    $t += "Caddy's root: $($root.Subject), until $($root.NotAfter.ToUniversalTime().ToString('s'))Z, SHA-256 $((Get-FileHash $CloudCa -Algorithm SHA256).Hash.ToLower()), copied to $CloudCa"
+    # Not $root: PowerShell's variables ignore case, and $Root is the data folder.
+    $caddyRoot = [Security.Cryptography.X509Certificates.X509Certificate2]::new($CloudCa)
+    Add-Line ("Caddy's root: $($caddyRoot.Subject), until $($caddyRoot.NotAfter.ToUniversalTime().ToString('s'))Z, SHA-256 $((Get-FileHash $CloudCa -Algorithm SHA256).Hash.ToLower()), copied to $CloudCa")
 
     # 3
-    $t += "`n== 3. manage.py: the MSP, the client, the install token =="
+    Add-Line ("`n== 3. manage.py: the MSP, the client, the install token ==")
     $tenant = (Get-Content $LabProfile -Raw | ConvertFrom-Json).graph_tenant_id
     $msp = Invoke-Manage @('create-msp', '--name', 'w71-live')
     $mspId = Get-Value $msp.Text 'msp_id'
     $client = Invoke-Manage @('create-client', '--msp-id', $mspId, '--name', 'lab-tenant', '--tenant-id', $tenant)
     $clientId = Get-Value $client.Text 'client_id'
     if (-not $mspId -or -not $clientId) { throw "the MSP or the client wasn't made: $($msp.Text) $($client.Text)" }
-    $t += "create-msp: msp_id $mspId; create-client --tenant-id ${tenant}: client_id $clientId"
+    Add-Line ("create-msp: msp_id $mspId; create-client --tenant-id ${tenant}: client_id $clientId")
     $made = Invoke-Manage @('create-worker-token', '--msp-id', $mspId, '--label', 'w7.1 live')
     $installToken = Get-Value $made.Text 'install_token'
-    $t += "create-worker-token --label 'w7.1 live': exit $($made.Code), $((($made.Text -split "`n") | Where-Object { $_ -notlike 'install_token *' }) -join '; '); install_token (not shown; handed to the installer in memory)"
+    Add-Line ("create-worker-token --label 'w7.1 live': exit $($made.Code), $((($made.Text -split "`n") | Where-Object { $_ -notlike 'install_token *' }) -join '; '); install_token (not shown; handed to the installer in memory)")
     if (-not $installToken) { throw 'no install token' }
 
     # 4
-    $t += "`n== 4. the installer =="
+    Add-Line ("`n== 4. the installer ==")
     $since = [DateTime]::UtcNow
     $installStarted = [DateTime]::UtcNow
     $answers = @{ cloud_install_token = $installToken }
@@ -159,23 +163,23 @@ try {
     $installToken = $null
     $installed = $true
     $keyFileGranted = $true
-    $t += "pwsh Install-RestoreProofWorker.ps1 -Package <the unpacked package> -CloudUrl https://localhost:8443 -CloudCaFile <Caddy's root> -WorkerName w71-live -Answers <the install token, in memory>"
-    $t += "$($installStarted.ToString('s'))Z to $($installEnded.ToString('s'))Z ($([int]($installEnded - $installStarted).TotalSeconds) s wall clock, nothing typed)"
-    $t += $installLines
+    Add-Line ("pwsh Install-RestoreProofWorker.ps1 -Package <the unpacked package> -CloudUrl https://localhost:8443 -CloudCaFile <Caddy's root> -WorkerName w71-live -Answers <the install token, in memory>")
+    Add-Line ("$($installStarted.ToString('s'))Z to $($installEnded.ToString('s'))Z ($([int]($installEnded - $installStarted).TotalSeconds) s wall clock, nothing typed)")
+    Add-Line ($installLines)
     $workerLine = $installLines | Where-Object { $_ -match '^worker ([0-9a-f-]{36}) key ([0-9a-f]{64})$' } | Select-Object -First 1
     if (-not $workerLine) { throw 'the installer printed no worker line' }
     $workerId = [regex]::Match($workerLine, '^worker ([0-9a-f-]{36})').Groups[1].Value
     if (-not ($installLines | Where-Object { $_ -match '^change: rpworker cloud register' })) { throw 'the installer did not register' }
     if (-not ($installLines | Where-Object { $_ -match '^change: rpworker service start \(started' })) { throw 'the installer did not start the service' }
     $serviceSid = (& sc.exe showsid $script:W48Service | Where-Object { $_ -match 'SERVICE SID' }) -replace '.*: ', ''
-    $t += "sc showsid ${script:W48Service}: $serviceSid"
-    $t += "rpworker vault list after: $(((((Invoke-W48 @('vault', 'list')) -split "`n") | Where-Object { $_ -match '^[a-z_]+\r?$' } | ForEach-Object { $_.Trim() }) -join ', ')) (names only)"
-    $t += "config.json: $([IO.File]::ReadAllText($ConfigPath))"
-    $t += "state\worker.json: $([IO.File]::ReadAllText((Join-Path $script:W48State 'worker.json')))"
-    $t += "-- icacls after`n$(Get-Acls (Get-AclPaths))"
+    Add-Line ("sc showsid ${script:W48Service}: $serviceSid")
+    Add-Line ("rpworker vault list after: $(((((Invoke-W48 @('vault', 'list')) -split "`n") | Where-Object { $_ -match '^[a-z_]+\r?$' } | ForEach-Object { $_.Trim() }) -join ', ')) (names only)")
+    Add-Line ("config.json: $([IO.File]::ReadAllText($ConfigPath))")
+    Add-Line ("state\worker.json: $([IO.File]::ReadAllText((Join-Path $script:W48State 'worker.json')))")
+    Add-Line ("-- icacls after`n$(Get-Acls (Get-AclPaths))")
 
     # 5
-    $t += "`n== 5. the connector and the plan =="
+    Add-Line ("`n== 5. the connector and the plan ==")
     Push-Location $CloudDir
     try { docker compose cp $LabProfile api:/tmp/w71-profile.json 2>&1 | Out-Null } finally { Pop-Location }
     $connector = Invoke-Manage @('create-connector', '--msp-id', $mspId, '--client-id', $clientId, '--worker-id', $workerId, '--profile-file', '/tmp/w71-profile.json')
@@ -183,11 +187,11 @@ try {
     $plan = Invoke-Manage @('create-plan', '--msp-id', $mspId, '--client-id', $clientId, '--connector-id', $connectorId, '--mail', '10', '--sp', '10', '--od', '10', '--cron', '*/5 * * * *')
     $planId = Get-Value $plan.Text 'plan_id'
     if (-not $connectorId -or -not $planId) { throw "the connector or the plan wasn't made: $($connector.Text) $($plan.Text)" }
-    $t += "create-connector --profile-file <the lab profile>: connector_id $connectorId"
-    $t += "create-plan --mail 10 --sp 10 --od 10 --cron '*/5 * * * *' (no --canaries): plan_id $planId, at $(Get-Utc)"
+    Add-Line ("create-connector --profile-file <the lab profile>: connector_id $connectorId")
+    Add-Line ("create-plan --mail 10 --sp 10 --od 10 --cron '*/5 * * * *' (no --canaries): plan_id $planId, at $(Get-Utc)")
 
     # 6
-    $t += "`n== 6. the plan's runs in the database, every 10 s =="
+    Add-Line ("`n== 6. the plan's runs in the database, every 10 s ==")
     $deadline = [DateTime]::UtcNow.AddMinutes(30)
     $seen = @{}
     $runId = $null
@@ -196,7 +200,7 @@ try {
         foreach ($row in @($rows -split "`n" | Where-Object { $_ })) {
             $id, $state, $dispatched, $received = $row -split '\|'
             if ($seen[$id] -ne $state) {
-                $t += "$(Get-Utc) run $id $(if ($seen[$id]) { "$($seen[$id]) -> " })$state (dispatched_at $dispatched, received_at $received)"
+                Add-Line ("$(Get-Utc) run $id $(if ($seen[$id]) { "$($seen[$id]) -> " })$state (dispatched_at $dispatched, received_at $received)")
                 $seen[$id] = $state
             }
             if ($state -eq 'pass') { $runId = $id }
@@ -207,38 +211,41 @@ try {
     if (-not $runId) { throw 'no run of the plan was pass within 30 minutes' }
 
     # 7
-    $t += "`n== 7. the service stopped; its log; both verifiers; the row =="
+    Add-Line ("`n== 7. the service stopped; its log; both verifiers; the row ==")
     Start-Sleep -Seconds 5
-    $t += Invoke-W48 @('service', 'stop')
-    $t += "-- worker.log from the installer's start on`n$(Get-W48Log -Since $since)"
-    $t += "-- outbox list`n$(Invoke-W48 @('outbox', 'list'))"
+    Add-Line (Invoke-W48 @('service', 'stop'))
+    Add-Line ("-- worker.log from the installer's start on`n$(Get-W48Log -Since $since)")
+    Add-Line ("-- outbox list`n$(Invoke-W48 @('outbox', 'list'))")
     $sent = Join-Path $Root "sent\$runId"
+    # Test-W48Folder writes the public key under the W4.8 harness's folder, which this harness never makes.
+    New-Item -ItemType Directory -Force $script:W48Dir | Out-Null
     $verified = Test-W48Folder $sent
-    $t += "-- the sent folder`n$verified"
+    Add-Line ("-- the sent folder`n$verified")
     if ($verified -notmatch '(?m)^verified ' -or $verified -notmatch 'verify_bundle.py \(exit code 0\)') { throw 'the sent folder did not verify' }
     $row = Invoke-Sql "SELECT state, bundle_sha256, worker_id, signature_ok, tsa_ok, attempt FROM test_run WHERE id = '$runId'"
     $state, $bundle, $rowWorker, $signatureOk, $tsaOk, $attempt = $row -split '\|'
-    $t += "test_run ${runId}: state $state, bundle_sha256 $bundle, worker_id $rowWorker, signature_ok $signatureOk, tsa_ok $tsaOk, attempt $attempt"
+    Add-Line ("test_run ${runId}: state $state, bundle_sha256 $bundle, worker_id $rowWorker, signature_ok $signatureOk, tsa_ok $tsaOk, attempt $attempt")
     $fileHash = (Get-FileHash (Join-Path $sent 'result.json') -Algorithm SHA256).Hash.ToLower()
     if ($state -ne 'pass' -or $bundle -ne $fileHash -or $rowWorker -ne $workerId) { throw 'the row is not the sent bundle''s pass' }
-    $t += "test_item: $(Invoke-Sql "SELECT count(*) || ' item(s), ' || count(*) FILTER (WHERE match) || ' matched; ' || string_agg(DISTINCT expected_kind, ', ') FROM test_item WHERE run_id = '$runId'")"
-    $t += "worker ${workerId}: $(Invoke-Sql "SELECT 'name ' || name || ', version ' || coalesce(version, '-') || ', last_seen_at ' || coalesce(to_char(last_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'), '-') || ' UTC' FROM worker WHERE id = '$workerId'")"
+    Add-Line ("test_item: $(Invoke-Sql "SELECT count(*) || ' item(s), ' || count(*) FILTER (WHERE match) || ' matched; ' || string_agg(DISTINCT expected_kind, ', ') FROM test_item WHERE run_id = '$runId'")")
+    Add-Line ("worker ${workerId}: $(Invoke-Sql "SELECT 'name ' || name || ', version ' || coalesce(version, '-') || ', last_seen_at ' || coalesce(to_char(last_seen_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'), '-') || ' UTC' FROM worker WHERE id = '$workerId'")")
 
     # 8
-    $t += "`n== 8. the installer again =="
-    $t += Invoke-W48 @('service', 'start')
+    Add-Line ("`n== 8. the installer again ==")
+    Add-Line (Invoke-W48 @('service', 'start'))
     $againLines = @(& $Installer -Package $Package 2>&1 | ForEach-Object { "$_" })
-    $t += $againLines
+    Add-Line ($againLines)
     if (-not ($againLines | Where-Object { $_ -eq 'changes: 0' })) { throw 'the second run made a change' }
-    $t += Invoke-W48 @('service', 'stop')
+    Add-Line (Invoke-W48 @('service', 'stop'))
     $ok = $true
 } catch {
-    $t += "`n!! FAILED: $($_.Exception.Message)"
+    Add-Line ("`n!! FAILED: $($_.Exception.Message)")
 } finally {
     $installToken = $null
-    $t += "`n== 9. taken away =="
+    Add-Line ("`n== 9. taken away ==")
+    try {
     if ($installed) {
-        $t += "-- the service`n$(Remove-W48Service)"
+        Add-Line ("-- the service`n$(Remove-W48Service)")
         if ($keyFileGranted -and $serviceSid) {
             foreach ($key in @(Get-W48KeyFile)) { icacls $key.File /remove:g "*$serviceSid" /Q | Out-Null; $t += "key file of certificate $($key.Thumbprint): the account's entry removed" }
         }
@@ -255,16 +262,17 @@ try {
     if ($vaultOurs) {
         foreach ($name in 'cloud_api_token', 'cloud_install_token') { $t += (Invoke-W48 @('vault', 'remove', $name)) -split "`n" | Where-Object { $_ -match '^(command|exit code|removed|vault)' } }
     } else {
-        $t += 'the vault left as it was: this run put no token there'
+        Add-Line ('the vault left as it was: this run put no token there')
     }
     New-Item -ItemType Directory -Force $Kept | Out-Null
-    foreach ($folder in @(Get-ChildItem (Join-Path $Root 'sent') -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^[0-9a-f-]{36}$' -and $_.LastWriteTimeUtc -ge $since.AddMinutes(-1) })) {
+    foreach ($folder in @(Get-ChildItem -LiteralPath (Join-Path $Root 'sent') -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^[0-9a-f-]{36}$' -and $_.LastWriteTimeUtc -ge $since.AddMinutes(-1) })) {
         Move-Item $folder.FullName (Join-Path $Kept $folder.Name) -Force
-        $t += "sent folder kept: $(Join-Path $Kept $folder.Name)"
+        Add-Line ("sent folder kept: $(Join-Path $Kept $folder.Name)")
     }
-    $t += "-- icacls at the end (the data folder's ACL stays)`n$(Get-Acls (Get-AclPaths))"
+    Add-Line ("-- icacls at the end (the data folder's ACL stays)`n$(Get-Acls (Get-AclPaths))")
     $after = Get-W48Targets
-    $t += "-- the restore targets after`n$after"
+    Add-Line ("-- the restore targets after`n$after")
+    } catch { Add-Line ("!! the cleanup failed: $($_.Exception.Message) at $($_.ScriptStackTrace)") }
     $text = ($t -join "`n")
     $runFile = Join-Path $RunDir 'w7.1-done-when.txt'
     [IO.File]::WriteAllText($runFile, $text.Replace("`r`n", "`n") + "`n", [Text.UTF8Encoding]::new($false))

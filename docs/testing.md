@@ -359,7 +359,7 @@ the targets must be empty first; then the test; `rpworker graph list`; then C5.7
 harness (`docs/api/cloud-lab/c5.7-harness/c57-live.ps1`, with the W6.3 title and evidence place)
 on a job the Cloud dispatches with no `canary_cursor`, so the service runs a run without canaries
 whose files are `backup_content`, both verifiers say `verified` on the sent folder and the bundle
-posted by hand with the API token (the Worker sends none until W5.1) is 202 twice; then the shape
+posted by hand with the API token (the service's own flush goes to the W4.8 stub, under a stub token the harness puts into the vault and takes out again) is 202 twice; then the shape
 check and the live cleanup test in its `finally`. The evidence goes into `docs/api/veeam-lab/`
 (`w6.3-*`) only when every step exited 0, the shape holds and no file holds a secret-shaped
 value. Since W6.3 the kept bundle the Cloud's by-hand harnesses upload must be one in the new
@@ -984,8 +984,11 @@ This writes into the lab tenant and deletes there, as every run does. Before the
 - **An elevated PowerShell 7**, no restore session of the Veeam account still `Working`, no
   other RestoreProof run, the vault filled with all five secrets (`rpworker vault test`), the
   signing key among them: every run of the service signs.
-- **The stub Cloud** on `https://localhost:8443` with its own certificate, as for "The outbox
-  by hand".
+- **The stub Cloud** on `https://localhost:8444` with its own certificate, as for "The outbox
+  by hand" (8443 is Caddy's since W5.1). Since W5.1 the stub answers with `X-RestoreProof-API: 1`
+  and the service sends nothing without `cloud_api_token` in the vault: `Start-W48Stub` puts a
+  random token of the run's own there (refusing a vault that already holds one, a registered
+  Worker's) and `Stop-W48Stub` takes it out (the W5.1 code review's finding 6).
 - **A config copy** in a work folder of its own outside the repository (`<work>` below, which
   also holds the stub's CA file and the jobs file): the lab's config with `jobs_file` (an
   absolute path, `<work>\jobs.json`; the file needn't exist yet), `cloud_url` and
@@ -1835,6 +1838,35 @@ cd cloud
 uv run python tools/dump_openapi.py       # rewrites docs/api/openapi-v1.json
 uv run pytest tests/test_openapi.py       # holds the file equal to what the app serves
 ```
+
+### The Worker against the Cloud (W5.1)
+
+`docs/decisions.md` 2026-10-15, "W5.1 (#66)". **The Cloud's answers are recorded** from the
+Compose stack through Caddy by `docs/api/cloud-lab/w5.1-record/record_cloud.py` (it RE-MIGRATES
+the stack's database; the Caddy root as its CA) into `worker/tests/fixtures/cloud/<route>/<case>.json`,
+every token `SCRUBBED`; the Worker's tests (`cloud_api_test.cpp`, `cloud_command_test.cpp`,
+`uploader_test.cpp`, `heartbeat_test.cpp`, `outbox_command_test.cpp`, `worker_body_test.cpp`)
+serve them through `FakeHttpClient`. `rp::test::cloud_answer(status)` is a made-up answer with the
+contract header; a bare `make_response` has none, which the Worker treats as not the Cloud's.
+
+```powershell
+cd cloud; docker compose up -d --wait --build
+docker compose cp proxy:/data/caddy/pki/authorities/local/root.crt $env:LOCALAPPDATA\RestoreProof\lab\cloud-ca.pem
+cd ..; uv run --project cloud python docs/api/cloud-lab/w5.1-record/record_cloud.py --ca $env:LOCALAPPDATA\RestoreProof\lab\cloud-ca.pem
+curl.exe --ssl-revoke-best-effort --cacert $env:LOCALAPPDATA\RestoreProof\lab\cloud-ca.pem https://localhost:8443/v1/version
+```
+
+Git's curl uses Windows' TLS (Schannel), which can't tell the revocation status of Caddy's
+leaf: `--ssl-revoke-best-effort` is what the Worker's own client sets with a CA file.
+**The wire vector**: `rptests "[.write_shared_upload_wire]"` sends the shared vector's bundle
+through the real uploader to `rp::test::RecordingServer` (cpp-httplib never hands a multipart
+body over raw) and writes `shared/testdata/signing-v1/dispatched-run.wire` and its `.wire.json`;
+`rptests "[wire]"` holds the uploader's bytes to it (the boundary aside) and
+`tests/test_contract.py` posts it unchanged. Write it again after a change to the vector or an
+upgrade of cpr or curl. **The live Done-when**:
+`pwsh -File docs\api\veeam-lab\w5.1-harness\w51-live.ps1` from an elevated PowerShell 7 (it
+re-migrates the stack, installs the service and uninstalls it whatever happens, and removes both
+Cloud tokens from the vault at the end); its text is `docs/api/veeam-lab/w5.1-done-when.txt`.
 
 ### The upload (C5.7)
 

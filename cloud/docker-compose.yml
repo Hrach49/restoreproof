@@ -141,6 +141,24 @@ services:
       api:
         condition: service_healthy
 
+  # The HTTPS front (W5.1, docs/decisions.md 2026-10-15, point 1): Caddy with
+  # its own private CA serves https://localhost:8443 for the Worker, whose
+  # cloud_url is never http. The root (ten years) stays in caddy-data; the
+  # Worker's cloud_ca_file is a copy of its root.crt. The app on
+  # 127.0.0.1:8000 stays for the Cloud's tests and harnesses.
+  # The image is caddy:2.10.2-alpine, pinned by digest.
+  proxy:
+    image: caddy@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    ports:
+      - "127.0.0.1:8443:443"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   postgres-data:
   minio-data:
+  caddy-data:

@@ -45,6 +45,8 @@ std::string_view queue_word(QueueResult result) noexcept
         return "already_queued";
     case QueueResult::already_sent:
         return "already_sent";
+    case QueueResult::already_failed:
+        return "already_failed";
     case QueueResult::no_outbox_folder:
         return "no_outbox_folder";
     case QueueResult::not_same_volume:

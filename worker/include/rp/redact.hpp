@@ -33,7 +33,8 @@ bool is_secret_header(std::string_view name) noexcept;
 //  - key=value, key one of client_secret, password, refresh_token,
 //    access_token, authorization, tempauth, sig, client_assertion, id_token,
 //    pfx, pfx_base64, applicationCertificate, applicationCertificatePassword,
-//    signing_key, signing_key_base64, signing_private_key (URL query strings
+//    signing_key, signing_key_base64, signing_private_key, api_token,
+//    install_token (URL query strings
 //    and fragments, form bodies, log lines; blanks allowed around '='): the
 //    value up to '&', '#', '"', ',' or whitespace, but for authorization up
 //    to the end of the line;

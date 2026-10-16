@@ -26,6 +26,9 @@ constexpr std::array kCodes{
     upload_code::kUnreachable,
     upload_code::kTimeout,
     upload_code::kInternal,
+    service_error::kNotRegistered,
+    service_error::kTokenRefused,
+    upload_code::kNotCloud,
 };
 
 } // namespace

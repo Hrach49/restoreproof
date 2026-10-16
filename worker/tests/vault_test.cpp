@@ -221,6 +221,28 @@ TEST_CASE("a vault round-trips the five secrets through DPAPI", "[vault]")
     CHECK_THAT(bytes, !ContainsSubstring("veeam_username"));
 }
 
+TEST_CASE("a vault round-trips the Cloud's two tokens beside the five (W5.1)", "[vault]")
+{
+    const Lab lab;
+    rp::Secrets secrets = five();
+    secrets.cloud_install_token = "install-token-3f1a";
+    secrets.cloud_api_token = "api-token-3f1a";
+    rp::write_vault(lab.file, secrets);
+
+    const rp::Secrets back = rp::read_vault(lab.file);
+    CHECK(back.cloud_install_token == "install-token-3f1a");
+    CHECK(back.cloud_api_token == "api-token-3f1a");
+    CHECK(back.signing_key_base64 == "MC4CAQAwBQYDK2VwBCIEI-key-3f1a");
+    CHECK_THAT(read_bytes(lab.file), !ContainsSubstring("3f1a"));
+
+    // The registration's one write: the API token set, the install token gone.
+    secrets.cloud_install_token.reset();
+    rp::write_vault(lab.file, secrets);
+    const rp::Secrets after = rp::read_vault(lab.file);
+    CHECK_FALSE(after.cloud_install_token.has_value());
+    CHECK(after.cloud_api_token == "api-token-3f1a");
+}
+
 TEST_CASE("a name that is empty or unset isn't stored; a vault of nothing reads as nothing",
           "[vault]")
 {
@@ -838,7 +860,7 @@ TEST_CASE("a value of exactly the limit is read", "[vault]")
     CHECK(rp::read_vault(lab.file).veeam_password == value);
 }
 
-TEST_CASE("a vault holding a name that isn't one of the five is refused, the name never echoed",
+TEST_CASE("a vault holding a name that isn't one of the seven is refused, the name never echoed",
           "[vault]")
 {
     const Lab lab;
@@ -850,7 +872,7 @@ TEST_CASE("a vault holding a name that isn't one of the five is refused, the nam
     lab.put(protect(text, rp::kVaultDescription, rp::kVaultEntropy));
 
     const std::string error = lab.read_error();
-    CHECK(error == lab.arg + ": the vault holds a name that isn't one of the five secrets");
+    CHECK(error == lab.arg + ": the vault holds a name that isn't one of the seven secrets");
     CHECK_THAT(error, !ContainsSubstring("SENTINEL"));
     CHECK_THAT(error, !ContainsSubstring("api_token"));
 }

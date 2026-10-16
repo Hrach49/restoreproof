@@ -33,6 +33,8 @@ using namespace std::chrono_literals;
 
 const std::string kCloud = "https://cloud.example.invalid";
 const std::string kHeartbeat = kCloud + "/v1/heartbeat";
+// A token of the Cloud's shape (W5.1), never a real one.
+const std::string kToken = "BeatToken-w51-0123456789abcdefABCDEF_-01234";
 
 // 2026-10-08T10:11:12.345Z.
 std::chrono::system_clock::time_point a_time()
@@ -96,7 +98,7 @@ TEST_CASE("heartbeat: anything but a 2xx is a failure with its word", "[heartbea
     rp::test::FakeHttpClient http;
     http.on(rp::HttpMethod::post, kHeartbeat, row.answer);
 
-    const rp::HeartbeatAnswer answer = rp::send_heartbeat(http, kCloud, troubled());
+    const rp::HeartbeatAnswer answer = rp::send_heartbeat(http, kCloud, kToken, troubled());
 
     CHECK_FALSE(answer.ok);
     CHECK(answer.error == row.word);
@@ -122,7 +124,7 @@ TEST_CASE("heartbeat: a body that has no canonical form is internal, and nothing
     http.on(rp::HttpMethod::post, kHeartbeat, {rp::test::make_response(204)});
 
     CHECK_THROWS_AS(rp::heartbeat_body(heartbeat), rp::CanonicalJsonError);
-    const rp::HeartbeatAnswer answer = rp::send_heartbeat(http, kCloud, heartbeat);
+    const rp::HeartbeatAnswer answer = rp::send_heartbeat(http, kCloud, kToken, heartbeat);
 
     CHECK_FALSE(answer.ok);
     CHECK(answer.error == "internal");
@@ -165,7 +167,7 @@ TEST_CASE("heartbeat: the body is canonical JSON with exactly the five keys", "[
     }
 }
 
-TEST_CASE("heartbeat: one POST to <cloud_url>/v1/heartbeat, sent once, 10 s, with no credential; "
+TEST_CASE("heartbeat: one POST to <cloud_url>/v1/heartbeat, sent once, 10 s, with the API token; "
           "any 2xx is taken",
           "[heartbeat][acceptance]")
 {
@@ -175,13 +177,14 @@ TEST_CASE("heartbeat: one POST to <cloud_url>/v1/heartbeat, sent once, 10 s, wit
     const int status = GENERATE(204, 200, 202, 299);
     CAPTURE(base, status);
     rp::test::FakeHttpClient http;
-    http.on(rp::HttpMethod::post, kHeartbeat, {rp::test::make_response(status)});
+    http.on(rp::HttpMethod::post, kHeartbeat, {rp::test::cloud_answer(status)});
     const rp::Heartbeat heartbeat = troubled();
 
-    const rp::HeartbeatAnswer answer = rp::send_heartbeat(http, base, heartbeat);
+    const rp::HeartbeatAnswer answer = rp::send_heartbeat(http, base, kToken, heartbeat);
 
     CHECK(answer.ok);
     CHECK(answer.error.empty());
+    CHECK_FALSE(answer.not_cloud);
     const std::vector<rp::HttpRequest> requests = http.requests();
     REQUIRE(requests.size() == 1);
     const rp::HttpRequest& request = requests.front();
@@ -189,8 +192,8 @@ TEST_CASE("heartbeat: one POST to <cloud_url>/v1/heartbeat, sent once, 10 s, wit
     CHECK(request.url == kHeartbeat);
     CHECK(request.body == rp::heartbeat_body(heartbeat));
     CHECK(request.content_type == "application/json");
-    // W5.1 adds the token; until then nothing that could be one is sent.
-    CHECK(request.headers.empty());
+    // W5.1: the API token as a bearer token, and no other header.
+    CHECK(request.headers == rp::HttpHeaders{{"Authorization", "Bearer " + kToken}});
     CHECK(request.parts.empty());
     CHECK(request.max_attempts == 1);
     CHECK_FALSE(request.retry_on_status);
@@ -220,7 +223,7 @@ TEST_CASE("heartbeat: over a real connection the body arrives byte for byte, and
     rp::HttpClient http(options);
     const rp::Heartbeat heartbeat = troubled();
 
-    const rp::HeartbeatAnswer answer = rp::send_heartbeat(http, server.url() + "/", heartbeat);
+    const rp::HeartbeatAnswer answer = rp::send_heartbeat(http, server.url() + "/", kToken, heartbeat);
 
     CHECK(answer.ok);
     CHECK(hits == 1);
@@ -228,18 +231,20 @@ TEST_CASE("heartbeat: over a real connection the body arrives byte for byte, and
           R"({"last_error":"veeam_sessions_working","last_error_at":"2026-10-08T10:11:12.345Z",)"
           R"("outbox_depth":3,"uptime_s":86400,"version":"0.4.8"})");
     CHECK(content_type == "application/json");
-    CHECK(authorization.empty());
+    CHECK(authorization == "Bearer " + kToken);
+    // This server sends no contract header: taken, and said.
+    CHECK(answer.not_cloud);
 
     // A 5xx is answered once, not retried.
     status = 503;
-    const rp::HeartbeatAnswer busy = rp::send_heartbeat(http, server.url(), heartbeat);
+    const rp::HeartbeatAnswer busy = rp::send_heartbeat(http, server.url(), kToken, heartbeat);
     CHECK_FALSE(busy.ok);
     CHECK(busy.error == "http_503");
     CHECK(hits == 2);
 
     const std::string closed =
         "http://127.0.0.1:" + std::to_string(rp::test::closed_local_port());
-    const rp::HeartbeatAnswer refused = rp::send_heartbeat(http, closed, heartbeat);
+    const rp::HeartbeatAnswer refused = rp::send_heartbeat(http, closed, kToken, heartbeat);
     CHECK_FALSE(refused.ok);
     CHECK(refused.error == "unreachable");
 }
@@ -252,4 +257,43 @@ TEST_CASE("the cloud's routes are joined to cloud_url one way", "[heartbeat][upl
           "https://c.example.invalid/v1/results");
     CHECK(rp::cloud_endpoint("https://c.example.invalid/base/", "/v1/results") ==
           "https://c.example.invalid/base/v1/results");
+}
+
+
+// --- W5.1 (docs/decisions.md 2026-10-15, points 5 and 9) ------------------------------
+
+TEST_CASE("heartbeat: the Cloud's recorded answers: 204 taken, 401 and 422 their words", "[heartbeat][w51]")
+{
+    const auto [fixture, ok, word] = GENERATE(table<std::string, bool, std::string>({
+        {"heartbeat/204", true, ""},
+        {"heartbeat/401", false, "http_401"},
+        {"heartbeat/422", false, "http_422"},
+        {"jobs/502-proxy", false, "http_502"},
+    }));
+    CAPTURE(fixture);
+    rp::test::FakeHttpClient http;
+    http.on(rp::HttpMethod::post, kHeartbeat, {rp::test::load_fixture("cloud", fixture)});
+
+    const rp::HeartbeatAnswer answer = rp::send_heartbeat(http, kCloud, kToken, troubled());
+
+    CHECK(answer.ok == ok);
+    CHECK(answer.error == word);
+    CHECK_FALSE(answer.not_cloud);
+}
+
+TEST_CASE("heartbeat: a 2xx without the contract header, or of another, is taken and said", "[heartbeat][w51]")
+{
+    const std::string value = GENERATE(std::string{}, std::string{"2"});
+    rp::HttpResponse response = rp::test::make_response(204);
+    if (!value.empty()) {
+        response.headers["X-RestoreProof-API"] = value;
+    }
+    rp::test::FakeHttpClient http;
+    http.on(rp::HttpMethod::post, kHeartbeat, {response});
+
+    const rp::HeartbeatAnswer answer = rp::send_heartbeat(http, kCloud, kToken, troubled());
+
+    CHECK(answer.ok);
+    CHECK(answer.error.empty());
+    CHECK(answer.not_cloud);
 }

@@ -1277,6 +1277,9 @@ TEST_CASE("service: the real environment is every function null but the body, an
     // W4.7's wait.
     CHECK(env.body);
     CHECK_FALSE(rp::ServiceCommandEnv{}.body);
+    // W5.1: the first start registers; an env made by hand doesn't.
+    CHECK(env.first_start);
+    CHECK_FALSE(rp::ServiceCommandEnv{}.first_start);
 
     CHECK_FALSE(env.scm.create_service);
     CHECK_FALSE(env.scm.set_description);
@@ -1323,4 +1326,66 @@ TEST_CASE("service run: with nothing handed in it asks the real dispatcher, whic
           (first ? "service error: service run is what the Service Control Manager starts; use "
                    "rpworker service start\n"
                  : "service error: opening the service control manager failed (error 1056)\n"));
+}
+
+// --- start: the first start (W5.1) -----------------------------------------------
+
+// docs/decisions.md 2026-10-15, "W5.1 (#66)", point 2: `service start` runs the
+// registration first; its refusal is its own line and code, and nothing is
+// asked of the SCM.
+TEST_CASE("service start: a first start that is refused starts nothing", "[service_command][start][cloud]")
+{
+    FakeScm scm;
+    rp::ServiceCommandEnv env = scm.env();
+    env.first_start = [&scm](std::ostream&, std::ostream& err) {
+        scm.calls.push_back("first_start");
+        err << "cloud register: the install token was refused\n";
+        return rp::exit_code::auth;
+    };
+    std::ostringstream out;
+    std::ostringstream err;
+    const Args args{"start"};
+
+    CHECK(rp::run_service_command(args, out, err, env) == rp::exit_code::auth);
+    CHECK(out.str().empty());
+    CHECK(err.str() == "cloud register: the install token was refused\n");
+    CHECK(scm.calls == Calls{"first_start"});
+}
+
+TEST_CASE("service start: the first start's lines come before the start's", "[service_command][start][cloud]")
+{
+    FakeScm scm;
+    scm.start = {{1056, ScmStep::call}};
+    scm.queries = {in_state(ServiceState::running)};
+    rp::ServiceCommandEnv env = scm.env();
+    env.first_start = [&scm](std::ostream& out, std::ostream&) {
+        scm.calls.push_back("first_start");
+        out << "registered worker w key k\n";
+        return rp::exit_code::ok;
+    };
+    std::ostringstream out;
+    std::ostringstream err;
+    const Args args{"start"};
+
+    CHECK(rp::run_service_command(args, out, err, env) == rp::exit_code::ok);
+    CHECK(out.str() == "registered worker w key k\nRestoreProof is already running\n");
+    CHECK(scm.calls == Calls{"first_start", "start", "query"});
+}
+
+TEST_CASE("the installed command line names the config `service run` reads", "[service_command][cloud]")
+{
+    using rp::service_config_argument;
+    CHECK_FALSE(service_config_argument(R"("C:\Program Files\RestoreProof\rpworker.exe" service run)"));
+    CHECK(service_config_argument(
+              R"("C:\Program Files\RestoreProof\rpworker.exe" service run --config "D:\rp\config.json")") ==
+          R"(D:\rp\config.json)");
+    // Anything install never writes names no config.
+    for (const char* other :
+         {R"("C:\rp\rpworker.exe" service run --config D:\rp\config.json)",
+          R"("C:\rp\rpworker.exe" service run --config "")",
+          R"("C:\rp\rpworker.exe" service run --config "D:\a"b")", R"(rpworker.exe service run)",
+          ""}) {
+        CAPTURE(other);
+        CHECK_FALSE(service_config_argument(other));
+    }
 }

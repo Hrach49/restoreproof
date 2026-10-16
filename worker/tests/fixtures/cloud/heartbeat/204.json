@@ -1,0 +1,9 @@
+{
+  "source": "docs/api/cloud-lab/w5.1-record/record_cloud.py against the Compose stack through Caddy",
+  "request": "POST /v1/heartbeat",
+  "status": 204,
+  "headers": {
+    "X-Restoreproof-Api": "1"
+  },
+  "body": null
+}

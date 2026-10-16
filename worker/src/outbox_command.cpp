@@ -1,5 +1,8 @@
 #include <rp/outbox_command.hpp>
 
+#include <rp/cert_export.hpp>
+#include <rp/vault.hpp>
+
 #include <rp/cli.hpp>
 #include <rp/secrets.hpp>
 #include <rp/uploader.hpp>
@@ -44,21 +47,37 @@ int run_flush(const CommandOptions& options, std::ostream& out, std::ostream& er
     std::filesystem::path root;
     std::unique_ptr<RunLock> lock;
     std::shared_ptr<FixtureRecorder> recorder;
+    // Every value wiped when the command ends (the W5.1 code review's
+    // finding 11).
+    WipedSecrets held;
+    Secrets& secrets = held.secrets;
     // One return after the handler (see signer.cpp).
     std::optional<std::string> problem;
     try {
         config = load_config(command_config_path(options.value("--config"), env.default_config_path));
         root = root_of(options.value("--outbox"), env);
-        lock = take_outbox_flush_lock(env.take_flush_lock);
+        const std::filesystem::path vault = command_vault_path(
+            options.value("--vault"), env.default_vault_path ? env.default_vault_path : default_vault_path);
+        secrets = env.load_secrets ? env.load_secrets(vault) : read_vault(vault);
+        // The one name read; the others are wiped now.
+        wipe_secrets(secrets, "cloud_api_token");
+        if (secrets.cloud_api_token && !secrets.cloud_api_token->empty()) {
+            lock = take_outbox_flush_lock(env.take_flush_lock);
+        }
         // A flush that is refused makes no recording folder.
         if (lock) {
-            recorder = open_recording(options.value("--record"), "outbox flush", Secrets{});
+            recorder = open_recording(options.value("--record"), "outbox flush", secrets);
         }
     } catch (const ConfigError& e) {
         problem = e.what();
     }
     if (problem) {
         err << "config error: " << *problem << '\n';
+        return exit_code::config;
+    }
+    if (!secrets.cloud_api_token || secrets.cloud_api_token->empty()) {
+        err << "outbox error: cloud_api_token is not in the vault; nothing was sent (rpworker "
+               "cloud register)\n";
         return exit_code::config;
     }
     if (!lock) {
@@ -71,10 +90,11 @@ int run_flush(const CommandOptions& options, std::ostream& out, std::ostream& er
     if (!http) {
         throw std::logic_error("no HTTP client for the Cloud");
     }
-    CloudUploader uploader(*http, config.cloud_url);
+    CloudUploader uploader(*http, config.cloud_url, *secrets.cloud_api_token);
     Outbox outbox({root, env.files, nullptr});
-    const FlushReport report =
-        outbox.flush(uploader, env.wall_now ? env.wall_now() : std::chrono::system_clock::now());
+    // An operator's flush: a run a 401 kept is tried at once.
+    const FlushReport report = outbox.flush(
+        uploader, env.wall_now ? env.wall_now() : std::chrono::system_clock::now(), {}, true);
     for (const std::string& line : report.out) {
         out << line << '\n';
     }
@@ -83,7 +103,8 @@ int run_flush(const CommandOptions& options, std::ostream& out, std::ostream& er
     }
     int code = exit_code::config;
     if (report.readable) {
-        out << report.queued << " queued, " << report.sent << " sent\n";
+        out << report.queued << " queued, " << report.sent << " sent, " << report.failed
+            << " failed\n";
         code = report.queued > 0 ? exit_code::transient
                                  : report.errors ? exit_code::config : exit_code::ok;
     }
@@ -134,7 +155,8 @@ int run_list(const CommandOptions& options, std::ostream& out, std::ostream& err
     for (const std::string& line : listing.errors) {
         err << line << '\n';
     }
-    out << listing.queued.size() << " queued, " << listing.sent << " sent\n";
+    out << listing.queued.size() << " queued, " << listing.sent << " sent, " << listing.failed
+        << " failed\n";
     out.flush();
     return exit_code::ok;
 }
@@ -170,7 +192,7 @@ int run_outbox_command(std::span<const std::string_view> args, std::ostream& out
 {
     if (!args.empty() && args[0] == "flush") {
         const std::optional<CommandOptions> options =
-            parse_options(args.subspan(1), {"--config", "--outbox", "--record"});
+            parse_options(args.subspan(1), {"--config", "--vault", "--outbox", "--record"});
         if (options && none_empty(*options)) {
             return run_flush(*options, out, err, env);
         }

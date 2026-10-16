@@ -1,0 +1,7 @@
+{
+  "boundary": "------------------------CWbOl2u1IB82rQahoH6RMx",
+  "content_type": "multipart/form-data; boundary=------------------------CWbOl2u1IB82rQahoH6RMx",
+  "description": "The body the C++ Worker's uploader (rp::CloudUploader over cpr and curl) sent for dispatched-run.json's bundle, byte for byte, as a local server received it; the content type with curl's boundary for this capture. Written by `rptests \"[.write_shared_upload_wire]\"` (W5.1); posted unchanged by the Cloud's contract test.",
+  "length": 8919,
+  "sha256": "ff90fdb97a9ddc9b73049bed3889fd852b9d550cbe2171ae92de81b02ece7837"
+}

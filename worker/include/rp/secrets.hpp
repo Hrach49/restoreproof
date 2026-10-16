@@ -9,10 +9,10 @@
 namespace rp {
 
 // Secrets never go in config.json. Since W4.5 they live in the DPAPI vault
-// (rp/vault.hpp, %ProgramData%\RestoreProof\vault.bin) under these five
-// names, which are the names `rpworker vault set <name>` takes, `vault list`
-// and `config check` print and every message uses. This is the one place
-// they are defined. No secret is read from the environment any more.
+// (rp/vault.hpp, %ProgramData%\RestoreProof\vault.bin) under these seven
+// names (five since W4.5, the Cloud's two tokens since W5.1), which are the
+// names `rpworker vault set <name>` takes, `vault list` and `config check`
+// print and every message uses. This is the one place they are defined. No secret is read from the environment any more.
 inline constexpr std::string_view kNameVeeamUsername = "veeam_username";
 inline constexpr std::string_view kNameVeeamPassword = "veeam_password";
 // The Worker's Graph app signs in with a certificate, not a client secret
@@ -27,9 +27,18 @@ inline constexpr std::string_view kNameGraphCertPassword = "graph_cert_password"
 // reads it and never looks at it.
 inline constexpr std::string_view kNameSigningKeyBase64 = "signing_key_base64";
 
-inline constexpr std::array<std::string_view, 5> kSecretNames{
-    kNameVeeamUsername, kNameVeeamPassword, kNameGraphCertPfxBase64, kNameGraphCertPassword,
-    kNameSigningKeyBase64};
+// The Cloud's tokens (W5.1, docs/decisions.md 2026-10-15, points 2 and 4):
+// the install token the operator sets once (`rpworker vault set
+// cloud_install_token`), which `rpworker cloud register` spends and removes,
+// and the API token the Cloud answers it with, which the poll, the upload and
+// the heartbeat send as `Authorization: Bearer`. Each is 32 random bytes in
+// base64url (43 characters), shown once by the Cloud and kept nowhere else.
+inline constexpr std::string_view kNameCloudInstallToken = "cloud_install_token";
+inline constexpr std::string_view kNameCloudApiToken = "cloud_api_token";
+
+inline constexpr std::array<std::string_view, 7> kSecretNames{
+    kNameVeeamUsername,    kNameVeeamPassword, kNameGraphCertPfxBase64, kNameGraphCertPassword,
+    kNameSigningKeyBase64, kNameCloudInstallToken, kNameCloudApiToken};
 
 // Each field is empty when its name isn't in the vault. Which ones a run
 // needs depends on the command, so reading the vault never fails on an absent
@@ -40,21 +49,36 @@ struct Secrets {
     std::optional<std::string> graph_cert_pfx_base64;
     std::optional<std::string> graph_cert_password;
     std::optional<std::string> signing_key_base64;
+    std::optional<std::string> cloud_install_token;
+    std::optional<std::string> cloud_api_token;
 };
 
 // The field `name` fills, in kSecretNames' order, or null for a name that
-// isn't one of the five.
+// isn't one of the seven.
 std::optional<std::string>* secret_field(Secrets& secrets, std::string_view name) noexcept;
 const std::optional<std::string>* secret_field(const Secrets& secrets,
                                                std::string_view name) noexcept;
+
+// Wipes every value (rp::secure_wipe) of the Secrets it holds when it goes.
+struct WipedSecrets {
+    Secrets secrets;
+    WipedSecrets() = default;
+    WipedSecrets(const WipedSecrets&) = delete;
+    WipedSecrets& operator=(const WipedSecrets&) = delete;
+    ~WipedSecrets();
+};
+
+// Wipes and empties every value of `secrets` but the one called `keep`
+// (empty: none kept).
+void wipe_secrets(Secrets& secrets, std::string_view keep = {}) noexcept;
 
 // "<name> is not in the vault": what every command says for a secret it needs
 // and the vault doesn't hold. ConfigError's key() is the name.
 std::string not_in_vault(std::string_view name);
 
 // The run's secret values, each as it is: the Veeam password, the Graph PFX's
-// Base64, its password and the signing key's text, those that are set and not
-// empty, in that order. The user name is no secret. The one list a --record
+// Base64, its password, the signing key's text and the Cloud's install and API
+// tokens, those that are set and not empty, in that order. The user name is no secret. The one list a --record
 // recorder and a run folder check what they write against; a run that has
 // taken the key's text out of `secrets` (rpworker test --evidence, after the
 // recording is opened) adds the text and its shapes for the folder itself.

@@ -2,7 +2,7 @@
 
 // `rpworker vault set|remove <name> | list | test | grant <account>`, each
 // with `[--vault <file>]` (W4.5, docs/decisions.md 2026-10-07, point 4): the
-// one way the five secrets (rp/secrets.hpp) get into the DPAPI vault
+// one way the seven secrets (rp/secrets.hpp) get into the DPAPI vault
 // (rp/vault.hpp), out of it, and the one way another account is let read it.
 // The value of `set` comes from the console without echo or from stdin,
 // never from an argument. Strict (100% line): the reader of the value is a
@@ -51,7 +51,7 @@ VaultCommandEnv default_vault_command_env();
 //    <file>; nothing changed";
 //  - `list`: the names in the vault, one per line, in kSecretNames' order,
 //    nothing for an empty vault; never a value or a length;
-//  - `test`: "vault <file>: ok", then each of the five names with
+//  - `test`: "vault <file>: ok", then each of the seven names with
 //    mask_secret's word, in config check's layout;
 //  - `grant <account>`: a Read entry for the account on the file's ACL,
 //    "granted read on <file> to <account>" (the account through table_cell).
@@ -61,8 +61,8 @@ VaultCommandEnv default_vault_command_env();
 // name or account that starts with "--", or --vault without a file, empty or
 // twice; 64 with "usage error: the name must be one of veeam_username,
 // veeam_password, graph_cert_pfx_base64, graph_cert_password,
-// signing_key_base64" for a name that isn't one of the five (the word given
-// is never echoed); 1 with one line on `err`: "vault error: the --vault path
+// signing_key_base64, cloud_install_token, cloud_api_token" for a name that
+// isn't one of the seven (the word given is never echoed); 1 with one line on `err`: "vault error: the --vault path
 // is not valid UTF-8", "vault error: <what()>" for a rp::VaultError (the
 // messages on rp/vault.hpp) or a ConfigError from default_vault_path, and for
 // `set` "vault error: the value is empty", "vault error: the value is longer

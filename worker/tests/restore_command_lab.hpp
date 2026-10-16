@@ -87,8 +87,10 @@ inline const std::string kUsage =
     "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
     "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "
     "[--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | "
-    "rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | "
+    "rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] | "
     "rpworker outbox list [--outbox <root>] | "
+    "rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] "
+    "[--record <dir>] | "
     "rpworker signer public-key [--vault <file>] | "
     "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | "
     "rpworker service install [--config <path>] | rpworker service uninstall|start|stop | "
@@ -1164,11 +1166,16 @@ struct Harness {
     FakeConnector fake;
     // The signing key is RFC 8032's published test key 1 (W4.3), never a
     // secret: only `test --evidence` parses it.
+    // W5.1: the Cloud's API token too, which the service's loop sends; the
+    // install token is spent already.
     std::function<rp::Secrets()> load_secrets = [] {
-        return rp::Secrets{"rp-veeam", "Sentinel-Veeam-Password-9c2e",
+        return rp::Secrets{"rp-veeam",
+                           "Sentinel-Veeam-Password-9c2e",
                            rp::test::graph_lab::pfx_base64(),
                            std::string{rp::test::graph_lab::kPfxPassword},
-                           std::string{rp::test::kSigningKey1Base64}};
+                           std::string{rp::test::kSigningKey1Base64},
+                           std::nullopt,
+                           std::string{"Sentinel-Api-Token-9c2e-0123456789abcdefABCD"}};
     };
     // The secrets the connector's maker was handed.
     std::optional<rp::Secrets> connector_secrets;

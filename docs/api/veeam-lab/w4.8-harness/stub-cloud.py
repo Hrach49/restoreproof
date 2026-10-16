@@ -1,10 +1,12 @@
 """W4.8 (#51): a stub Cloud for the scheduler loop's Done-when run. Not the Cloud: W5.1 and C5.x build it.
 
-    python stub-cloud.py --cert <pem> --key <pem> [--port 8443]
+    python stub-cloud.py --cert <pem> --key <pem> [--port 8444]
 
 Listens on https://localhost:<port> with the certificate given (self-signed, made for the run and
 named in a copy of the lab config as cloud_ca_file). Answers 202 to POST /v1/results once it has
-read the whole body, 204 to POST /v1/heartbeat, 404 to anything else. Prints one line per request
+read the whole body, 204 to POST /v1/heartbeat, 404 to anything else, each with the contract's
+`X-RestoreProof-API: 1` (since W5.1 the Worker takes a 2xx without it as no Cloud's, and sends
+nothing without the vault's cloud_api_token: Start-W48Stub puts a token of the run's own there). Prints one line per request
 with its UTC time; for a result one line per multipart part (its name, file name, size and
 SHA-256, never a body), for a heartbeat the JSON body as it came (it holds no secret: a version,
 two numbers, a fixed word and a time).
@@ -43,6 +45,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             for name, filename, data in parts_of(self.headers.get("Content-Type"), body):
                 print(f"  part {name}  file {filename}  {len(data)} bytes  sha256 {hashlib.sha256(data).hexdigest()}", flush=True)
         self.send_response(status)
+        self.send_header("X-RestoreProof-API", "1")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -54,7 +57,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--cert", required=True)
     parser.add_argument("--key", required=True)
-    parser.add_argument("--port", type=int, default=8443)
+    parser.add_argument("--port", type=int, default=8444)
     args = parser.parse_args()
     server = http.server.HTTPServer(("127.0.0.1", args.port), Handler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)

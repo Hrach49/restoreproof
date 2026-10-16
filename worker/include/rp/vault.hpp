@@ -44,7 +44,7 @@ inline constexpr std::wstring_view kVaultDefaultDacl = L"D:P(A;;FA;;;SY)(A;;FA;;
 //   <file>: the vault file is owned by neither SYSTEM, Administrators nor this account
 //   <file>: the vault can't be decrypted on this machine by this account (error 0x<8 hex>)
 //   <file>: not a RestoreProof vault
-//   <file>: the vault holds a name that isn't one of the five secrets
+//   <file>: the vault holds a name that isn't one of the seven secrets
 //   <file>: a value is longer than <kMaxVaultValueBytes> bytes
 //   <file>: the vault's folder couldn't be made
 //   <file>: the vault couldn't be encrypted (error 0x<8 hex>)

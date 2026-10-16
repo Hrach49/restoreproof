@@ -151,7 +151,7 @@ try {
     $config = Get-Content $W48Config -Raw | ConvertFrom-Json -AsHashtable
     foreach ($key in 'veeam_org_name', 'graph_tenant_id', 'graph_client_id', 'test_mailbox', 'test_site_id', 'test_library_id', 'test_onedrive_drive_id', 'test_onedrive_folder_id') { $config.Remove($key) }
     [IO.File]::WriteAllText($W48Config, ($config | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
-    $t += "-- the eight client keys taken out of the config copy; the stub Cloud answers the service's own flush (no token until W5.1)`n$(Start-W48Stub)"
+    $t += "-- the eight client keys taken out of the config copy; the stub Cloud answers the service's own flush (a stub token of the run's own in the vault since W5.1)`n$(Start-W48Stub)"
     $t += "`n$(Invoke-W48 @('service', 'install', '--config', $W48Config))"
     try {
         $t += "-- the grants`n$(Grant-W48Account)"

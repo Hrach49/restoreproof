@@ -6,6 +6,7 @@ on stdin alone and appear in no output and no argument."""
 import base64
 import datetime
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -16,6 +17,8 @@ from cryptography.hazmat.primitives.serialization import pkcs12
 from pwsh import CERT_SCRIPT, TESTS_DIR, ps_string, run
 
 NAMES = ("graph_cert_pfx_base64", "graph_cert_password")
+# A service no machine has: -Replace proceeds as with the Worker's service stopped.
+NO_SERVICE = "rp-test-no-such-service"
 # DER encodings of the OIDs that matter, tag and length included.
 AES_256_CBC = bytes.fromhex("060960864801650304012a")
 HMAC_SHA256 = bytes.fromhex("06082a864886f70d0209")
@@ -61,6 +64,12 @@ def worker(tmp_path):
     return FakeWorker(tmp_path)
 
 
+def said(stderr: str) -> str:
+    """pwsh's error text as one line: its colours dropped and its wrapped lines joined."""
+    text = re.sub(r"\x1b\[[0-9;]*m", "", stderr)
+    return re.sub(r"\s*\n\s*\|\s*", " ", text)
+
+
 def sets(worker) -> list[str]:
     return [a[2] for a in worker.argv() if a[:2] == ["vault", "set"]]
 
@@ -91,6 +100,27 @@ def test_a_failed_password_set_says_the_pfx_is_alone(worker):
     assert result.returncode != 0
     assert "without its password" in result.stderr
     assert sets(worker) == ["graph_cert_pfx_base64", "graph_cert_password"]
+
+
+def test_a_failed_password_set_on_replace_says_the_old_password_is_left(worker):
+    """The vault holds the new PFX with the old password, and the message says so (review finding 8)."""
+    worker.set_vault({"graph_cert_pfx_base64": "old", "graph_cert_password": "old"})
+    worker.flag("fail-set-graph_cert_password")
+    result = worker.run("-Replace", "-ServiceName", NO_SERVICE)
+    assert result.returncode != 0
+    assert "with the old certificate's password, which doesn't open it" in said(result.stderr)
+    assert "without its password" not in said(result.stderr)
+
+
+def test_replace_while_the_service_runs_is_refused(worker):
+    """Between the two sets a running service would read the new PFX with the old password."""
+    worker.set_vault({"graph_cert_pfx_base64": "old", "graph_cert_password": "old"})
+    # EventLog runs on every Windows machine.
+    result = worker.run("-Replace", "-ServiceName", "EventLog")
+    assert result.returncode != 0
+    assert "The EventLog service is Running: stop it first" in said(result.stderr) and "Nothing was made" in said(result.stderr)
+    assert sets(worker) == []
+    assert worker.vault() == {"graph_cert_pfx_base64": "old", "graph_cert_password": "old"}
 
 
 def test_a_failed_pfx_set_sets_nothing_else(worker):
@@ -157,7 +187,7 @@ def test_no_secret_is_an_argument_or_printed(made):
 
 def test_replace_makes_a_new_certificate(worker):
     worker.set_vault({"graph_cert_pfx_base64": "old", "graph_cert_password": "old"})
-    result = worker.run("-Replace")
+    result = worker.run("-Replace", "-ServiceName", NO_SERVICE)
     assert result.returncode == 0, result.stderr
     assert worker.vault()["graph_cert_password"] != "old"
 

@@ -28,8 +28,12 @@ script: `docs/decisions.md`, 2026-10-16, "W7.0 (#189)".
   rpworker graph certificate > worker-graph.pem
   ```
 
+  To replace it (`-Replace`), stop the RestoreProof service first: the script refuses while it
+  runs. Every client's app then needs the script below run again in its tenant.
 - **The person who runs the script** signs in as a **Global Administrator** of the client's
-  tenant (twice: once for Microsoft Graph, once for Exchange Online).
+  tenant (twice: once for Microsoft Graph, once for Exchange Online), with an account **of the
+  client's tenant**: a partner's (GDAP) or guest account reaches its own organisation's Exchange,
+  and the script stops before reading anything when either sign-in is to another tenant.
 - **PowerShell 7.4 or later**, and two modules, installed once:
 
   ```
@@ -71,7 +75,9 @@ pwsh -NoProfile -File tools\tenant-setup\Initialize-RestoreProofTenant.ps1 `
 
 On the Worker's machine, `-Worker <path to rpworker.exe>` reads the certificate from the vault
 instead of `-WorkerCertificateFile` (from an elevated shell, since the vault is under
-%ProgramData%).
+%ProgramData%). If the Worker can't give it, the script prints the Worker's own reason (for
+example a vault it can't read from an unelevated shell); only a vault with no Graph certificate
+yet needs `New-WorkerGraphCertificate.ps1`.
 
 Optional: `-MailboxAddress` (default `restoretest@<the tenant's *.onmicrosoft.com domain>`; it
 must be `restoretest@...`), `-VeeamOrgName` (default that same domain, the name Veeam gives the
@@ -98,10 +104,23 @@ application's grant), then:
 - `profile:` and the profile, written to `-ProfileFile` too.
 - `changes: <n>`.
 
-Exchange can take 30 minutes to 2 hours to apply the mail role everywhere.
+Exchange can take 30 minutes to 2 hours to apply the mail role everywhere. A read the check can't
+make (an Exchange answer that failed, a permission list it couldn't read) is a `problem:` line,
+never a pass. The user given as `-OneDriveUser` may be `restoretest` itself (a licensed user, as
+in the lab); the check then notes it and does not test it as a mailbox the app must not reach.
+
+**An app made again.** If the client deleted the app registration or its enterprise app, the
+next run makes them again and moves the mail role to the new one: it removes the old role
+assignment of RestoreProof's name and, when Exchange still points at the deleted service
+principal, that pointer, then makes both again.
+
+A new app takes a few seconds to reach all of Microsoft's servers: a read or grant that names it
+and answers 400 or 404 is tried again, up to six times, ten seconds apart (`note: ... not ready
+yet`).
 
 A step that finds something it must not change stops with one line and changes nothing more: a
-`restoretest` address that is a group or another mailbox's alias, a list called RestoreTarget that
+`restoretest` address that is a group or another mailbox's alias or that names more than one
+recipient, a list called RestoreTarget that
 is no document library, a file called RestoreTarget in the user's OneDrive, two apps called
 "RestoreProof Worker", a OneDrive you can't open (step 1).
 
@@ -116,8 +135,8 @@ manage.py create-connector --msp-id <msp_id> --client-id <client_id> --worker-id
 ## What the script never does
 
 - It changes nothing but the app registration "RestoreProof Worker" and its service principal,
-  the three SharePoint grants, the Exchange scope and role assignment named for RestoreProof, and
-  the three restore targets.
+  the three SharePoint grants, the Exchange scope and role assignment named for RestoreProof (and
+  the app's Exchange service principal pointer), and the three restore targets.
 - It never grants Sites.Selected write, owner or full control, any `*.All` permission, Mail.Read,
   Mail.ReadWrite or full_access_as_app as an Entra consent, and never adds a client secret. Any of
   these found on the app is removed.

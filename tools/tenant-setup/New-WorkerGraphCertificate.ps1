@@ -37,7 +37,9 @@ param(
     # Passed to rpworker as --vault <file>; default: the Worker's default vault.
     [string]$VaultPath = '',
     # Replace a certificate the vault already holds.
-    [switch]$Replace
+    [switch]$Replace,
+    # The Worker's service, which must be stopped while a certificate is replaced (the tests name another).
+    [string]$ServiceName = 'RestoreProof'
 )
 
 Set-StrictMode -Version Latest
@@ -72,6 +74,14 @@ if ($held.Count -gt 0 -and -not $Replace) {
     throw ("The vault already holds $($held -join ' and '): this Worker has its Graph certificate. " +
         'Nothing was made. To make a new one, run this again with -Replace; every client app that holds the ' +
         'old certificate then needs Initialize-RestoreProofTenant.ps1 run again in its tenant.')
+}
+# The two values are written one after the other: a running service could read the new PFX with
+# the old password between them.
+if ($held.Count -gt 0) {
+    $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if ($service -and "$($service.Status)" -ne 'Stopped') {
+        throw "The $ServiceName service is $($service.Status): stop it first (rpworker service stop), then run this again. Nothing was made."
+    }
 }
 
 Add-Type -AssemblyName System.Security.Cryptography.Pkcs
@@ -112,8 +122,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "rpworker vault set graph_cert_pfx_base64 failed (exit $LASTEXITCODE); nothing was set" }
     $password | & $Worker vault set graph_cert_password @vaultArgs
     if ($LASTEXITCODE -ne 0) {
-        throw ("rpworker vault set graph_cert_password failed (exit $LASTEXITCODE): the vault now holds a PFX " +
-            'without its password. Run this again with -Replace.')
+        # What the vault holds now: the new PFX, and the old certificate's password if it had one.
+        $left = if ($held -ccontains 'graph_cert_password') { "with the old certificate's password, which doesn't open it" } else { 'without its password' }
+        throw ("rpworker vault set graph_cert_password failed (exit $LASTEXITCODE): the vault now holds the new PFX " +
+            "$left, so the Worker can't sign in to Graph. Run this again with -Replace.")
     }
 }
 finally {

@@ -98,6 +98,50 @@ def test_another_signed_in_tenant_is_refused(tmp_path):
     assert result.graph() == [] and result.exchange() == []
 
 
+def test_an_exchange_session_in_another_tenant_is_refused_before_any_exchange_read(tmp_path):
+    """A partner's or a guest's account reaches its own organisation's Exchange (review finding 6)."""
+    state = never_seen()
+    state["exchangeTenant"] = "bbbbbbbb-1111-4222-8333-444444444444"
+    result = run_setup(tmp_path, state)
+    assert result.code == "throw" and "Exchange Online signed in to tenant 'bbbbbbbb-" in result.thrown
+    assert result.graph() == [] and result.exchange() == []
+    assert [e["call"] for e in result.log if e["call"].startswith("Disconnect")] == ["Disconnect-ExchangeOnline", "Disconnect-MgGraph"]
+
+
+def test_a_failed_exchange_sign_in_still_ends_the_graph_session(tmp_path):
+    state = never_seen()
+    state["exchangeConnectFails"] = True
+    result = run_setup(tmp_path, state)
+    assert result.code == "throw" and "cancelled" in result.thrown
+    assert [e["call"] for e in result.log if e["call"] == "Disconnect-MgGraph"] == ["Disconnect-MgGraph"]
+
+
+def a_worker(tmp_path, body: str):
+    """A stand-in rpworker.exe for -Worker: a .cmd whose body answers `graph certificate`."""
+    cmd = tmp_path / "rpworker.cmd"
+    cmd.write_text("@echo off\r\n" + body, encoding="ascii")
+    return str(cmd)
+
+
+def test_a_worker_that_cant_read_its_vault_is_named_by_its_own_words(tmp_path):
+    """rpworker's own line, never a guess that leads to -Replace (review finding 4)."""
+    worker = a_worker(tmp_path, "1>&2 echo vault error: the vault can't be read: run it elevated\r\nexit /b 1\r\n")
+    result = run_setup(tmp_path, never_seen(), "-Worker", worker, certificate=None)
+    assert result.code == "throw", result.out
+    assert "rpworker graph certificate failed (exit 1): vault error: the vault can't be read: run it elevated" in result.thrown
+    assert "never -Replace" in result.thrown
+    assert result.log == []
+
+
+def test_the_workers_pem_is_read_from_its_stdout_alone(tmp_path):
+    pem = tmp_path / "out.pem"
+    pem.write_text(ft.PEM, encoding="ascii")
+    worker = a_worker(tmp_path, f'type "{pem}"\r\n1>&2 echo thumbprint {ft.THUMB} (SHA-1), expires 2028-10-16T00:00:00Z\r\nexit /b 0\r\n')
+    result = run_setup(tmp_path, never_seen(), "-Worker", worker, "-WhatIf", certificate=None)
+    assert result.code == "ok", result.out
+    assert f"ok: the Worker's certificate {ft.THUMB}" in result.out
+
+
 def test_a_dehydrated_exchange_without_the_switch_changes_nothing(tmp_path):
     state = never_seen()
     state["exchange"]["isDehydrated"] = True
@@ -153,6 +197,26 @@ def test_a_file_named_restoretarget_stops_it(tmp_path):
     assert [w for w in result.writes() if w["path"].startswith(("drives", "applications", "servicePrincipals"))] == []
 
 
+def test_an_address_that_names_two_recipients_stops_it(tmp_path):
+    """Exchange's "matches multiple entries" is never read as no recipient (review finding 7)."""
+    state = never_seen()
+    for who in ("bob", "carol"):
+        other = ft.mailbox(f"{who}@{ft.DOMAIN}")
+        other["EmailAddresses"].append(f"smtp:{ADDRESS}")
+        state["exchange"]["recipients"].append(other)
+    result = run_setup(tmp_path, state)
+    assert result.code == "throw" and "names more than one recipient: nothing was changed" in result.thrown
+    assert result.writes() == [] and result.exchange_writes() == []
+
+
+def test_a_failed_recipient_read_stops_it_and_makes_no_mailbox(tmp_path):
+    state = never_seen()
+    state["exchange"]["recipientErrors"] = {ADDRESS: "fake: the request was throttled"}
+    result = run_setup(tmp_path, state)
+    assert result.code == "throw" and "throttled" in result.thrown
+    assert result.writes() == [] and result.exchange_writes() == []
+
+
 def test_a_onedrive_the_admin_cant_open_says_how_and_stops(tmp_path):
     state = never_seen()
     state["drives"][0]["forbidden"] = True
@@ -206,6 +270,83 @@ def test_a_grant_beyond_its_own_that_the_script_never_removes_fails_the_check(tm
     assert result.code == "1", result.out
     assert words in result.out and "problem(s)" in result.out
     assert result.writes() == [] and result.exchange_writes() == []
+
+
+def test_checkonly_without_an_exchange_pointer_lists_its_problems(tmp_path):
+    """A failed Exchange read is a problem, never the end of the check (review finding 3)."""
+    state = set_up(tmp_path).state
+    state["exchange"]["pointers"] = []
+    result = run_setup(tmp_path, state, "-CheckOnly", name="check")
+    assert result.code == "1", result.out
+    assert "problem: Exchange has no service principal pointer for the app" in result.lines
+    assert "grants: 1 problem(s)" in result.lines
+    assert result.exchange("Test-ServicePrincipalAuthorization") == []
+
+
+def test_checkonly_lists_a_recipient_it_cant_read_as_a_problem(tmp_path):
+    state = set_up(tmp_path).state
+    state["exchange"]["recipientErrors"] = {ft.ADMIN: "fake: the request was throttled", ADDRESS: "fake: busy"}
+    result = run_setup(tmp_path, state, "-CheckOnly", name="check")
+    assert result.code == "1", result.out
+    assert f"problem: {ADDRESS} can't be read in Exchange: fake: busy" in result.lines
+    assert f"problem: {ft.ADMIN} can't be read in Exchange: fake: the request was throttled" in result.lines
+    assert "grants: 2 problem(s)" in result.lines
+
+
+def test_a_onedrive_user_that_is_the_restoretest_mailbox_passes(tmp_path):
+    """The lab's restoretest is a licensed user: its OneDrive may be the folder's (review finding 2)."""
+    state = never_seen()
+    state["users"][0]["userPrincipalName"] = ADDRESS
+    state["exchange"]["recipients"].append(ft.mailbox(ADDRESS, "UserMailbox"))
+    result = run_setup(tmp_path, state, "-OneDriveUser", ADDRESS)
+    assert result.code == "ok", result.out
+    assert "grants: ok" in result.lines
+    assert f"note: {ADDRESS} is the {ADDRESS} mailbox itself" in result.lines
+
+
+def test_an_app_made_again_gets_its_mail_role_back(tmp_path):
+    """The app deleted by the client and the script run again: the old app's assignment of that
+    name goes and the new service principal gets its own (review finding 1)."""
+    state = set_up(tmp_path).state
+    old_sp = sp_of(state)["id"]
+    state["applications"], state["servicePrincipals"], state["appRoleAssignments"] = [], [], []
+    result = run_setup(tmp_path, state, name="again")
+    assert result.code == "ok", result.out
+    assert "grants: ok" in result.lines
+    new_sp = sp_of(result.state)["id"]
+    assert new_sp != old_sp
+    assert [a["RoleAssigneeName"] for a in result.state["exchange"]["assignments"]] == [new_sp]
+    again = run_setup(tmp_path, result.state, name="third")
+    assert again.changes() == 0 and again.exchange_writes() == []
+
+
+def test_a_service_principal_made_again_gets_a_new_pointer(tmp_path):
+    state = set_up(tmp_path).state
+    old_sp = sp_of(state)["id"]
+    state["servicePrincipals"], state["appRoleAssignments"] = [], []
+    result = run_setup(tmp_path, state, name="again")
+    assert result.code == "ok", result.out
+    assert "grants: ok" in result.lines
+    new_sp = sp_of(result.state)["id"]
+    cmdlets = [e["cmdlet"] for e in result.exchange_writes()]
+    assert cmdlets == ["Remove-ManagementRoleAssignment", "Remove-ServicePrincipal", "New-ServicePrincipal", "New-ManagementRoleAssignment"]
+    assert [p["ObjectId"] for p in result.state["exchange"]["pointers"]] == [new_sp]
+    assert old_sp not in json.dumps(result.state["exchange"])
+
+
+def test_reads_and_grants_right_after_the_app_is_made_wait_for_it(tmp_path):
+    """A new service principal reaches every replica seconds later (review finding 5)."""
+    state = never_seen()
+    state["failures"] = {
+        "GET ^servicePrincipals/[^/]+/appRoleAssignments$": {"status": 404, "times": 2},
+        f"POST ^sites/{re.escape(SITE_ID)}/permissions$": {"status": 400, "times": 1},
+        "POST ^drives/[^/]+/items/[^/]+/permissions$": {"status": 404, "times": 1},
+    }
+    result = run_setup(tmp_path, state)
+    assert result.code == "ok", result.out
+    assert "grants: ok" in result.lines
+    assert [e["seconds"] for e in result.log if e["call"] == "sleep"] == [10] * 4
+    assert result.out.count("not ready yet (attempt") == 4
 
 
 def test_an_org_wide_mail_role_of_another_app_is_noted_not_touched(tmp_path):

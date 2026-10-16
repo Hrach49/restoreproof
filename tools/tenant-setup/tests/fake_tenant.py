@@ -113,7 +113,8 @@ class Result:
         return int(found[-1])
 
 
-def run_setup(tmp_path: Path, state: dict, *params: str, certificate: str = PEM, name: str = "run") -> Result:
+def run_setup(tmp_path: Path, state: dict, *params: str, certificate: str | None = PEM, name: str = "run") -> Result:
+    """`certificate` None: no -WorkerCertificateFile (the test passes -Worker)."""
     folder = tmp_path / name
     folder.mkdir()
     state_in = folder / "state-in.json"
@@ -121,9 +122,10 @@ def run_setup(tmp_path: Path, state: dict, *params: str, certificate: str = PEM,
     profile = folder / "profile.json"
     cert_file = folder / "worker-graph.pem"
     state_in.write_text(json.dumps(state), encoding="utf-8")
-    cert_file.write_text(certificate, encoding="ascii")
-    named = {"-TenantId": TENANT, "-SiteUrl": SITE_URL, "-OneDriveUser": USER,
-             "-WorkerCertificateFile": str(cert_file), "-ProfileFile": str(profile)}
+    named = {"-TenantId": TENANT, "-SiteUrl": SITE_URL, "-OneDriveUser": USER, "-ProfileFile": str(profile)}
+    if certificate is not None:
+        cert_file.write_text(certificate, encoding="ascii")
+        named["-WorkerCertificateFile"] = str(cert_file)
     switches = []
     rest = list(params)
     while rest:

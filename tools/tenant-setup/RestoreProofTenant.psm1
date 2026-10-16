@@ -454,19 +454,34 @@ function ConvertFrom-ExchangeBool($Value, [string]$Name) {
     throw "Exchange answered $Name with '$Value', not True or False"
 }
 
-# The assignments that are the Worker app's: by name, or a service principal assignee that is it.
-function Select-AppAssignments([object[]]$Assignments, [string]$SpId, [string]$AppId) {
+# The assignments that are the Worker app's: by name, or a service principal assignee that is it
+# (its service principal now, or $OldSpId: the one a stale Exchange pointer still names).
+function Select-AppAssignments([object[]]$Assignments, [string]$SpId, [string]$AppId, [string]$OldSpId = '') {
+    $assignees = @(@($SpId, $AppId, $OldSpId, $script:AppName) | Where-Object { $_ })
     @($Assignments | Where-Object {
             $null -ne $_ -and ("$(Get-Field $_ 'Name')" -eq $script:MailAssignmentName -or
                 ("$(Get-Field $_ 'RoleAssigneeType')" -eq 'ServicePrincipal' -and
-                @($SpId, $AppId, $script:AppName) -contains "$(Get-Field $_ 'RoleAssigneeName')"))
+                $assignees -contains "$(Get-Field $_ 'RoleAssigneeName')"))
         })
 }
 
-function Test-MailAssignment($Assignment) {
+# The one assignment RestoreProof makes: its name, its role, its scope, and assigned to the app's
+# service principal as it is now (Exchange names the assignee by its object ID). One of that name
+# assigned to another object is a deleted app's or service principal's, never this one's.
+function Test-MailAssignment($Assignment, [string]$SpId) {
+    [bool]$SpId -and
     "$(Get-Field $Assignment 'Name')" -eq $script:MailAssignmentName -and
     "$(Get-Field $Assignment 'Role')" -eq $script:MailRoleName -and
-    "$(Get-Field $Assignment 'CustomResourceScope')" -eq $script:MailScopeName
+    "$(Get-Field $Assignment 'CustomResourceScope')" -eq $script:MailScopeName -and
+    "$(Get-Field $Assignment 'RoleAssigneeName')" -eq $SpId
+}
+
+# What a failed Exchange lookup by identity means, from its text: 'not-found' (no such object),
+# 'ambiguous' (the identity names several), or '' (anything else: a real failure).
+function Get-ExchangeLookupFailure([string]$Text) {
+    if ($Text -match 'ManagementObjectNotFoundException|couldn''t be found on') { return 'not-found' }
+    if ($Text -match 'ManagementObjectAmbiguousException|matches multiple entries') { return 'ambiguous' }
+    ''
 }
 
 # A tenant whose Exchange is "dehydrated" holds no management scope until
@@ -487,18 +502,24 @@ function Get-ExchangePlan($Pointer, $Scope, [object[]]$Assignments, [bool]$Dehyd
     $filter = Get-MailScopeFilter $Address
     $why = Test-CustomizationAllowed $Scope $Dehydrated $AllowCustomization
     if ($why) { throw $why }
-    if ($null -eq $Pointer) { $plan += New-Change 'exchange.pointer' 'make the Exchange service principal pointer' }
+    # A pointer to another object is the app's deleted service principal's: it goes, after the
+    # assignments made to it, and a new one is made.
+    $oldSpId = if ($null -ne $Pointer -and "$(Get-Field $Pointer 'ObjectId')" -ne $SpId) { "$(Get-Field $Pointer 'ObjectId')" } else { '' }
+    $mine = @(Select-AppAssignments $Assignments $SpId $AppId $oldSpId)
+    $good = @($mine | Where-Object { Test-MailAssignment $_ $SpId })
+    foreach ($extra in $mine | Where-Object { -not (Test-MailAssignment $_ $SpId) }) {
+        $plan += New-Change 'exchange.assignment-remove' "remove the role assignment '$(Get-Field $extra 'Name')' ($(Get-Field $extra 'Role'), assigned to $(Get-Field $extra 'RoleAssigneeName')): not RestoreProof's as it is now" @{ Identity = "$(Get-Field $extra 'Identity')" }
+    }
+    if ($oldSpId) {
+        $plan += New-Change 'exchange.pointer-remove' "remove the Exchange service principal pointer to $oldSpId, a service principal the app no longer has" @{ Identity = $oldSpId }
+    }
+    if ($null -eq $Pointer -or $oldSpId) { $plan += New-Change 'exchange.pointer' 'make the Exchange service principal pointer' }
     if ($null -eq $Scope) {
         if ($Dehydrated) { $plan += New-Change 'exchange.customize' 'run Enable-OrganizationCustomization (once per tenant)' }
         $plan += New-Change 'exchange.scope' "make the management scope '$script:MailScopeName': $filter" @{ Filter = $filter }
     }
     elseif ("$(Get-Field $Scope 'RecipientFilter')" -cne $filter) {
         $plan += New-Change 'exchange.scope-filter' "set the management scope's filter to: $filter" @{ Filter = $filter }
-    }
-    $mine = @(Select-AppAssignments $Assignments $SpId $AppId)
-    $good = @($mine | Where-Object { Test-MailAssignment $_ })
-    foreach ($extra in $mine | Where-Object { -not (Test-MailAssignment $_) }) {
-        $plan += New-Change 'exchange.assignment-remove' "remove the role assignment '$(Get-Field $extra 'Name')' ($(Get-Field $extra 'Role')): not RestoreProof's" @{ Identity = "$(Get-Field $extra 'Identity')" }
     }
     if ($good.Count -eq 0) {
         $plan += New-Change 'exchange.assignment' "assign '$script:MailRoleName' in '$script:MailScopeName'"
@@ -543,20 +564,29 @@ function Test-ServicePrincipalState($ServicePrincipal, [object[]]$Assignments, [
     $problems
 }
 
-# Exchange: exactly the one assignment, the scope's filter, and Exchange's own answer for the
-# restoretest mailbox (in scope) and the other mailboxes tested (not in scope).
-# $Authorizations: @{ Mailbox; Answers (Test-ServicePrincipalAuthorization rows); Expected ($true|$false) }.
-function Test-ExchangeState($Scope, [object[]]$Assignments, [string]$SpId, [string]$AppId, [string]$Address, [object[]]$Authorizations) {
+# Exchange: the app's pointer to its service principal as it is now, exactly the one assignment,
+# the scope's filter, and Exchange's own answer for the restoretest mailbox (in scope) and the
+# other mailboxes tested (not in scope).
+# $Authorizations: @{ Mailbox; Answers (Test-ServicePrincipalAuthorization rows); Expected ($true|$false) },
+# or @{ Mailbox; Failed (why Exchange gave no answer) }.
+function Test-ExchangeState($Pointer, $Scope, [object[]]$Assignments, [string]$SpId, [string]$AppId, [string]$Address, [object[]]$Authorizations) {
     $problems = @()
+    $oldSpId = ''
+    if ($null -eq $Pointer) { $problems += 'Exchange has no service principal pointer for the app' }
+    elseif ("$(Get-Field $Pointer 'ObjectId')" -ne $SpId) {
+        $oldSpId = "$(Get-Field $Pointer 'ObjectId')"
+        $problems += "Exchange's service principal pointer for the app names $oldSpId, not the app's service principal '$SpId'"
+    }
     if ($null -eq $Scope) { $problems += "there is no management scope '$script:MailScopeName'" }
     elseif ("$(Get-Field $Scope 'RecipientFilter')" -cne (Get-MailScopeFilter $Address)) {
         $problems += "the management scope's filter is '$(Get-Field $Scope 'RecipientFilter')', not '$(Get-MailScopeFilter $Address)'"
     }
-    $mine = @(Select-AppAssignments $Assignments $SpId $AppId)
-    if ($mine.Count -ne 1 -or -not (Test-MailAssignment $mine[0])) {
-        $problems += "the app has $($mine.Count) Exchange role assignment(s); it needs exactly '$script:MailAssignmentName' ($script:MailRoleName in '$script:MailScopeName')"
+    $mine = @(Select-AppAssignments $Assignments $SpId $AppId $oldSpId)
+    if ($mine.Count -ne 1 -or -not (Test-MailAssignment $mine[0] $SpId)) {
+        $problems += "the app has $($mine.Count) Exchange role assignment(s); it needs exactly '$script:MailAssignmentName' ($script:MailRoleName in '$script:MailScopeName', assigned to '$SpId')"
     }
     foreach ($a in @($Authorizations | Where-Object { $null -ne $_ })) {
+        if ($a.Contains('Failed')) { $problems += "Exchange can't say whether the app may reach $($a.Mailbox): $($a.Failed)"; continue }
         $rows = @(@($a.Answers) | Where-Object { "$(Get-Field $_ 'RoleName')" -eq $script:MailRoleName })
         $inScope = @($rows | Where-Object { "$(Get-Field $_ 'InScope')" -eq 'True' }).Count -gt 0
         if ($a.Expected -and -not $inScope) { $problems += "Exchange says the app may not reach $($a.Mailbox) ($script:MailRoleName not in scope)" }

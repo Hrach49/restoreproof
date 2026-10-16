@@ -1,0 +1,6 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "Get-Recipient -Identity restoreproof-no-such-recipient@RestoreProofLab.onmicrosoft.com",
+  "status": 404,
+  "reply": null
+}

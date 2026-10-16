@@ -720,6 +720,29 @@ graph error: Graph denied GET /v1.0/drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7
 Graph's messages never contain a token, the certificate or a download link. Debug lines are
 not shown.
 
+## `rpworker graph certificate`
+
+```
+rpworker graph certificate [--vault <file>]
+```
+
+W7.0 (`docs/decisions.md` 2026-10-16, "W7.0 (#189)", point 4). Opens the vault's Graph
+certificate (`graph_cert_pfx_base64` and `graph_cert_password`) exactly as the sign-in does and
+prints its **public half alone** on stdout, one PEM `CERTIFICATE` block, so
+`rpworker graph certificate > worker-graph.pem` is a certificate file as it is; then
+`thumbprint <SHA-1> (SHA-1), expires <YYYY-MM-DDTHH:MM:SSZ>` on stderr. No config is read and
+nothing is sent. The PFX, its password and the key never reach either stream (the secret audit's
+case K holds it).
+
+It is what a client tenant's app registration gets: `tools/tenant-setup/Initialize-RestoreProofTenant.ps1`
+takes the file (`-WorkerCertificateFile`) or runs this command itself (`-Worker`;
+`docs/tenant-setup.md`). One Worker has one Graph certificate for all its clients; it is made by
+`tools/tenant-setup/New-WorkerGraphCertificate.ps1`, which pipes the PFX and its password into
+`vault set` and ends with this command.
+
+Exit codes: 0; 1 `config error: ...` for a vault that can't be read and every refusal of the
+certificate (`graph_cert_pfx_base64 is not in the vault`, a PFX that doesn't open, a certificate
+that isn't valid now; the same lines as `graph list`); 64 usage (`--vault` is the one option).
 ## `rpworker client check`
 
 ```
@@ -2738,5 +2761,5 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 The usage line is:
 
 ```
-usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>]
+usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph certificate [--vault <file>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>]
 ```

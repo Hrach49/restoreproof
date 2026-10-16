@@ -1,0 +1,12 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "Test-ServicePrincipalAuthorization -Identity 737da5ef-baf2-4198-b009-e160d8ca77c9 -Resource alice@RestoreProofLab.onmicrosoft.com",
+  "status": 200,
+  "reply": {
+    "RoleName": "Application Mail.ReadWrite",
+    "GrantedPermissions": "Mail.ReadWrite",
+    "AllowedResourceScope": "RestoreProof Worker - restoretest mailbox",
+    "ScopeType": "CustomRecipientScope",
+    "InScope": "False"
+  }
+}

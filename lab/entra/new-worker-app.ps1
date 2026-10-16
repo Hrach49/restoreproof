@@ -50,8 +50,8 @@ $RestoreTestUpn = 'restoretest@RestoreProofLab.onmicrosoft.com'
 $AliceUpn = 'alice@RestoreProofLab.onmicrosoft.com'
 $SiteId = 'restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689'
 $OneDriveDriveId = 'b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3'
-$OneDriveTargetFolderId = '01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH'
-$RestoreTargetListId = 'ffec069d-65e4-4c3a-9da2-ac086cf9dafa'
+$OneDriveTargetFolderId = '01ZK75LGEIWSMV5NCPERHJYGWANJI7YUFB'
+$RestoreTargetListId = '29dfd30b-9223-49fc-ab87-a205a757f896'
 $RestoreTargetName = 'RestoreTarget'
 
 # ---- the app ------------------------------------------------------------------------------------

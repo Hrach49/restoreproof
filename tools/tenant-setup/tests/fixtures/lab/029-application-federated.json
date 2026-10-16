@@ -1,0 +1,9 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/applications/6b09b606-4789-4246-8299-f8b36720971e/federatedIdentityCredentials",
+  "status": 200,
+  "reply": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#applications('6b09b606-4789-4246-8299-f8b36720971e')/federatedIdentityCredentials",
+    "value": []
+  }
+}

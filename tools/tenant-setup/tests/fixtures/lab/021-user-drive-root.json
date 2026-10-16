@@ -1,0 +1,18 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/root?$select=id,name,sharepointIds",
+  "status": 200,
+  "reply": {
+    "id": "01ZK75LGF6Y2GOVW7725BZO354PWSELRRZ",
+    "sharepointIds": {
+      "listId": "1a9f64df-d9fd-4302-af7a-457d2beff537",
+      "tenantId": "bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+      "listItemUniqueId": "8eb7c890-24e8-412e-969f-434a33284a63",
+      "webId": "98cfff1a-b404-4438-ae6e-6927a6ccc325",
+      "siteUrl": "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com",
+      "siteId": "6d600fc0-65f8-4811-ad18-096ec5b7e834"
+    },
+    "name": "root",
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(driveItem)/$entity"
+  }
+}

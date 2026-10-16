@@ -1,0 +1,8 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "Get-OrganizationConfig",
+  "status": 200,
+  "reply": {
+    "IsDehydrated": "False"
+  }
+}

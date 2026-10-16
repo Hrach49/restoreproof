@@ -345,7 +345,7 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] [--record <dir>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>]")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph certificate [--vault <file>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] [--record <dir>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
     ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"
@@ -496,6 +496,15 @@ rp_add_exe_test("rpworker graph list needs graph_cert_pfx_base64"
     EXIT_CODE 1 STDOUT "" STDERR "config error: graph_cert_pfx_base64 is not in the vault")
 set_tests_properties(
     "rpworker graph list needs graph_cert_pfx_base64"
+    PROPERTIES FIXTURES_REQUIRED exe-vault)
+# W7.0: graph certificate reads the vault alone, no config.
+rp_add_exe_test("rpworker graph certificate rejects an unknown flag"
+    ARGS graph certificate --config c.json EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker graph certificate needs graph_cert_pfx_base64"
+    ARGS graph certificate --vault ${RP_VAULT_TWO}
+    EXIT_CODE 1 STDOUT "" STDERR "config error: graph_cert_pfx_base64 is not in the vault")
+set_tests_properties(
+    "rpworker graph certificate needs graph_cert_pfx_base64"
     PROPERTIES FIXTURES_REQUIRED exe-vault)
 
 # client check (W4.10) stops before any request in each of these: the

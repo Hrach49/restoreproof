@@ -270,9 +270,62 @@ int run_list(std::span<const std::string_view> args, std::ostream& out, std::ost
 
 } // namespace
 
+namespace {
+
+// `certificate [--vault <file>]` (W7.0): the vault's Graph certificate, opened
+// as the sign-in opens it, its public half alone on `out` and its thumbprint
+// and end date on `err`. No config, no request.
+int run_certificate(std::optional<std::string_view> vault_arg, std::ostream& out, std::ostream& err,
+                    const GraphCommandEnv& env)
+{
+    graph::GraphClientOptions client_options = env.client_options;
+    if (!client_options.logger) {
+        client_options.logger = make_command_logger();
+    }
+    std::optional<graph::ClientCertificate> certificate;
+    try {
+        WipedSecrets held;
+        held.secrets = env.load_secrets(command_vault_path(vault_arg, env.default_vault_path));
+        const auto wall_now = client_options.wall_now ? client_options.wall_now()
+                                                      : std::chrono::system_clock::now();
+        certificate = graph::certificate_from_secrets(held.secrets, wall_now, client_options.logger);
+    } catch (const ConfigError& e) {
+        err << "config error: " << e.what() << '\n';
+        return exit_code::config;
+    }
+    // What `out` holds is a PEM file as it is (`rpworker graph certificate >
+    // worker-graph.pem`); the rest goes to `err`, once the block is out.
+    out << certificate->certificate_pem();
+    out.flush();
+    if (!out) {
+        err << "error: the answer couldn't be written\n";
+        return exit_code::config;
+    }
+    err << std::format("thumbprint {} (SHA-1), expires {:%FT%TZ}\n", certificate->sha1_thumbprint(),
+                       std::chrono::floor<std::chrono::seconds>(certificate->not_after()));
+    return exit_code::ok;
+}
+
+} // namespace
+
 int run_graph_command(std::span<const std::string_view> args, std::ostream& out,
                       std::ostream& err, const GraphCommandEnv& env)
 {
+    if (!args.empty() && args[0] == "certificate") {
+        const std::optional<CommandOptions> options = parse_options(args.subspan(1), {"--vault"});
+        const std::optional<std::string_view> vault = options ? options->value("--vault") : std::nullopt;
+        if (!options || (vault && vault->empty())) {
+            err << kCliUsage;
+            return exit_code::usage;
+        }
+        try {
+            return run_certificate(vault, out, err, env);
+        } catch (...) {
+            // Its message, if it has one, may not be safe to show.
+            err << "error: unexpected failure\n";
+            return exit_code::config;
+        }
+    }
     std::shared_ptr<FixtureRecorder> recorder;
     const int code = run_list(args, out, err, env, recorder);
     return finish_recording(recorder.get(), out, err, code);

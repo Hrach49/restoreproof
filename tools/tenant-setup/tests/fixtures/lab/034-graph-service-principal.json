@@ -1,0 +1,103 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/servicePrincipals(appId='00000003-0000-0000-c000-000000000000')?$select=id,appId,appRoles (appRoles trimmed to 13 roles)",
+  "status": 200,
+  "reply": {
+    "id": "fbceed89-7683-44eb-b600-be7d9857f6b2",
+    "appId": "00000003-0000-0000-c000-000000000000",
+    "appRoles": [
+      {
+        "id": "7ab1d382-f21e-4acd-a863-ba3e13f7da61",
+        "value": "Directory.Read.All",
+        "allowedMemberTypes": [
+          "Application"
+        ]
+      },
+      {
+        "id": "01d4889c-1287-42c6-ac1f-5d1e02578ef6",
+        "value": "Files.Read.All",
+        "allowedMemberTypes": [
+          "Application"
+        ]
+      },
+      {
+        "id": "75359482-378d-4052-8f01-80520e7db3cd",
+        "value": "Files.ReadWrite.All",
+        "allowedMemberTypes": [
+          "Application"
+        ]
+      },
+      {
+        "id": "bd61925e-3bf4-4d62-bc0b-06b06c96d95c",
+        "value": "Files.SelectedOperations.Selected",
+        "allowedMemberTypes": [
+          "Application"
+        ]
+      },
+      {
+        "id": "23c5a9bd-d900-4ecf-be26-a0689755d9e5",
+        "value": "Lists.SelectedOperations.Selected",
+        "allowedMemberTypes": [
+          "Application"
+        ]
+      },
+      {
+        "id": "810c84a8-4a9e-49e6-bf7d-12d183f40d01",
+        "value": "Mail.Read",
+        "allowedMemberTypes": [
+          "Application"
+        ]
+      },
+      {
+        "id": "e2a3a72e-5f79-4c64-b1b1-878b674786c9",
+        "value": "Mail.ReadWrite",
+        "allowedMemberTypes": [
+          "Application"
+        ]
+      },
+      {
+        "id": "b633e1c5-b582-4048-a93e-9f11b44c7e96",
+        "value": "Mail.Send",
+        "allowedMemberTypes": [
+          "Application"
+        ]
+      },
+      {
+        "id": "a82116e5-55eb-4c41-a434-62fe8a61c773",
+        "value": "Sites.FullControl.All",
+        "allowedMemberTypes": [
+          "Application"
+        ]
+      },
+      {
+        "id": "332a536c-c7ef-4017-ab91-336970924f0d",
+        "value": "Sites.Read.All",
+        "allowedMemberTypes": [
+          "Application"
+        ]
+      },
+      {
+        "id": "9492366f-7969-46a4-8d15-ed1a20078fff",
+        "value": "Sites.ReadWrite.All",
+        "allowedMemberTypes": [
+          "Application"
+        ]
+      },
+      {
+        "id": "883ea226-0bf2-4a8f-9f9d-92c9162a727d",
+        "value": "Sites.Selected",
+        "allowedMemberTypes": [
+          "Application"
+        ]
+      },
+      {
+        "id": "df021288-bdef-4463-88db-98f22de89214",
+        "value": "User.Read.All",
+        "allowedMemberTypes": [
+          "Application"
+        ]
+      }
+    ],
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#servicePrincipals(id,appId,appRoles)/$entity"
+  }
+}

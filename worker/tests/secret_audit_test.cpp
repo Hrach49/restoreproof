@@ -661,7 +661,7 @@ TEST_CASE("secret audit J7: a close that fails because the vault can't be read",
 
 // --- K: the commands that read the vault ---------------------------------------------------
 
-TEST_CASE("secret audit K: config check, vault list|test|set|remove, signer public-key and veeam "
+TEST_CASE("secret audit K: config check, vault list|test|set|remove, signer public-key, graph certificate and veeam "
           "list --record on a DPAPI vault of the sentinels",
           "[secret_audit]")
 {
@@ -695,6 +695,13 @@ TEST_CASE("secret audit K: config check, vault list|test|set|remove, signer publ
     REQUIRE_THAT(key.out, ContainsSubstring("-----BEGIN PUBLIC KEY-----"));
     REQUIRE_THAT(key.err, ContainsSubstring("key "));
     lab.collect("signer public-key", key);
+
+    // W7.0: the Graph certificate's public half; the PFX, its password and the key stay in.
+    const Run certificate = cli({"graph", "certificate", "--vault", vault});
+    REQUIRE(certificate.exit_code == rp::exit_code::ok);
+    REQUIRE_THAT(certificate.out, ContainsSubstring("-----BEGIN CERTIFICATE-----"));
+    REQUIRE_THAT(certificate.err, ContainsSubstring("thumbprint "));
+    lab.collect("graph certificate", certificate);
 
     // vault set and remove, the value handed in through the Env.
     const std::string new_password = "Sentinel-Audit-Veeam-Password-2d7f-replaced";

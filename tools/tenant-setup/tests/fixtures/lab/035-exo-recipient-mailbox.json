@@ -1,0 +1,16 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "Get-Recipient -Identity restoretest@RestoreProofLab.onmicrosoft.com",
+  "status": 200,
+  "reply": {
+    "Name": "944cf34b-dce3-4004-943c-25539c6c56cc",
+    "Alias": "restoretest",
+    "RecipientType": "UserMailbox",
+    "RecipientTypeDetails": "UserMailbox",
+    "PrimarySmtpAddress": "restoretest@RestoreProofLab.onmicrosoft.com",
+    "EmailAddresses": [
+      "SIP:restoretest@restoreprooflab.onmicrosoft.com",
+      "SMTP:restoretest@RestoreProofLab.onmicrosoft.com"
+    ]
+  }
+}

@@ -1,0 +1,39 @@
+name: worker-install
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker-install-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    # W7.1: the Worker installer (tools/worker-install). Windows, for PowerShell 7, icacls and
+    # the fake rpworker's .cmd. Nothing here touches %ProgramData%, %ProgramFiles% or the
+    # Service Control Manager: the script runs on a temporary root against tests/fake_rpworker.py
+    # and tests/FakeMachine.psm1.
+    name: Worker installer tests
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: tools/worker-install/tests
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: tools/worker-install/tests/uv.lock
+
+      # The one test that runs the built rpworker.exe needs worker/build/dev/rpworker.exe:
+      # deselected here by its marker, never skipped, and run locally (docs/testing.md).
+      - name: Tests
+        run: uv run --locked pytest -q -m "not worker"

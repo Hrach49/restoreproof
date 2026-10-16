@@ -31,7 +31,9 @@
 #include <rp/outbox_command.hpp>
 #include <rp/service_log.hpp>
 #include <rp/service_recovery.hpp>
+#include <rp/base64.hpp>
 #include <rp/signer.hpp>
+#include <rp/signer_command.hpp>
 #include <rp/test_command.hpp>
 #include <rp/vault.hpp>
 #include <rp/vault_command.hpp>
@@ -40,7 +42,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <filesystem>
+#include <span>
 #include <sstream>
 #include <string>
 #include <variant>
@@ -661,7 +665,7 @@ TEST_CASE("secret audit J7: a close that fails because the vault can't be read",
 
 // --- K: the commands that read the vault ---------------------------------------------------
 
-TEST_CASE("secret audit K: config check, vault list|test|set|remove, signer public-key, graph certificate and veeam "
+TEST_CASE("secret audit K: config check, vault list|test|set|remove, signer public-key and new-key, graph certificate and veeam "
           "list --record on a DPAPI vault of the sentinels",
           "[secret_audit]")
 {
@@ -695,6 +699,31 @@ TEST_CASE("secret audit K: config check, vault list|test|set|remove, signer publ
     REQUIRE_THAT(key.out, ContainsSubstring("-----BEGIN PUBLIC KEY-----"));
     REQUIRE_THAT(key.err, ContainsSubstring("key "));
     lab.collect("signer public-key", key);
+
+    // W7.1: signer new-key --replace into the sentinel vault, on a seed of the
+    // test's own (RFC 8032 test 1's: the audit's key is test 2's), whose three
+    // shapes join the search; the real environment writes the vault.
+    lab.searched.add_base64("new signing key", std::string{rp::test::kSigningKey1Base64});
+    lab.searched.add("new signing seed (base64)",
+                     rp::base64_encode(rp::test::bytes_from_hex(rp::test::kSigningSeed1Hex)));
+    lab.searched.add("new signing seed (hex)", std::string{rp::test::kSigningSeed1Hex});
+    rp::SignerCommandEnv signer_env = rp::default_signer_command_env();
+    signer_env.random_seed = [](std::span<unsigned char, rp::kEd25519SeedBytes> seed) {
+        const std::vector<unsigned char> bytes = rp::test::bytes_from_hex(rp::test::kSigningSeed1Hex);
+        std::copy(bytes.begin(), bytes.end(), seed.begin());
+        return true;
+    };
+    {
+        std::ostringstream new_out;
+        std::ostringstream new_err;
+        const Args new_key_args{"new-key", "--vault", vault, "--replace"};
+        const int new_code = rp::run_signer_command(new_key_args, new_out, new_err, signer_env);
+        const Run new_key{new_code, new_out.str(), new_err.str()};
+        REQUIRE(new_key.exit_code == rp::exit_code::ok);
+        REQUIRE_THAT(new_key.out, ContainsSubstring("-----BEGIN PUBLIC KEY-----"));
+        REQUIRE_THAT(new_key.err, ContainsSubstring("set signing_key_base64 in "));
+        lab.collect("signer new-key --replace", new_key);
+    }
 
     // W7.0: the Graph certificate's public half; the PFX, its password and the key stay in.
     const Run certificate = cli({"graph", "certificate", "--vault", vault});

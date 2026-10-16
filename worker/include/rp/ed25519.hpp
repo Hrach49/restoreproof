@@ -71,4 +71,9 @@ public:
 // The real primitive, over OpenSSL: one object for the process, thread-safe.
 const Ed25519& openssl_ed25519() noexcept;
 
+// W7.1: fills `seed` with 32 bytes of OpenSSL's CSPRNG (RAND_bytes), for
+// `rpworker signer new-key`. False, `seed` untouched, when the library gave
+// none. Never throws.
+bool random_seed(std::span<unsigned char, kEd25519SeedBytes> seed) noexcept;
+
 } // namespace rp

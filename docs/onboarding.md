@@ -110,6 +110,8 @@ grants, the check, and the profile file step 4 takes.
    started RestoreProof
    ```
 
+   On a deployment the installer does all of this (W7.1, `tools/worker-install/Install-RestoreProofWorker.ps1`:
+   it asks for the token and runs `cloud register` itself, printing the Worker's id).
    `rpworker cloud register` does the registration alone, for a service started another way.
    The token is spent there (`POST /v1/workers/register`, C5.5) and removed from the vault in
    the write that stores the API token; it is never typed on a command line. The **`worker_id`**

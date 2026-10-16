@@ -195,8 +195,8 @@ TEST_CASE("parse_config rejects secret-looking keys without echoing the value", 
             "config key \"" + key +
                 "\" looks like a secret; secrets don't belong in config.json. Put it in the "
                 "vault with rpworker vault set <name> instead (veeam_username, "
-                "veeam_password, graph_cert_pfx_base64, graph_cert_password or "
-                "signing_key_base64)");
+                "veeam_password, graph_cert_pfx_base64, graph_cert_password, "
+                "signing_key_base64, cloud_install_token or cloud_api_token)");
     REQUIRE_THAT(e.what(), !ContainsSubstring("SENTINEL"));
 }
 
@@ -330,8 +330,8 @@ TEST_CASE("parse_config rejects a secret-looking key without printing an unsafe 
     REQUIRE(std::string{e.what()} ==
             "config has a key that looks like a secret; secrets don't belong in config.json. Put "
             "it in the vault with rpworker vault set <name> instead (veeam_username, "
-            "veeam_password, graph_cert_pfx_base64, graph_cert_password or "
-            "signing_key_base64)");
+            "veeam_password, graph_cert_pfx_base64, graph_cert_password, "
+            "signing_key_base64, cloud_install_token or cloud_api_token)");
 }
 
 TEST_CASE("parse_config prints a secret-looking key of 64 safe characters", "[config]")

@@ -1,0 +1,12 @@
+{
+  "source": "docs/api/cloud-lab/w5.1-record/record_cloud.py against the Compose stack through Caddy",
+  "request": "POST /v1/results",
+  "status": 400,
+  "headers": {
+    "Content-Type": "application/json",
+    "X-Restoreproof-Api": "1"
+  },
+  "body": {
+    "detail": "hash_mismatch"
+  }
+}

@@ -6,6 +6,7 @@
 
 #include <rp/connector_registry.hpp>
 #include <rp/service_errors.hpp>
+#include <rp/sha256.hpp>
 
 #include <algorithm>
 #include <array>
@@ -36,11 +37,13 @@ constexpr std::string_view kChanged = "changed";
 constexpr std::string_view kUntrusted = "untrusted";
 constexpr std::string_view kCleanOk = "ok";
 constexpr std::string_view kKept = "kept ";
+constexpr std::string_view kFailedRun = "failed ";
 constexpr std::string_view kWaiting = "waiting ";
 // How the outbox's own lines for a run that is never sent, and for one it
 // couldn't read at this pass, end.
 constexpr std::string_view kChangedLine = " changed since it was signed";
 constexpr std::string_view kNotReadLine = " couldn't be read";
+constexpr std::string_view kSent = "sent ";
 
 std::string internal_detail(std::string_view word)
 {
@@ -67,16 +70,25 @@ PipelineReport report_of(const JobRun& run)
     return report;
 }
 
-// A flush's "kept <run>: <word>[; attempt ...]" line's word; empty for any
-// other line.
+// A flush's "kept <run>: <word>[; attempt ...]" or "failed <run>: <word>"
+// line's word; empty for any other line.
 std::string kept_word(std::string_view line)
 {
     const std::size_t colon = line.find(": ");
-    if (!line.starts_with(kKept) || colon == std::string_view::npos) {
+    if (!(line.starts_with(kKept) || line.starts_with(kFailedRun)) ||
+        colon == std::string_view::npos) {
         return {};
     }
     const std::string_view rest = line.substr(colon + 2);
     return std::string{rest.substr(0, rest.find(';'))};
+}
+
+// Whether a job of the document has this run ID.
+bool names(const JobsDocument& document, const std::string& run_id)
+{
+    return std::ranges::any_of(document.jobs, [&run_id](const JobEntry& entry) {
+        return entry.state != JobState::no_run_id && entry.job.run_id == run_id;
+    });
 }
 
 } // namespace
@@ -127,8 +139,15 @@ void ServiceLoop::run()
     next_heartbeat_ = started_;
     env_.logger->info("scheduler started: poll {} s, heartbeat {} s, jobs {}, runs {}, outbox {}",
                       env_.config.poll_interval_s, env_.config.heartbeat_interval_s,
-                      env_.jobs_file ? path_to_utf8(*env_.jobs_file) : std::string{"none"},
+                      env_.jobs_file    ? path_to_utf8(*env_.jobs_file)
+                      : env_.poll_jobs ? std::string{"the Cloud"}
+                                       : std::string{"none"},
                       path_to_utf8(env_.runs_root), path_to_utf8(env_.outbox_root));
+    if (env_.worker_id) {
+        env_.logger->info("cloud: registered as worker {}", *env_.worker_id);
+    }
+    // The token before the record's business, whose close may flush.
+    step([this] { cloud_ok_ = take_token(); });
     step([this] { record_business(); });
     for (;;) {
         if (stopped()) {
@@ -163,16 +182,30 @@ void ServiceLoop::send_heartbeat()
         return;
     }
     next_heartbeat_ = now + seconds{env_.config.heartbeat_interval_s};
+    // W5.1 point 6: no token, no heartbeat; a refused one still goes (the
+    // heartbeat is the Cloud's only word of a revoked Worker).
+    std::string token;
+    if (env_.api_token) {
+        const std::optional<std::string> held = env_.api_token();
+        if (!held || held->empty()) {
+            return;
+        }
+        token = *held;
+    }
     LoopHeartbeat beat;
     beat.last_error = last_error_;
     beat.last_error_at = last_error_at_;
     beat.outbox_depth = env_.outbox_depth();
     beat.uptime_s = static_cast<std::uint64_t>(duration_cast<seconds>(now - started_).count());
-    const std::string word = env_.heartbeat(beat);
+    const std::string word = env_.heartbeat(beat, token);
     // Never the last error it reports, and nothing is retried before the
     // next interval.
     if (!word.empty() && word != heartbeat_word_) {
-        env_.logger->warn("heartbeat failed: {}", word);
+        if (word == kHeartbeatNotCloud) {
+            env_.logger->warn("heartbeat: the Cloud's answer has no X-RestoreProof-API: 1");
+        } else {
+            env_.logger->warn("heartbeat failed: {}", word);
+        }
     }
     heartbeat_word_ = word;
 }
@@ -180,6 +213,7 @@ void ServiceLoop::send_heartbeat()
 void ServiceLoop::poll()
 {
     bool free = false;
+    step([this] { cloud_ok_ = take_token(); });
     step([this, &free] { free = record_business(); });
     if (free) {
         run_jobs();
@@ -582,19 +616,172 @@ bool ServiceLoop::take_record(RunningRecord record)
 JobsDocument ServiceLoop::read_jobs()
 {
     if (!env_.jobs_file) {
-        return {};
+        return env_.poll_jobs && cloud_ok_ ? cloud_jobs() : JobsDocument{};
     }
     JobsDocument document = env_.read_jobs(*env_.jobs_file);
+    note_jobs_fault(*env_.jobs_file, document);
+    return document;
+}
+
+// A document that couldn't be read is said once per fault.
+void ServiceLoop::note_jobs_fault(const std::filesystem::path& file, const JobsDocument& document)
+{
     if (document.state == JobsState::error) {
         const JobsFault fault = document.fault.value_or(JobsFault::unreadable);
         trouble(service_error::kJobsUnreadable);
         if (jobs_fault_ != fault) {
-            env_.logger->warn("{}", jobs_error_line(*env_.jobs_file, fault));
+            env_.logger->warn("{}", jobs_error_line(file, fault));
         }
         jobs_fault_ = fault;
     } else {
         jobs_fault_.reset();
     }
+}
+
+// The file the jobs came from, as a line names it.
+const std::filesystem::path& ServiceLoop::jobs_source() const
+{
+    return env_.jobs_file ? *env_.jobs_file : env_.kept_jobs_file;
+}
+
+// W5.1 point 6: this poll's token. False: nothing goes to the Cloud now.
+bool ServiceLoop::take_token()
+{
+    if (!env_.api_token) {
+        token_.clear();
+        return true;
+    }
+    const std::optional<std::string> held = env_.api_token();
+    if (!held || held->empty()) {
+        token_.clear();
+        trouble(service_error::kNotRegistered);
+        const Steady now = env_.now();
+        if (!no_token_said_ || now - *no_token_said_ >= kServiceLineAgain) {
+            no_token_said_ = now;
+            env_.logger->warn("cloud: cloud_api_token is not in the vault; nothing is sent to the "
+                              "Cloud (rpworker cloud register)");
+        }
+        return false;
+    }
+    token_ = *held;
+    if (refused_sha_.empty()) {
+        return true;
+    }
+    if (sha256_hex(token_) == refused_sha_) {
+        trouble(service_error::kTokenRefused);
+        return false;
+    }
+    refused_sha_.clear();
+    token_is_new_ = true;
+    env_.logger->info("cloud: a new API token; polling again");
+    return true;
+}
+
+// A 401 of the poll or an upload: nothing more with this token.
+void ServiceLoop::refuse_token()
+{
+    cloud_ok_ = false;
+    trouble(service_error::kTokenRefused);
+    if (!env_.api_token || !refused_sha_.empty()) {
+        return;
+    }
+    refused_sha_ = sha256_hex(token_);
+    env_.logger->warn("cloud: the Cloud refused the API token (401); nothing is polled or "
+                      "uploaded until the vault holds another token");
+}
+
+// A line of the poll's, said once until a poll works or says another.
+void ServiceLoop::say_cloud(const std::string& line)
+{
+    trouble(service_error::kJobsUnreadable);
+    if (line != cloud_said_) {
+        env_.logger->warn("{}", line);
+    }
+    cloud_said_ = line;
+}
+
+// J2's question without its line: the run is made, or being made.
+bool ServiceLoop::settled(const std::string& run_id) const
+{
+    return env_.outbox_holds(run_id) != OutboxHolds::none || env_.run_folder_exists(run_id) ||
+           env_.run_done(run_id);
+}
+
+// A job that ended before its run line in this process holds the kept
+// document no longer: it is tried again from not_started_, beside the
+// Cloud's next answer (the W5.1 code review's finding 2).
+bool ServiceLoop::has_unsettled(const JobsDocument& document) const
+{
+    return std::ranges::any_of(document.jobs, [this](const JobEntry& entry) {
+        return entry.state != JobState::no_run_id && !settled(entry.job.run_id) &&
+               !not_started_.contains(entry.job.run_id);
+    });
+}
+
+// W5.1 point 7: the kept document while a job of it isn't settled and it is
+// younger than kKeptJobsFor; else the Cloud's answer, kept.
+JobsDocument ServiceLoop::cloud_jobs()
+{
+    JobsDocument kept = env_.read_jobs(env_.kept_jobs_file);
+    const std::optional<std::chrono::system_clock::duration> age = env_.kept_jobs_age();
+    // An age below zero is a clock stepped back: the Cloud is asked.
+    if (kept.state == JobsState::read && age && *age >= std::chrono::system_clock::duration::zero() &&
+        *age < kKeptJobsFor && has_unsettled(kept)) {
+        jobs_fault_.reset();
+        return kept;
+    }
+    if (kept.state == JobsState::error) {
+        note_jobs_fault(env_.kept_jobs_file, kept);
+    }
+    if (kept.state != JobsState::no_file) {
+        env_.drop_jobs();
+    }
+    return polled_jobs(env_.poll_jobs(token_));
+}
+
+JobsDocument ServiceLoop::polled_jobs(const CloudJobsAnswer& answer)
+{
+    if (!answer.status) {
+        say_cloud(std::format("jobs: the Cloud couldn't be reached ({})", answer.word));
+        return {};
+    }
+    const int status = *answer.status;
+    if (status == 401) {
+        refuse_token();
+        return {};
+    }
+    if (status >= 200 && status <= 299 && answer.kind != CloudAnswerKind::cloud) {
+        say_cloud(answer.kind == CloudAnswerKind::not_cloud
+                      ? std::string{"jobs: the Cloud's answer has no X-RestoreProof-API: 1; not read"}
+                      : std::format("jobs: the Cloud's answer is of another contract "
+                                    "(X-RestoreProof-API: {}); not read",
+                                    answer.other_value));
+        return {};
+    }
+    if (status != 200) {
+        say_cloud(std::format("jobs: the Cloud answered http_{}", status));
+        return {};
+    }
+    if (answer.body.size() > kMaxJobsFileBytes) {
+        say_cloud("jobs error: the Cloud's answer: over 1 MiB");
+        return {};
+    }
+    JobsDocument document;
+    if (env_.keep_jobs(answer.body)) {
+        document = env_.read_jobs(env_.kept_jobs_file);
+    } else {
+        env_.logger->warn("jobs error: {}: couldn't be written; the answer is run from memory",
+                          path_to_utf8(env_.kept_jobs_file));
+        document = parse_jobs(answer.body);
+    }
+    if (document.state == JobsState::error) {
+        cloud_said_.clear();
+        note_jobs_fault(env_.kept_jobs_file, document);
+        env_.drop_jobs();
+        return document;
+    }
+    cloud_said_.clear();
+    jobs_fault_.reset();
     return document;
 }
 
@@ -611,10 +798,8 @@ void ServiceLoop::forget_jobs(const JobsDocument& document)
         jobs_sha_ = document.sha256;
         no_run_id_said_.clear();
     }
-    const auto named = [&document](const std::string& run_id) {
-        return std::ranges::any_of(document.jobs, [&run_id](const JobEntry& entry) {
-            return entry.state != JobState::no_run_id && entry.job.run_id == run_id;
-        });
+    const auto named = [this, &document](const std::string& run_id) {
+        return not_started_.contains(run_id) || names(document, run_id);
     };
     std::erase_if(skipped_said_, [&named](const std::string& run_id) { return !named(run_id); });
     std::erase_if(not_started_said_,
@@ -627,6 +812,7 @@ void ServiceLoop::run_jobs()
 {
     JobsDocument document;
     step([this, &document] { document = read_jobs(); });
+    step([this, &document] { prune_not_started(document); });
     forget_jobs(document);
     for (const JobEntry& entry : document.jobs) {
         if (stopped() || record_) {
@@ -635,6 +821,33 @@ void ServiceLoop::run_jobs()
         step([this, &entry, &document] { take_job(entry, document); });
         step([this] { send_heartbeat(); });
     }
+    // Then the jobs that ended before their run line and that this document
+    // doesn't name, oldest first; copied, since a run of one changes the map.
+    std::vector<JobEntry> again;
+    for (const auto& [run_id, held] : not_started_) {
+        if (!names(document, run_id)) {
+            again.push_back(held.entry);
+        }
+    }
+    for (const JobEntry& entry : again) {
+        if (stopped() || record_) {
+            return;
+        }
+        step([this, &entry, &document] { take_job(entry, document); });
+        step([this] { send_heartbeat(); });
+    }
+}
+
+// A job that ended before its run line is tried again until it is settled,
+// the document names it again (and runs it), or kKeptJobsFor has passed
+// since it first did: by then the Cloud has requeued or expired it.
+void ServiceLoop::prune_not_started(const JobsDocument& document)
+{
+    const Steady now = env_.now();
+    std::erase_if(not_started_, [&](const auto& held) {
+        return names(document, held.first) || settled(held.first) ||
+               now - held.second.first_at >= kKeptJobsFor;
+    });
 }
 
 // Point 4, first fit.
@@ -645,7 +858,7 @@ void ServiceLoop::take_job(const JobEntry& entry, const JobsDocument& document)
         trouble(service_error::kJobInvalid);
         if (no_run_id_said_.insert(entry.position).second) {
             env_.logger->warn("job {} of {}: no usable run_id; not run", entry.position,
-                              path_to_utf8(*env_.jobs_file));
+                              path_to_utf8(jobs_source()));
         }
         return;
     }
@@ -677,7 +890,7 @@ void ServiceLoop::take_job(const JobEntry& entry, const JobsDocument& document)
         }
         return;
     }
-    run_job(job);
+    run_job(entry);
 }
 
 // J2: the run is already there.
@@ -689,6 +902,8 @@ bool ServiceLoop::skip_job(const std::string& run_id)
         why = "already queued";
     } else if (holds == OutboxHolds::sent) {
         why = "already sent";
+    } else if (holds == OutboxHolds::failed) {
+        why = "already failed";
     } else if (env_.run_folder_exists(run_id)) {
         why = "a run folder is already there";
     } else if (env_.run_done(run_id)) {
@@ -704,8 +919,9 @@ bool ServiceLoop::skip_job(const std::string& run_id)
 }
 
 // J4 (point 5).
-void ServiceLoop::run_job(const Job& job)
+void ServiceLoop::run_job(const JobEntry& entry)
 {
+    const Job& job = entry.job;
     const std::string& id = job.run_id;
     // A valid job has its profile (the reader's rule); the record carries it.
     if (!job.client || !take_record(new_run_record(id, job.client_id, *job.client, env_.wall_now()))) {
@@ -722,6 +938,11 @@ void ServiceLoop::run_job(const Job& job)
         trouble(service_error::kJobNotStarted);
         if (not_started_said_.emplace(id, run.exit_code).second) {
             env_.logger->warn("run {}: ended before its run line; nothing was done", id);
+        }
+        // A jobs file is read again at every poll and is its own retry; the
+        // Cloud's answer names a job once.
+        if (!env_.jobs_file) {
+            not_started_.try_emplace(id, NotStarted{entry, env_.now()});
         }
         settle_record(false);
         return;
@@ -790,13 +1011,18 @@ JobCallbacks ServiceLoop::callbacks()
 // Point 10: one pass under the flush mutex, its lines the log's.
 void ServiceLoop::flush()
 {
-    if (stopped()) {
+    if (stopped() || !cloud_ok_) {
         return;
     }
-    const std::optional<FlushReport> report = env_.flush(env_.stop_requested);
+    const std::optional<FlushReport> report =
+        env_.flush(env_.stop_requested, token_, token_is_new_);
     if (!report) {
         env_.logger->debug("flush skipped: another flush is running");
         return;
+    }
+    token_is_new_ = false;
+    if (report->token_refused) {
+        refuse_token();
     }
     // A run that is never sent, and one that couldn't be read: once per run
     // and reason for as long as every pass names it, not at every pass.
@@ -807,6 +1033,15 @@ void ServiceLoop::flush()
     };
     for (const std::string& line : report->out) {
         const std::string word = kept_word(line);
+        // W5.1 point 5: said once until a run is sent.
+        if (word == upload_code::kNotCloud && !upload_not_cloud_said_) {
+            upload_not_cloud_said_ = true;
+            env_.logger->warn("cloud: an upload's answer is not a RestoreProof Cloud's (no "
+                              "X-RestoreProof-API: 1); the run stays queued");
+        }
+        if (line.starts_with(kSent)) {
+            upload_not_cloud_said_ = false;
+        }
         const bool lasting =
             word == service_error::kFolderChanged || word == service_error::kNotRead;
         if (lasting && said_before(line)) {

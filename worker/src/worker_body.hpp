@@ -101,4 +101,12 @@ ServiceLoopEnv make_worker_loop_env(const std::shared_ptr<ServiceContext>& conte
 // the stop.
 ServiceBody make_worker_body(WorkerBodyOptions options = {});
 
+// `rpworker service start`'s first start (W5.1, docs/decisions.md 2026-10-15,
+// point 2): rp::first_start on the config the installed service names (its
+// command line's --config, else the default) and the default vault. A
+// service the SCM can't read the setup of is left to the start's own answer
+// (0, nothing done); a default path Windows can't resolve is "config error:
+// <what()>", 1.
+int service_first_start(std::ostream& out, std::ostream& err);
+
 } // namespace rp

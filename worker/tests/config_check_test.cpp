@@ -39,8 +39,10 @@ const std::string kUsage =
     "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
     "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "
     "[--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | "
-    "rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | "
+    "rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] | "
     "rpworker outbox list [--outbox <root>] | "
+    "rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] "
+    "[--record <dir>] | "
     "rpworker signer public-key [--vault <file>] | "
     "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | "
     "rpworker service install [--config <path>] | rpworker service uninstall|start|stop | "
@@ -71,13 +73,15 @@ std::string utf8(const std::filesystem::path& path)
     return {text.begin(), text.end()};
 }
 
-// The masks `config check` prints for each of the five secrets.
+// The masks `config check` prints for each of the seven secrets.
 struct SecretMasks {
     std::string_view user;
     std::string_view password;
     std::string_view pfx;
     std::string_view pfx_password;
     std::string_view signing_key = "(not set)";
+    std::string_view install_token = "(not set)";
+    std::string_view api_token = "(not set)";
 };
 
 constexpr SecretMasks kNoSecrets{"(not set)", "(not set)", "(not set)", "(not set)"};
@@ -92,7 +96,7 @@ std::string expected_settings(const std::filesystem::path& path, std::string_vie
                               std::string_view tsa_url = "(not set)",
                               std::string_view tsa_ca_file = "(not set)",
                               std::string_view cloud_ca_file = "(not set)",
-                              std::string_view jobs_file = "(not set)")
+                              std::string_view jobs_file = "(not set: the jobs come from the Cloud)")
 {
     return "config file: " + utf8(path) + "\n" +
            "cloud_url                 https://cloud.example.invalid\n"
@@ -128,7 +132,9 @@ std::string expected_secrets(const std::filesystem::path& vault, const SecretMas
            "veeam_password            " + std::string{secrets.password} + "\n" +
            "graph_cert_pfx_base64     " + std::string{secrets.pfx} + "\n" +
            "graph_cert_password       " + std::string{secrets.pfx_password} + "\n" +
-           "signing_key_base64        " + std::string{secrets.signing_key} + "\n";
+           "signing_key_base64        " + std::string{secrets.signing_key} + "\n" +
+           "cloud_install_token       " + std::string{secrets.install_token} + "\n" +
+           "cloud_api_token           " + std::string{secrets.api_token} + "\n";
 }
 
 struct Run {
@@ -546,7 +552,8 @@ TEST_CASE("rpworker config check prints the Cloud's CA file when it is set",
     REQUIRE(result.exit_code == 0);
 }
 
-// W4.8: the stub job source. Its file needn't be there for the check.
+// W4.8: the stub job source. Its file needn't be there for the check. Without
+// it the jobs come from the Cloud (W5.1), which the line says.
 TEST_CASE("rpworker config check prints the jobs file when it is set, there or not",
           "[config_check][jobs]")
 {

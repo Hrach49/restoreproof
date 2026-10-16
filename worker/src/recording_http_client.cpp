@@ -54,9 +54,10 @@ constexpr std::array<UnscrubbedRule, 2> kUnscrubbedRules{{
 constexpr std::array<std::string_view, 2> kDownloadUrlKeys{"@microsoft.graph.downloadUrl",
                                                            "@content.downloadUrl"};
 
-// The response headers a fixture keeps, spelled as written.
-constexpr std::array<std::string_view, 3> kKeptHeaders{"Content-Type", "Retry-After",
-                                                       "WWW-Authenticate"};
+// The response headers a fixture keeps, spelled as written. The last is the
+// Cloud's contract header (W5.1), which the Worker reads on every 2xx.
+constexpr std::array<std::string_view, 4> kKeptHeaders{"Content-Type", "Retry-After",
+                                                       "WWW-Authenticate", "X-RestoreProof-API"};
 constexpr std::string_view kLocation = "Location";
 
 constexpr char ascii_lower(char c) noexcept

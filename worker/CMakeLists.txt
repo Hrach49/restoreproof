@@ -71,6 +71,10 @@ add_library(rpcore STATIC
     src/office_v1.cpp
     src/outbox.cpp
     src/outbox_command.cpp
+    src/cloud_api.cpp
+    src/cloud_command.cpp
+    src/http_exchange.cpp
+    src/host_name.cpp
     src/recording_http_client.cpp
     src/redact.cpp
     src/restore_command.cpp
@@ -229,6 +233,9 @@ add_executable(rptests
     tests/name_key_test.cpp
     tests/office_v1_test.cpp
     tests/outbox_command_test.cpp
+    tests/cloud_api_test.cpp
+    tests/cloud_command_test.cpp
+    tests/upload_wire_test.cpp
     tests/outbox_test.cpp
     tests/recording_http_client_test.cpp
     tests/redact_test.cpp
@@ -338,7 +345,7 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>]")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] [--record <dir>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
     ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"
@@ -380,6 +387,7 @@ set(RP_VAULT_USER ${RP_EXE_VAULTS}/user.bin)       # veeam_username
 set(RP_VAULT_TWO ${RP_EXE_VAULTS}/two.bin)         # veeam_username, veeam_password
 set(RP_VAULT_FULL ${RP_EXE_VAULTS}/full.bin)       # those, graph_cert_pfx_base64, signing_key_base64
 set(RP_VAULT_EMPTY ${RP_EXE_VAULTS}/empty.bin)     # nothing
+set(RP_VAULT_TOKEN ${RP_EXE_VAULTS}/token.bin)     # cloud_api_token
 set(RP_VAULT_MISSING ${RP_EXE_VAULTS}/no-such-vault.bin)
 function(rp_add_vault_setup name vault secret)
     cmake_parse_arguments(PARSE_ARGV 3 T "" "AFTER" "")
@@ -403,6 +411,7 @@ rp_add_vault_setup("rpworker vault set stores graph_cert_pfx_base64 (full)" ${RP
 rp_add_vault_setup("rpworker vault set stores signing_key_base64 (full)" ${RP_VAULT_FULL} signing_key_base64
     AFTER "rpworker vault set stores graph_cert_pfx_base64 (full)")
 rp_add_vault_setup("rpworker vault set stores veeam_username (empty)" ${RP_VAULT_EMPTY} veeam_username)
+rp_add_vault_setup("rpworker vault set stores cloud_api_token (token)" ${RP_VAULT_TOKEN} cloud_api_token)
 rp_add_exe_test("rpworker vault remove takes veeam_username out (empty)"
     ARGS vault remove veeam_username --vault ${RP_VAULT_EMPTY}
     EXIT_CODE 0 STDOUT "removed veeam_username from ${RP_VAULT_EMPTY}" STDERR "")
@@ -413,9 +422,9 @@ rp_add_exe_test("rpworker vault without a subcommand prints usage"
     ARGS vault EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker vault set needs a name"
     ARGS vault set --vault ${RP_VAULT_MISSING} EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
-rp_add_exe_test("rpworker vault set takes one of the five names"
+rp_add_exe_test("rpworker vault set takes one of the seven names"
     ARGS vault set RP_VEEAM_USERNAME --vault ${RP_VAULT_MISSING} EXIT_CODE 64 STDOUT ""
-    STDERR "usage error: the name must be one of veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64")
+    STDERR "usage error: the name must be one of veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64, cloud_install_token, cloud_api_token")
 rp_add_exe_test("rpworker vault set refuses an empty value from stdin"
     ARGS vault set veeam_password --vault ${RP_VAULT_MISSING} STDIN ${RP_EXE_VAULTS}/empty.txt
     EXIT_CODE 1 STDOUT "" STDERR "vault error: the value is empty")
@@ -680,22 +689,35 @@ rp_add_exe_test("rpworker outbox list rejects a word too many"
     ARGS outbox list ${RP_OUTBOX_EXE}/empty-root EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker outbox list --outbox needs a root"
     ARGS outbox list --outbox EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
-rp_add_exe_test("rpworker outbox flush rejects --vault"
-    ARGS outbox flush --vault ${RP_VAULT_MISSING} EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker outbox flush rejects --vault twice"
+    ARGS outbox flush --vault ${RP_VAULT_MISSING} --vault ${RP_VAULT_MISSING} EXIT_CODE 64 STDOUT ""
+    STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker test --outbox needs --evidence"
     ARGS test --outbox ${RP_OUTBOX_EXE}/empty-root EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker outbox list on an empty root"
     ARGS outbox list --outbox ${RP_OUTBOX_EXE}/empty-root
-    EXIT_CODE 0 STDOUT "0 queued, 0 sent" STDERR "")
+    EXIT_CODE 0 STDOUT "0 queued, 0 sent, 0 failed" STDERR "")
 rp_add_exe_test("rpworker outbox list on a root that isn't there"
     ARGS outbox list --outbox ${RP_OUTBOX_EXE}/no-such-root
-    EXIT_CODE 0 STDOUT "0 queued, 0 sent" STDERR "")
+    EXIT_CODE 0 STDOUT "0 queued, 0 sent, 0 failed" STDERR "")
 rp_add_exe_test("rpworker outbox flush reports a missing config file"
     ARGS outbox flush --config no-such-config.json --outbox ${RP_OUTBOX_EXE}/empty-root
     EXIT_CODE 1 STDOUT "" STDERR "config error: no-such-config.json: cannot read config file")
+# W5.1: the flush reads the API token from the vault before anything else.
+rp_add_exe_test("rpworker outbox flush without an API token sends nothing"
+    ARGS outbox flush --config ${RP_OUTBOX_EXE}/config.json --outbox ${RP_OUTBOX_EXE}/empty-root
+    --vault ${RP_VAULT_USER}
+    EXIT_CODE 1 STDOUT ""
+    STDERR "outbox error: cloud_api_token is not in the vault; nothing was sent (rpworker cloud register)")
+# With a token and nothing queued, the flush asks no one (main's test before
+# W5.1, which read no vault).
 rp_add_exe_test("rpworker outbox flush with nothing queued"
     ARGS outbox flush --config ${RP_OUTBOX_EXE}/config.json --outbox ${RP_OUTBOX_EXE}/empty-root
-    EXIT_CODE 0 STDOUT "0 queued, 0 sent" STDERR "")
+    --vault ${RP_VAULT_TOKEN}
+    EXIT_CODE 0 STDOUT "0 queued, 0 sent, 0 failed" STDERR "")
+set_tests_properties("rpworker outbox flush without an API token sends nothing"
+    "rpworker outbox flush with nothing queued"
+    PROPERTIES FIXTURES_REQUIRED exe-vault)
 
 # `rpworker service` (W4.7). No test here names install, uninstall, start or
 # stop: with valid arguments they would act on this machine's real service.

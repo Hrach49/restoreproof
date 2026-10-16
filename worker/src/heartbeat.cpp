@@ -1,6 +1,7 @@
 #include "heartbeat.hpp"
 
 #include <rp/canonical_json.hpp>
+#include <rp/cloud_api.hpp>
 #include <rp/uploader.hpp>
 
 #include <nlohmann/json.hpp>
@@ -65,12 +66,13 @@ std::string heartbeat_body(const Heartbeat& heartbeat)
 }
 
 HeartbeatAnswer send_heartbeat(IHttpClient& http, std::string_view cloud_url,
-                               const Heartbeat& heartbeat)
+                               std::string_view token, const Heartbeat& heartbeat)
 {
     try {
         HttpRequest request;
         request.method = HttpMethod::post;
         request.url = cloud_endpoint(std::string{cloud_url}, kHeartbeatPath);
+        request.headers["Authorization"] = bearer(token);
         request.body = heartbeat_body(heartbeat);
         request.content_type = "application/json";
         request.timeout = kHeartbeatTimeout;
@@ -79,7 +81,7 @@ HeartbeatAnswer send_heartbeat(IHttpClient& http, std::string_view cloud_url,
         request.max_body_bytes = kMaxHeartbeatAnswerBytes;
         const HttpResponse response = http.send(request);
         if (response.status >= 200 && response.status <= 299) {
-            return {true, {}};
+            return {true, {}, cloud_answer_kind(response) != CloudAnswerKind::cloud};
         }
         if (!is_status(response.status)) {
             return {false, std::string{heartbeat_code::kInternal}};

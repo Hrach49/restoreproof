@@ -16,6 +16,8 @@
 #include <filesystem>
 #include <functional>
 #include <iosfwd>
+#include <optional>
+#include <string>
 #include <span>
 #include <string_view>
 
@@ -62,10 +64,23 @@ struct ServiceCommandEnv {
     std::function<void(std::chrono::milliseconds time)> sleep;
     // Null: std::chrono::steady_clock::now.
     std::function<std::chrono::steady_clock::time_point()> now;
+    // W5.1 (docs/decisions.md 2026-10-15, point 2): `start`'s first start,
+    // run before the start is sent; its lines go to the two streams and an
+    // answer other than 0 is `start`'s, nothing asked of the SCM. Null:
+    // nothing. default_service_command_env() sets rp::service_first_start
+    // (src/worker_body.hpp): rp::first_start on the installed service's
+    // config and the default vault.
+    std::function<int(std::ostream& out, std::ostream& err)> first_start;
 };
 
-// The real environment: every member null but `body`, the scheduler loop.
+// The real environment: every member null but `body`, the scheduler loop, and
+// `first_start`.
 ServiceCommandEnv default_service_command_env();
+
+// The --config path an installed service's command line names, as `install`
+// wrote it: `"<exe>" service run --config "<path>"`; nullopt for a command
+// line without one, or of any other shape (the default config is the one).
+std::optional<std::string> service_config_argument(std::string_view command_line);
 
 // `rpworker service ...`. `args` is what follows "service", in UTF-8. Each
 // subcommand prints its answer on `out` and its one "service error: ..." line

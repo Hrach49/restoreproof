@@ -56,7 +56,7 @@ without `jobs_file` the service gets no jobs.
 | `tsa_url` | no | (not set: `http://timestamp.digicert.com`) | an `http://` or `https://` URL, no user name, password, query or fragment; needs `tsa_ca_file` | The RFC 3161 timestamp authority `rpworker test --evidence` asks (W4.4). Plain HTTP is allowed for this key alone: see "The timestamp authority" below. |
 | `tsa_ca_file` | no | (not set: the embedded DigiCert root) | absolute path of a readable file | PEM file with the certificate(s) a timestamp token must chain to. Without it, the root embedded from `shared/tsa/tsa-ca.pem`. |
 | `cloud_ca_file` | no | (not set) | absolute path of a readable PEM file that holds at least one certificate | PEM file with the certificate(s) `cloud_url`'s server certificate must chain to, trusted for the Cloud instead of the Windows certificate store (W4.6): for a Cloud behind a private CA. `cloud_url` stays `https://`, the host name is still checked, and TLS verification can't be turned off. See "`rpworker outbox`". |
-| `jobs_file` | no | (not set) | absolute path; the file needn't exist: see below | The service's stub job source (W4.8): a `restoreproof.jobs.v1` document the service reads whole at every poll, until W5.1 asks the Cloud instead. Without the key the service runs no job. See "The jobs file". |
+| `jobs_file` | no | (not set) | absolute path; the file needn't exist: see below | A lab's job source (W4.8): a `restoreproof.jobs.v1` document the service reads whole at every poll in place of the Cloud. Without the key (a deployment) the service asks `GET <cloud_url>/v1/jobs` (W5.1). See "The jobs file" and "The Cloud as the job source". |
 | `screenshots_enabled` | no | `false` | `true` or `false`: see below | The client's screenshot setting: whether a run that writes a run folder asks for a picture of Veeam's restore session. Off by default. In the service a job's own `screenshots_enabled` replaces it for that run. |
 
 At least one of `sample_mail`, `sample_sp` and `sample_od` must be above 0.
@@ -300,8 +300,8 @@ a setting. A key such as `graph_cert_thumbprint` is refused only as unknown.
 Since W4.5 (`docs/decisions.md` 2026-10-07, W4.5) the Worker's secrets live in the **vault**,
 `%ProgramData%\RestoreProof\vault.bin`, and nowhere else: no command, connector or client reads
 a secret from an environment variable or a file, and the `RP_*` variables of W1.2 to W4.3 are
-gone. The vault holds five named values, the names defined once in
-`worker/include/rp/secrets.hpp`:
+gone. The vault holds seven named values (five since W4.5, the Cloud's two tokens since W5.1),
+the names defined once in `worker/include/rp/secrets.hpp`:
 
 | Name | What it is for |
 |---|---|
@@ -310,15 +310,22 @@ gone. The vault holds five named values, the names defined once in
 | `graph_cert_pfx_base64` | The Worker app's certificate with its private key: the PFX file as one line of standard Base64. See "Microsoft Graph app" below. |
 | `graph_cert_password` | The PFX's password. Absent only if the PFX has none. |
 | `signing_key_base64` | The Worker's Ed25519 signing key (W4.3): one line of standard Base64 of the private key's PKCS#8 DER. See "The signing key" below. |
+| `cloud_install_token` | The install token `manage.py create-worker-token` printed once (W5.1): set by the operator, spent and removed by `rpworker cloud register` (or the first `rpworker service start`). |
+| `cloud_api_token` | The API token the Cloud answered the registration with (W5.1): written by `rpworker cloud register`; sent as `Authorization: Bearer` on the poll, the upload and the heartbeat, and nowhere else. |
 
 The user name, `veeam_username`, is a name and no secret value: it is in Veeam's own session
 list and in the service's `waiting for Veeam` line, and `rp::secret_values` leaves it out.
-The other four never reach anything the Worker writes, which W4.9's secret audit holds every
+The other six never reach anything the Worker writes (the API token's one place is the
+`Authorization` header of a request to `cloud_url`), which W4.9's secret audit holds every
 path to (`docs/testing.md`, "The secret audit (W4.9)").
 
 Which names a command needs depends on the command: `veeam list` the first two, `graph list`
 the certificate's two, `restore` and `test` the first four, `test --evidence` and `signer
-public-key` the signing key too, `config check` none (it says which are there). A name that
+public-key` the signing key too, `cloud register` the install token and the signing key,
+`outbox flush` the API token alone, the service all of them (the API token read at each use, so
+one registered while it runs is used at the next poll), `config check` none (it says which are
+there). A vault that holds a W5.1 name is refused by an older Worker ("a name that isn't one of
+the ... secrets"): the upgrade is one way. A name that
 isn't in the vault is `config error: <name> is not in the vault` (for the PFX's password,
 `config error: graph_cert_password is not in the vault, and the PFX in graph_cert_pfx_base64
 needs a password`; for the key, `config error: signing_key_base64 is not in the vault;
@@ -565,7 +572,7 @@ signing_key_base64        **** (set)
 Without `veeam_ca_file` its line reads `veeam_ca_file             (not set)`, and likewise
 `veeam_cert_sha256`, `tsa_url`, `tsa_ca_file`, `cloud_ca_file` and `jobs_file` (W4.8) without
 their keys, and each of the eight client keys of a config that has none (W4.10: the service's,
-whose jobs carry their client). `jobs_file` prints the path as the file gives it, whether or not a file is there.
+whose jobs carry their client). `jobs_file` prints the path as the file gives it, whether or not a file is there, and without the key `(not set: the jobs come from the Cloud)` (W5.1).
 `screenshots_enabled` always has a line: `false` when the file doesn't set it.
 
 A secret prints only as `**** (set)` or `(not set)`: never any character of its value, nor its
@@ -1524,13 +1531,18 @@ is. One line on stderr, the status unchanged, an exit code of 0 becoming 1:
 ## `rpworker outbox`
 
 ```
-rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>]
+rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>]
 rpworker outbox list [--outbox <root>]
 ```
 
 Uploads the queued runs and shows the queue (W4.6; `docs/verification.md`, "The outbox").
-`<root>` defaults to `%ProgramData%\RestoreProof` (so `outbox\` and `sent\` under it). Neither
-command reads the vault: until W5.1 the upload carries no credential.
+`<root>` defaults to `%ProgramData%\RestoreProof` (so `outbox\`, `sent\` and, since W5.1,
+`failed\` under it). `flush` uses one name of the vault, `cloud_api_token`, which every upload
+carries as `Authorization: Bearer` (W5.1); the vault is decrypted whole, so every other value is
+wiped from memory at once, and the token (the command's copy and the uploader's) when the
+command ends; without it: `outbox error: cloud_api_token is not in
+the vault; nothing was sent (rpworker cloud register)`, exit 1, nothing tried. `list` reads no
+vault.
 
 ### `outbox flush`
 
@@ -1550,12 +1562,35 @@ stdout, one line per run and then the counts:
 | `kept <run_id>: folder_changed` | a file isn't what the run signed; never sent (below) |
 | `kept <run_id>: not_read` | a file of the folder is there but couldn't be opened just now (another process holds it); nothing is recorded, and the next flush tries again |
 | `moved <run_id>` | uploaded by an earlier flush that couldn't move it; moved now |
-| `<n> queued, <m> sent` | what is under `outbox\` and `sent\` afterwards |
+| `failed <run_id>: upload_http_<status>` | the Cloud refused the run for good (400, 404, 409, 415, 422; W5.1): moved whole to `failed\<run_id>`, never sent again |
+| `moved <run_id> to failed` | refused for good by an earlier flush that couldn't move it; moved now, not sent |
+| `kept <run_id>: upload_http_<status>` | refused for good, and the move to `failed\` failed (its `outbox error` line says so) |
+| `<n> queued, <m> sent, <k> failed` | what is under `outbox\`, `sent\` and `failed\` afterwards |
 
-`<code>` is `upload_http_<status>` (any answer but 202), `upload_unreachable` (no connection,
-a certificate the Worker doesn't trust, a connection lost mid-request), `upload_timeout` (no
-answer in 120 s) or `upload_internal`. The waits are 1, 2, 4, 8, 16 and 32 minutes, then one
-hour, for as long as it takes.
+`<code>` is `upload_http_<status>` (any answer but the Cloud's 202), `upload_not_cloud` (a 2xx
+without `X-RestoreProof-API: 1`, or with another value: a proxy or a wrong `cloud_url`, never
+taken as sent; W5.1), `upload_unreachable` (no connection, a certificate the Worker doesn't
+trust, a connection lost mid-request), `upload_timeout` (no answer in 120 s) or
+`upload_internal`. The waits are 1, 2, 4, 8, 16 and 32 minutes, then one hour, for as long as it
+takes.
+
+**The Cloud's answers** (W5.1, `docs/decisions.md` 2026-10-15 point 8; the status alone decides,
+the body's `detail` is never read):
+
+| Answer | What the flush does |
+|---|---|
+| 202 with `X-RestoreProof-API: 1`, first or repeated | `sent`, the folder to `sent\` |
+| any 2xx without the header, or with another value | `upload_not_cloud`, retried by the schedule |
+| 401 | `upload_http_401`, the attempt counted and scheduled; the pass stops (no other run is sent with that token). The service sends nothing more with that token until the vault holds another; `outbox flush` by hand tries a run a 401 kept at once |
+| 400, 404, 409, 415, 422 | refused for good: the manifest written (`upload_http_<status>`, no next attempt), the folder moved whole to `failed\<run_id>` |
+| 411, 413, any 5xx, any other status, a timeout, no connection | retried by the schedule |
+
+**`failed\`** holds a run byte for byte as it was queued but `manifest.json`, for the
+operator's `rpworker signer verify`. Nothing is ever sent, pruned or deleted from it by the
+Worker; its size counts under the 500 MB cap with the queue (the `over the 500 MB cap` warning
+is the queue and `failed\` together). A job of a run ID found there is skipped (`already
+failed`). A `folder_changed` run is never moved there: it stays queued, the evidence of what
+changed it.
 
 stderr:
 
@@ -1570,19 +1605,25 @@ stderr:
 | `outbox error: <folder>: uploaded, but couldn't be moved to sent (error <n>)` | the next flush moves it and doesn't upload again |
 | `outbox error: <folder>: uploaded, but manifest.json couldn't be written` | the next flush uploads it again |
 | `outbox error: <folder>\manifest.json: could not be written` | after a failed attempt: the attempt isn't recorded |
+| `outbox error: cloud_api_token is not in the vault; nothing was sent (rpworker cloud register)` | W5.1; exit 1, before the mutex |
+| `outbox error: <run_id>: refused by the Cloud (upload_http_<status>); moved to failed` | W5.1: a refusal for good |
+| `outbox error: <run_id>: refused by the Cloud (upload_http_<status>), but couldn't be moved to failed (error <n>)` | the run stays queued with no next attempt; the next flush moves it without sending |
 | `outbox warning: <folder>: manifest.json was made again` | the queued run had no readable manifest; it is uploaded as usual |
 | `outbox warning: <folder>: no readable manifest.json; not pruned` | a folder under `sent\` the Worker can't date; never deleted |
 | `outbox warning: <folder>: couldn't be removed` | a sent run that should have been pruned |
-| `outbox warning: the outbox holds <n> MB, over the 500 MB cap` | the queue alone is over the cap; nothing queued is ever deleted |
+| `outbox warning: the outbox holds <n> MB, over the 500 MB cap` | the queue and `failed\` alone are over the cap; nothing queued or failed is ever deleted |
 
 Exit codes: 0 when no run is left under `outbox\`; 3 when one is (kept, waiting, changed, not
 read, or another flush running); 1 for a config error (`config error: ...`: the config, a `--config`,
-`--outbox` or `--record` path that isn't UTF-8, a `--record` folder that isn't new or empty),
+`--vault`, `--outbox` or `--record` path that isn't UTF-8, a vault that can't be read, a
+`--record` folder that isn't new or empty), for no API token in the vault, for a run moved to
+`failed\` when nothing stays queued,
 for a root that can't be read, for an incomplete recording, and, when nothing stays queued,
 for any other `outbox error` line; 64 for a command line it doesn't understand.
 
 With `--record <dir>` the exchange with the Cloud is written under `cloud/`: the answer only
-(a multipart request body is never recorded).
+(a multipart request body is never recorded; the token is a secret value the recording refuses
+to hold, and its `X-RestoreProof-API` header is kept).
 
 **`cloud_ca_file`.** By default the Cloud's certificate is verified against the Windows
 certificate store. With `cloud_ca_file` set it is verified against that PEM file instead: for
@@ -1602,7 +1643,7 @@ Reads only; no config, no vault, no network:
 RUN              QUEUED                ATTEMPTS  NEXT                  LAST_ERROR          TIMESTAMP
 w46-done-when-1  2026-10-07T11:56:44Z  2         2026-10-07T12:40:10Z  upload_unreachable  timestamped
 w46-done-when-2  2026-10-07T12:31:05Z  0         -                     -                   not_timestamped tsa_unreachable
-2 queued, 0 sent
+2 queued, 0 sent, 0 failed
 ```
 
 One row per queued run, by run ID: when it was queued, the uploads tried, when the next one
@@ -1610,8 +1651,66 @@ is due (`-`: at the next flush), the last failure (`-`: none), and whether the r
 timestamped (`not_timestamped` with the TSA's code when the manifest has it). A run with no
 readable manifest is a row of `-` with `no_manifest` under LAST_ERROR. A folder under
 `outbox\` without `result.json` is one `outbox error: <folder>: no result.json; not a queued
-run` on stderr and isn't counted. A root that isn't there holds nothing: `0 queued, 0 sent`.
+run` on stderr and isn't counted. A root that isn't there holds nothing: `0 queued, 0 sent, 0
+failed`.
 Exit 0; 1 for a root that can't be read or a `--outbox` path that isn't UTF-8.
+
+## `rpworker cloud register`
+
+```
+rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] [--record <dir>]
+```
+
+The Worker's first start (W5.1, `docs/decisions.md` 2026-10-15 points 2 and 3;
+`docs/onboarding.md`): the install token the operator put in the vault (`rpworker vault set
+cloud_install_token`, from the console or stdin) is sent once, with the signing key's public
+half (`rpworker signer public-key`'s text), the Worker's name and its version, to `POST
+<cloud_url>/v1/workers/register`; the API token the Cloud answers with goes into the vault in
+the same write that removes the install token, and `state\worker.json` records the
+registration. Run it from an elevated prompt: the vault is written at the operator's console,
+never by the service, whose account reads it alone. `rpworker service start` runs it itself when
+the vault holds an install token and no API token (the first start), on the config the
+installed service names (its `--config`, else the default) and the default vault, and starts
+the service only after it succeeded.
+
+In order: the config; the vault read; an API token there is `cloud register: already registered
+(cloud_api_token is in the vault); nothing was done` (exit 1: the Worker never registers twice
+by itself; `rpworker vault remove cloud_api_token` first to register again); no install token
+`config error: cloud_install_token is not in the vault`; the signing key (`config error:
+signing_key_base64 is not in the vault`, or `... is not an Ed25519 private key ...`); the name
+(`--name`, else this machine's DNS host name; 1 to 128 characters with no control character:
+`usage error: --name must be ...`, exit 64, or `config error: this machine's name can't be the
+Worker's name; give --name`); then **the vault written back unchanged**, so a vault this
+account can't write is found while the install token is still unused (`vault error: ...`); then
+the request, sent once with a 30 s timeout.
+
+| The Cloud's answer | stdout / stderr | Exit |
+|---|---|---|
+| 201 with `X-RestoreProof-API: 1` and this key's `key_id` | `registered worker <worker_id> key <key_id>`; the vault holds `cloud_api_token` and no `cloud_install_token`; `state\worker.json` written | 0 |
+| 201 without the header (or another value) | `cloud register: the answer is not a RestoreProof Cloud's (no X-RestoreProof-API: 1)`; nothing stored | 4 |
+| 201 whose body isn't the answer, or names another key | `cloud register: the Cloud's answer is not this Worker's registration`; nothing stored | 4 |
+| 401 | `cloud register: the install token was refused (unknown, used or expired); make a new one (manage.py create-worker-token)` | 2 |
+| 400 | `cloud register: the Cloud refused this Worker's public key` | 4 |
+| 409 | `cloud register: this Worker's key is already registered` | 4 |
+| 5xx, a timeout, no connection, a TLS failure | `cloud register: the Cloud couldn't be reached (<word>); run it again`; the install token kept | 3 |
+| any other status | `cloud register: refused (http_<status>)` | 4 |
+
+**Half way.** An answer that never came leaves the install token unused: run it again. A 201
+whose answer was lost, or a vault that couldn't take the token after it (`cloud register:
+registered as worker <id>, but the API token couldn't be stored; revoke that Worker (manage.py
+revoke-worker) and register again with a new signing key and a new install token`, exit 1)
+spends the install token and leaves the Cloud holding this key, which it never takes twice: the
+way out is `manage.py revoke-worker`, a new signing key (`python -m seeder new-signing-key` into
+the vault) and a new install token. A `state\worker.json` that couldn't be written is
+`cloud register: registered as worker <id>; state\worker.json couldn't be written`, exit 1, the
+registration kept.
+
+**`state\worker.json`**, no secret: `{"cloud_url","format":"restoreproof.worker.v1","key_id",
+"registered_at","worker_id"}`. The service names the Worker from it at start (`cloud:
+registered as worker <id>`); nothing is decided on it.
+
+Neither token reaches stdout, stderr, a log line, `worker.json` or a recording: `--record`
+writes the 201 with `api_token` as `[REDACTED]` and never the request body.
 
 ## `rpworker signer`
 
@@ -1789,6 +1888,7 @@ service uninstall` when even that failed).
 |---|---|---|
 | `started RestoreProof` | running, within 30 s | 0 |
 | `RestoreProof is already running` | nothing was done | 0 |
+| `registered worker <id> key <key_id>` (before `started RestoreProof`) | `start`'s first start (W5.1): the vault held an install token and no API token, and `rpworker cloud register` ran first; a registration that fails is its own line and exit code, and nothing is started | 0 |
 | `stopped RestoreProof in <s.s> s` | stopped, within 35 s of the command's start | 0 |
 | `RestoreProof is already stopped` | nothing was done | 0 |
 | `uninstalled RestoreProof` | the Service Control Manager no longer knows the name | 0 |
@@ -1884,8 +1984,10 @@ There is no command for it and no option: it starts with the service.
 
 **At start**, in this order:
 
-1. One line, `scheduler started: poll <n> s, heartbeat <n> s, jobs <file|none>, runs <dir>,
-   outbox <root>` (`none` without `jobs_file`).
+1. One line, `scheduler started: poll <n> s, heartbeat <n> s, jobs <file|the Cloud>, runs
+   <dir>, outbox <root>` (`the Cloud` without `jobs_file`, W5.1), then, when
+   `state\worker.json` reads, `cloud: registered as worker <id>`. The vault's API token is read
+   (W5.1: "The Cloud as the job source").
 2. `running.json` is read, and a run found there is dealt with ("`running.json`", "A run
    without a result", "The hold").
 3. The first heartbeat.
@@ -1895,10 +1997,11 @@ There is no command for it and no option: it starts with the service.
 
 1. The record's business, while there is a record: its run's folder closed and queued, the
    hold, the record deleted, each only if still needed.
-2. Only when there is no record: the jobs file is read and its jobs are decided and run in the
-   document's order, one at a time ("The jobs file"). After a run that was queued the outbox
+2. Only when there is no record: the jobs file, or the Cloud's document ("The Cloud as the job
+   source"), is read and its jobs are decided and run in the document's order, one at a time
+   ("The jobs file"). After a run that was queued the outbox
    is flushed at once; a heartbeat that fell due is sent between two jobs.
-3. A flush of the outbox, in every case.
+3. A flush of the outbox, in every case but no API token or a refused one (W5.1).
 
 A job that takes longer than the interval makes the next poll late, never a second run, and
 missed polls are not caught up. **A heartbeat** is sent every `heartbeat_interval_s` after the
@@ -1959,10 +2062,59 @@ as long as every pass names them, not at every pass. While another flush holds t
 (the command, by hand) the pass is skipped: `flush skipped: another flush is running` at
 `debug`. After a stop no further upload is started.
 
+### The Cloud as the job source (W5.1)
+
+Without `jobs_file` the service asks the Cloud (`docs/decisions.md` 2026-10-15 points 6 and 7):
+`GET <cloud_url>/v1/jobs` with `Authorization: Bearer <cloud_api_token>`, sent once, a 30 s
+timeout, at most 1 MiB of the answer read. The Cloud hands a run out once (its poll moves it to
+`dispatched`) and again only when its sweep requeues it six hours later, so the document is
+**kept**: a 200 with `X-RestoreProof-API: 1` is written whole to `state\jobs.json` and read with
+the jobs file's own reader and rules ("The jobs file": J1 to J4, the same lines with that
+path). At each poll the kept document is read first: while it names a job that isn't settled
+(no run folder, nothing under `outbox\`, `sent\` or `failed\`, no done mark) and it is less than
+six hours old by the file clock (an age below zero, a clock stepped back, is no age), its jobs
+run and the Cloud isn't asked; otherwise it is removed and the Cloud is asked. A service
+restarted mid-document runs the rest of it. **A job that ended before its run line** (no restore
+point yet, an unknown organisation, Veeam not answering) holds the document no longer once it
+has been tried in this process: the Cloud is asked at the next poll and its jobs run first, then
+each such job is tried again, at every poll, until it runs, a document names it again, or six
+hours have passed since it first ended so (by then the Cloud has requeued or expired it); kept
+in memory, so a restart tries it once from the kept document (the W5.1 code review's finding 2:
+one client's job that couldn't start kept every other client's runs at the Cloud for six
+hours). With `jobs_file` the file is read at every poll and is its own retry.
+
+**The token**, read from the vault at each poll, each heartbeat and at the start:
+
+- **None** (or a vault that can't be read): nothing is polled, uploaded or sent as a heartbeat;
+  `cloud: cloud_api_token is not in the vault; nothing is sent to the Cloud (rpworker cloud
+  register)` at `warning`, once and then once an hour; the loop's last error `not_registered`.
+  A `jobs_file` still runs, its runs queued.
+- **Refused**: a 401 of the poll or of an upload is `cloud: the Cloud refused the API token
+  (401); nothing is polled or uploaded until the vault holds another token`, once; the loop keeps
+  the token's SHA-256 (in memory) and sends nothing more with it but the heartbeat; the loop's
+  last error `token_refused`. A token of another hash in the vault ends it at the next poll:
+  `cloud: a new API token; polling again`, and that flush tries the runs a 401 kept at once.
+
+**The poll's answers**, each said once at `warning` until a poll works or says another (the loop's
+last error `jobs_unreadable`): `jobs: the Cloud couldn't be reached (<timeout|unreachable|internal>)`;
+`jobs: the Cloud's answer has no X-RestoreProof-API: 1; not read`; `jobs: the Cloud's answer is
+of another contract (X-RestoreProof-API: <n>); not read`; `jobs: the Cloud answered http_<status>`
+(any status but 200 and 401); `jobs error: the Cloud's answer: over 1 MiB`; a kept document the
+reader refuses is its `jobs error: <state>\jobs.json: ...` line and is removed. A document that
+can't be written is `jobs error: <state>\jobs.json: couldn't be written; the answer is run from
+memory`. An answer lost after the Cloud committed loses its runs to this Worker until the sweep
+requeues them (six hours, at most three attempts).
+
+**An upload's or a heartbeat's 2xx without the header** is said once: `cloud: an upload's answer
+is not a RestoreProof Cloud's (no X-RestoreProof-API: 1); the run stays queued` (until a run is
+sent), `heartbeat: the Cloud's answer has no X-RestoreProof-API: 1` (the heartbeat is taken all
+the same: it is the Cloud's only word of a revoked Worker).
+
 ### The jobs file
 
-The job source is a file, `jobs_file` in `config.json`, until W5.1 puts `GET
-<cloud_url>/v1/jobs` in its place. Its shape is the Cloud's answer as C5.6 built it: the Cloud
+The job source is a file when `jobs_file` is set in `config.json` (a lab without a Cloud, and
+the tests; it wins over the Cloud and is never set in a deployment), or the Cloud's document
+kept in `state\jobs.json` (W5.1, above): the same reader, the same rules. Its shape is the Cloud's answer as C5.6 built it: the Cloud
 sends the run's own id as `run_id` (a UUID, so a folder name) and the client's id as
 `client_id`, the connector's profile as `client`, the plan's sizes, `latest`, and
 `canary_cursor` only for a plan opted in to canaries (C6.8: `manage.py create-plan --canaries`,
@@ -2387,8 +2539,9 @@ application/json`, the body in `canonical-json-v1` with exactly five keys:
 | `version` | `rpworker --version`'s |
 
 It is sent once, with a 10 s timeout, through the client the uploads use (so `cloud_ca_file`
-holds and TLS is verified), with no `Authorization` and no credential until W5.1. Any 2xx is
-taken. Anything else is one line at `warning`:
+holds and TLS is verified), with `Authorization: Bearer <cloud_api_token>` (W5.1; no token, no
+heartbeat; a refused one still goes). Any 2xx is taken (one without `X-RestoreProof-API: 1` said
+once, above). Anything else is one line at `warning`:
 
 ```
 heartbeat failed: <http_<status>|unreachable|timeout|internal>
@@ -2401,11 +2554,11 @@ word differs from the heartbeat before it (a heartbeat that was taken in between
 said again). Nothing is retried before the next interval, and a failed heartbeat is never the
 `last_error` it reports. The endpoint is built (C5.8, `docs/verification.md` "The Cloud
 receives a heartbeat"): it takes exactly these five keys, writes them and its own clock into the
-Worker's row and answers 204. Until W5.1 sends the `Authorization` header a real Cloud answers
-every heartbeat 401 (`heartbeat failed: http_401`, once); a 422 means the two sides disagree on
-the body.
+Worker's row and answers 204. A 401 (a revoked Worker, or a token the Cloud doesn't know) is
+`heartbeat failed: http_401`, once, and the heartbeat keeps going; a 422 means the two sides
+disagree on the body.
 
-**`last_error`** is one of sixteen fixed words (`rp::service_error_codes()` in
+**`last_error`** is one of nineteen fixed words (`rp::service_error_codes()` in
 `worker/include/rp/service_errors.hpp`), or `upload_http_<status>`:
 
 | Word | The trouble |
@@ -2423,7 +2576,9 @@ the body.
 | `veeam_look_failed` | the hold's look at Veeam's sessions, or an end of one, failed |
 | `veeam_sessions_working` | the hold waits for sessions that are still `Working` |
 | `recovery_clean_incomplete` | the clean after a hold wasn't completed |
-| `upload_unreachable`, `upload_timeout`, `upload_internal`, `upload_http_<status>` | the flush's word for an upload that failed (`kept <run_id>: <word>; ...`) |
+| `upload_unreachable`, `upload_timeout`, `upload_internal`, `upload_not_cloud`, `upload_http_<status>` | the flush's word for an upload that failed (`kept <run_id>: <word>; ...`), or for a run the Cloud refused for good (`failed <run_id>: upload_http_<status>`) |
+| `not_registered` | W5.1: the vault holds no API token |
+| `token_refused` | W5.1: the Cloud refused the API token (401) |
 
 It is never a run's own `error` code (the result carries that), never an exception's text,
 never a path or a name. It is set at every occurrence of a trouble, whether or not its line

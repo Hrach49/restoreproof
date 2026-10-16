@@ -1,0 +1,27 @@
+{
+  "source": "docs/api/cloud-lab/w5.1-record/record_cloud.py against the Compose stack through Caddy",
+  "request": "POST /v1/heartbeat",
+  "status": 422,
+  "headers": {
+    "Content-Type": "application/json",
+    "X-Restoreproof-Api": "1"
+  },
+  "body": {
+    "detail": [
+      {
+        "type": "missing",
+        "loc": [
+          "body",
+          "uptime_s"
+        ],
+        "msg": "Field required",
+        "input": {
+          "last_error": null,
+          "last_error_at": null,
+          "outbox_depth": 0,
+          "version": "0.0.0"
+        }
+      }
+    ]
+  }
+}

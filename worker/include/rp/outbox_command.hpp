@@ -2,13 +2,15 @@
 
 // `rpworker outbox flush` and `rpworker outbox list` (W4.6, docs/decisions.md
 // 2026-10-07 point 5): what an operator, and until W4.8 a scheduled task, runs
-// to send the queued runs and to see the queue. Neither reads the vault: the
-// upload carries no credential until W5.1.
+// to send the queued runs and to see the queue. `flush` reads one name of the
+// vault, cloud_api_token, which the upload carries (W5.1, docs/decisions.md
+// 2026-10-15, point 8); `list` reads no vault.
 
 #include <rp/config.hpp>
 #include <rp/http_client.hpp>
 #include <rp/outbox.hpp>
 #include <rp/run_lock.hpp>
+#include <rp/secrets.hpp>
 
 #include <chrono>
 #include <filesystem>
@@ -44,6 +46,10 @@ struct OutboxCommandEnv {
     std::function<std::unique_ptr<RunLock>()> take_flush_lock;
     // The outbox's file calls; each null = the real one.
     OutboxFiles files;
+    // W5.1: the vault without --vault (rp::default_vault_path), called only
+    // then, and how it is read (null: rp::read_vault).
+    std::function<std::filesystem::path()> default_vault_path;
+    std::function<Secrets(const std::filesystem::path&)> load_secrets;
 };
 
 // %ProgramData%\RestoreProof: outbox\ and sent\ are under it. Throws
@@ -55,13 +61,17 @@ OutboxCommandEnv default_outbox_command_env();
 
 // `rpworker outbox ...`. `args` is what follows "outbox", in UTF-8.
 //
-// `flush [--config <path>] [--outbox <root>] [--record <dir>]`: one pass of
-// rp::Outbox::flush with rp::CloudUploader on config's cloud_url. On `out`:
+// `flush [--config <path>] [--vault <file>] [--outbox <root>] [--record
+// <dir>]`: one pass of rp::Outbox::flush with rp::CloudUploader on config's
+// cloud_url and the vault's cloud_api_token (W5.1; without it "outbox error:
+// cloud_api_token is not in the vault; nothing was sent (rpworker cloud
+// register)", 1, before the mutex), told the token is new (an operator's
+// flush tries a run a 401 kept at once). On `out`:
 // each of the flush's lines ("pruned <run>", "sent <run>", "kept <run>:
 // <code>; attempt <n>, next at <time>", "kept <run>: folder_changed", "kept
-// <run>: not_read", "waiting <run>: next at <time>", "moved <run>"), then
-// "<n> queued, <m> sent"; on `err` its "outbox error: ..." and "outbox
-// warning: ..." lines.
+// <run>: not_read", "waiting <run>: next at <time>", "moved <run>", "failed
+// <run>: <code>", "moved <run> to failed"), then "<n> queued, <m> sent, <k>
+// failed"; on `err` its "outbox error: ..." and "outbox warning: ..." lines.
 // Exit 0 when no run is left under outbox\; 3 (exit_code::transient) when one
 // is, or when another flush holds the mutex ("outbox error: another flush is
 // running; nothing was done"); 1 for "config error: <what()>" (the config, a
@@ -76,7 +86,7 @@ OutboxCommandEnv default_outbox_command_env();
 // "timestamped", "not_timestamped" or "not_timestamped <code>"; a run without
 // a readable manifest is "-" in every cell but RUN and LAST_ERROR
 // "no_manifest"), no table when nothing is queued, then "<n> queued, <m>
-// sent". On `err` one "outbox error: <folder>: no result.json; not a queued
+// sent, <k> failed". On `err` one "outbox error: <folder>: no result.json; not a queued
 // run" per folder under outbox\ that isn't a run. Exit 0; 1 for a root that
 // can't be read or a --outbox path that isn't UTF-8.
 //

@@ -106,6 +106,11 @@ inline HttpResponse load_fixture(std::string_view service, std::string_view name
     return to_response(load_fixture_json(service, name));
 }
 
+// A response of the Cloud's app (W5.1): `make_response` with the contract
+// header X-RestoreProof-API: 1, which the Worker reads on every 2xx.
+inline HttpResponse cloud_answer(int status, std::string body = {},
+                                 std::string content_type = "application/json");
+
 // A response made up in a test.
 inline HttpResponse make_response(int status, std::string body = {},
                                   std::string content_type = "application/json; charset=utf-8")
@@ -116,6 +121,13 @@ inline HttpResponse make_response(int status, std::string body = {},
         response.headers["Content-Type"] = std::move(content_type);
     }
     response.body = std::move(body);
+    return response;
+}
+
+inline HttpResponse cloud_answer(int status, std::string body, std::string content_type)
+{
+    HttpResponse response = make_response(status, std::move(body), std::move(content_type));
+    response.headers["X-RestoreProof-API"] = "1";
     return response;
 }
 

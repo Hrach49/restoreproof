@@ -17,6 +17,7 @@
 //
 // Strict (100% line), by its name.
 
+#include <rp/cloud_api.hpp>
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
 #include <rp/outbox.hpp>
@@ -98,6 +99,29 @@ struct SessionsLook {
     std::vector<connector::OwnSession> running;
 };
 
+// W5.1 (docs/decisions.md 2026-10-15, point 7): the Cloud's answer to
+// GET /v1/jobs, as the env got it; the loop decides what it means.
+struct CloudJobsAnswer {
+    // The status; nullopt when no answer came (`word` says why).
+    std::optional<int> status;
+    // Whose a 2xx is (rp::cloud_answer_kind), and what a warning may say of
+    // another contract's value (rp::other_contract_text).
+    CloudAnswerKind kind = CloudAnswerKind::not_cloud;
+    std::string other_value;
+    // The body, cut after kMaxJobsFileBytes + 1 bytes.
+    std::string body;
+    // No answer: timeout, unreachable or internal.
+    std::string word;
+};
+
+// How long a kept jobs document is run from (W5.1 point 7): after six hours
+// the Cloud has requeued or expired what it dispatched (C5.6's sweep).
+inline constexpr std::chrono::hours kKeptJobsFor{6};
+
+// The heartbeat's word for a 2xx that isn't the Cloud's (W5.1 point 5): taken,
+// and said once.
+inline constexpr std::string_view kHeartbeatNotCloud = "not_cloud";
+
 // What a heartbeat carries beside the Worker's version (src/heartbeat.hpp).
 struct LoopHeartbeat {
     std::optional<std::string> last_error;
@@ -177,12 +201,37 @@ struct ServiceLoopEnv {
     // incomplete, lock_held, not_started).
     std::function<std::string(const RunningRecord&)> clean_targets;
 
-    // rp::Outbox::flush under the flush mutex; nullopt when another flush
-    // holds it. `stop` is asked before each queued run.
-    std::function<std::optional<FlushReport>(const std::function<bool()>& stop)> flush;
-    // rp::send_heartbeat; empty when taken, else the failure's word
-    // (http_<status>, unreachable, timeout, internal).
-    std::function<std::string(const LoopHeartbeat&)> heartbeat;
+    // rp::Outbox::flush under the flush mutex with an uploader carrying
+    // `token`; nullopt when another flush holds it. `stop` is asked before
+    // each queued run; `token_is_new` is Outbox::flush's.
+    std::function<std::optional<FlushReport>(const std::function<bool()>& stop,
+                                             std::string_view token, bool token_is_new)>
+        flush;
+    // rp::send_heartbeat with `token`; empty when taken, else the failure's
+    // word (http_<status>, unreachable, timeout, internal), or
+    // kHeartbeatNotCloud for a 2xx that isn't the Cloud's.
+    std::function<std::string(const LoopHeartbeat&, std::string_view token)> heartbeat;
+
+    // W5.1 (docs/decisions.md 2026-10-15, points 6 and 7). Null `api_token`:
+    // no token is asked for and "" is handed to `flush` and `heartbeat` (an
+    // env of W4.8's shape). Else the vault's cloud_api_token at this moment,
+    // nullopt for none (or a vault that can't be read): nothing then goes to
+    // the Cloud.
+    std::function<std::optional<std::string>()> api_token;
+    // GET <cloud_url>/v1/jobs with `token`: the job source when `jobs_file`
+    // isn't set. Null with no jobs_file: no job source.
+    std::function<CloudJobsAnswer(std::string_view token)> poll_jobs;
+    // state\jobs.json: the Cloud's last document, kept until its jobs are
+    // settled or it is kKeptJobsFor old; read with `read_jobs`. Written whole
+    // (whether it was), removed, and its age by its last write (nullopt when
+    // it isn't there or can't be told).
+    std::filesystem::path kept_jobs_file;
+    std::function<bool(std::string_view bytes)> keep_jobs;
+    std::function<void()> drop_jobs;
+    std::function<std::optional<std::chrono::system_clock::duration>()> kept_jobs_age;
+    // state\worker.json's worker_id, for one line after the start; nullopt:
+    // no line.
+    std::optional<std::string> worker_id;
 };
 
 class ServiceLoop {
@@ -231,11 +280,21 @@ private:
     bool take_record(RunningRecord record);
 
     JobsDocument read_jobs();
+    void note_jobs_fault(const std::filesystem::path& file, const JobsDocument& document);
+    bool take_token();
+    void refuse_token();
+    void say_cloud(const std::string& line);
+    bool settled(const std::string& run_id) const;
+    bool has_unsettled(const JobsDocument& document) const;
+    JobsDocument cloud_jobs();
+    JobsDocument polled_jobs(const CloudJobsAnswer& answer);
+    const std::filesystem::path& jobs_source() const;
     void forget_jobs(const JobsDocument& document);
     void run_jobs();
     void take_job(const JobEntry& entry, const JobsDocument& document);
     bool skip_job(const std::string& run_id);
-    void run_job(const Job& job);
+    void run_job(const JobEntry& entry);
+    void prune_not_started(const JobsDocument& document);
     JobCallbacks callbacks();
 
     ServiceLoopEnv env_;
@@ -276,9 +335,31 @@ private:
     std::set<std::size_t> no_run_id_said_;
     std::set<std::string> skipped_said_;
     std::set<std::pair<std::string, int>> not_started_said_;
+    // The jobs that ended before their run line in this process, by run ID,
+    // with when that first happened: tried again at every poll beside the
+    // document (prune_not_started says until when).
+    struct NotStarted {
+        JobEntry entry;
+        Steady first_at;
+    };
+    std::map<std::string, NotStarted> not_started_;
     // The flush's lines of runs that are never sent or couldn't be read, as
     // the last pass named them.
     std::set<std::string> flush_said_;
+
+    // W5.1. Whether this poll may reach the Cloud, with which token (""
+    // with an env without api_token); the SHA-256 of a token the Cloud
+    // refused (empty: none), and whether the next flush is the first with
+    // another; when "no token" was last said; the last line a poll said of
+    // the Cloud (empty after one that worked); and whether an upload's or a
+    // heartbeat's not-the-Cloud's answer was said.
+    bool cloud_ok_ = true;
+    std::string token_;
+    std::string refused_sha_;
+    bool token_is_new_ = false;
+    std::optional<Steady> no_token_said_;
+    std::string cloud_said_;
+    bool upload_not_cloud_said_ = false;
 };
 
 } // namespace rp

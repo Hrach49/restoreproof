@@ -1,0 +1,14 @@
+{
+  "source": "docs/api/cloud-lab/w5.1-record/record_cloud.py against the Compose stack through Caddy",
+  "request": "POST /v1/workers/register",
+  "status": 201,
+  "headers": {
+    "Content-Type": "application/json",
+    "X-Restoreproof-Api": "1"
+  },
+  "body": {
+    "worker_id": "65fddc39-0792-4178-8361-49d53450b29e",
+    "api_token": "SCRUBBED",
+    "key_id": "06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9"
+  }
+}

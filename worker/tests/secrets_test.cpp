@@ -9,16 +9,21 @@
 #include <string_view>
 #include <vector>
 
-TEST_CASE("the secrets are the five documented names, the vault's (W4.5)", "[secrets]")
+TEST_CASE("the secrets are the seven documented names, the vault's (W4.5, W5.1)", "[secrets]")
 {
     // The Graph app signs in with a certificate, not a client secret (W2.1);
-    // the signing key is the last (W4.3). No RP_* variable since W4.5.
-    REQUIRE(rp::kSecretNames.size() == 5);
+    // the signing key (W4.3), then the Cloud's two tokens (W5.1). No RP_*
+    // variable since W4.5.
+    REQUIRE(rp::kSecretNames.size() == 7);
     REQUIRE(rp::kSecretNames[0] == "veeam_username");
     REQUIRE(rp::kSecretNames[1] == "veeam_password");
     REQUIRE(rp::kSecretNames[2] == "graph_cert_pfx_base64");
     REQUIRE(rp::kSecretNames[3] == "graph_cert_password");
     REQUIRE(rp::kSecretNames[4] == "signing_key_base64");
+    REQUIRE(rp::kSecretNames[5] == "cloud_install_token");
+    REQUIRE(rp::kSecretNames[6] == "cloud_api_token");
+    REQUIRE(rp::kNameCloudInstallToken == "cloud_install_token");
+    REQUIRE(rp::kNameCloudApiToken == "cloud_api_token");
     REQUIRE(rp::kNameSigningKeyBase64 == "signing_key_base64");
     for (const std::string_view name : rp::kSecretNames) {
         CAPTURE(name);
@@ -96,6 +101,18 @@ TEST_CASE("secret_values gives each set secret value as it is, the user name nev
     {
         CHECK(rp::secret_values(rp::Secrets{}).empty());
     }
+    SECTION("W5.1: the Cloud's install token and API token are values too, after the key")
+    {
+        rp::Secrets secrets{"rp-veeam", "pw-71c0", "pfx-71c0", "pfx-pw-71c0", "key-71c0"};
+        secrets.cloud_install_token = "install-71c0";
+        secrets.cloud_api_token = "api-71c0";
+
+        CHECK(rp::secret_values(secrets) ==
+              std::vector<std::string>{"pw-71c0", "pfx-71c0", "pfx-pw-71c0", "key-71c0",
+                                       "install-71c0", "api-71c0"});
+        CHECK(rp::secret_field(secrets, "cloud_install_token") == &secrets.cloud_install_token);
+        CHECK(rp::secret_field(secrets, "cloud_api_token") == &secrets.cloud_api_token);
+    }
     SECTION("a signing key that is no key is still a value: nothing is decoded")
     {
         rp::Secrets secrets;
@@ -123,4 +140,25 @@ TEST_CASE("secret_values leaves room for what its caller adds, so no value moves
     CHECK(values.capacity() >= 4 + room);
     CHECK(values.data() == first);
     CHECK(values.front().data() == first_bytes);
+}
+
+TEST_CASE("wipe_secrets empties every value but the one kept (W5.1 code review, finding 11)",
+          "[secrets]")
+{
+    rp::Secrets secrets;
+    for (const std::string_view name : rp::kSecretNames) {
+        *rp::secret_field(secrets, name) = std::string{"value of "} + std::string{name};
+    }
+    const std::string kept = GENERATE(std::string{}, std::string{"cloud_api_token"});
+
+    rp::wipe_secrets(secrets, kept);
+
+    for (const std::string_view name : rp::kSecretNames) {
+        CAPTURE(name);
+        if (name == kept) {
+            CHECK(*rp::secret_field(secrets, name) == "value of " + std::string{name});
+        } else {
+            CHECK_FALSE(*rp::secret_field(secrets, name));
+        }
+    }
 }

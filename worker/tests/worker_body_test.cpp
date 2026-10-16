@@ -18,6 +18,7 @@
 #include "service_lab.hpp"
 #include "worker_body_lab.hpp"
 
+#include <rp/cloud_api.hpp>
 #include <rp/base64.hpp>
 #include <rp/evidence_builder.hpp>
 #include <rp/outbox.hpp>
@@ -540,11 +541,11 @@ TEST_CASE("worker body: a flush is skipped while another holds its mutex, and th
     rp::ServiceLoopEnv env = lab.env();
     lab.flush_lock_taken = true;
 
-    CHECK_FALSE(env.flush({}));
+    CHECK_FALSE(env.flush({}, kBodyToken, false));
     CHECK(lab.cloud_clients == 0);
 
     lab.flush_lock_taken = false;
-    const std::optional<rp::FlushReport> report = env.flush({});
+    const std::optional<rp::FlushReport> report = env.flush({}, kBodyToken, false);
     REQUIRE(report);
     CHECK(report->queued == 0);
     CHECK_FALSE(lab.flush_lock_held);
@@ -555,7 +556,7 @@ TEST_CASE("worker body: a flush is skipped while another holds its mutex, and th
     beat.last_error_at = rp::test::graph_lab::kNow;
     beat.outbox_depth = 3;
     beat.uptime_s = 77;
-    CHECK(env.heartbeat(beat).empty());
+    CHECK(env.heartbeat(beat, kBodyToken).empty());
     CHECK(lab.cloud_clients == 1);
     const std::vector<rp::HttpRequest> requests = lab.cloud.requests();
     REQUIRE(requests.size() == 1);
@@ -567,7 +568,7 @@ TEST_CASE("worker body: a flush is skipped while another holds its mutex, and th
 
     // A failed one answers its word.
     lab.cloud.on(rp::HttpMethod::post, kHeartbeatUrl, {rp::test::make_response(503)});
-    CHECK(env.heartbeat(beat) == "http_503");
+    CHECK(env.heartbeat(beat, kBodyToken) == "http_503");
 }
 
 TEST_CASE("worker body: a stop that comes during an upload ends the flush before the next run: "
@@ -584,7 +585,7 @@ TEST_CASE("worker body: a stop that comes during an upload ends the flush before
     // The Cloud takes the first run; the stop is asked for while it answers.
     lab.cloud.on(rp::HttpMethod::post, kResultsUrl, [&lab](const rp::HttpRequest&) {
         lab.context->stop.request();
-        return rp::test::make_response(202);
+        return rp::test::cloud_answer(202);
     });
 
     lab.run_loop(5);
@@ -613,8 +614,8 @@ TEST_CASE("worker body: a Cloud client that can't be made is the step's failure"
     };
     rp::ServiceLoopEnv env = lab.env();
 
-    CHECK_THROWS(env.heartbeat({}));
-    CHECK_THROWS(env.flush({}));
+    CHECK_THROWS(env.heartbeat({}, kBodyToken));
+    CHECK_THROWS(env.flush({}, kBodyToken, false));
 }
 
 // --- the hold's connector (point 9) --------------------------------------------------
@@ -798,7 +799,9 @@ TEST_CASE("worker body: a job that is no job is reported as error job_invalid, s
     CHECK(has(log, "[info] skipped bad-1: already queued"));
     CHECK(lab.h.make_connector_calls == 0);
     CHECK(lab.h.graph_clients == 0);
-    CHECK(lab.h.load_secrets_calls == 1);
+    // The close's key once; the rest are the API token (W5.1), read at the
+    // start, at each of the two polls and for the heartbeat.
+    CHECK(lab.h.load_secrets_calls == 5);
     CHECK_FALSE(std::filesystem::exists(lab.record_file()));
     const std::filesystem::path queued = lab.queued("bad-1");
     CHECK(names_in(queued) == kQueuedFolder);
@@ -1143,7 +1146,8 @@ TEST_CASE("service run: the real body on the fake host says the scheduler starte
     std::ostringstream text;
     text << stream.rdbuf();
     const std::string log = text.str();
-    CHECK(has(log, " info scheduler started: poll 300 s, heartbeat 900 s, jobs none, runs " +
+    // W5.1: without a jobs_file the Cloud is the job source.
+    CHECK(has(log, " info scheduler started: poll 300 s, heartbeat 900 s, jobs the Cloud, runs " +
                        utf8(tmp.path() / "runs") + ", outbox " + utf8(tmp.path() / "box") +
                        "\r\n"));
     CHECK(has(log, " info service stopped after "));
@@ -1717,4 +1721,125 @@ TEST_CASE("worker body: two jobs of two tenants run on one Worker, each under it
         CHECK(result.at("status").at("status") == "pass");
         CHECK_FALSE(result.at("sample").contains("manifest_sha256"));
     }
+}
+
+
+// --- W5.1: the body's Cloud seams (docs/decisions.md 2026-10-15, points 3, 6, 7) -------
+
+TEST_CASE("worker body: the API token is the vault's at each use; none is no token", "[worker_body][w51]")
+{
+    BodyLab lab;
+    rp::ServiceLoopEnv env = lab.env();
+    REQUIRE(env.api_token);
+    CHECK(env.api_token() == std::optional<std::string>{"Sentinel-Api-Token-9c2e-0123456789abcdefABCD"});
+
+    lab.h.load_secrets = [] { return rp::Secrets{}; };
+    CHECK_FALSE(env.api_token());
+    lab.h.load_secrets = []() -> rp::Secrets { throw rp::ConfigError("vault", "vault: not found"); };
+    CHECK_FALSE(env.api_token());
+}
+
+TEST_CASE("worker body: the poll is one GET of /v1/jobs with the token, its answer handed on whole",
+          "[worker_body][w51]")
+{
+    BodyLab lab;
+    const std::string url = "https://cloud.example.invalid/v1/jobs";
+    lab.cloud.on(rp::HttpMethod::get, url, {rp::test::load_fixture("cloud", "jobs/200-one-job"),
+                                            rp::test::load_fixture("cloud", "jobs/502-proxy")});
+    rp::ServiceLoopEnv env = lab.env();
+    REQUIRE(env.poll_jobs);
+
+    const rp::CloudJobsAnswer answer = env.poll_jobs(kBodyToken);
+
+    CHECK(answer.status == 200);
+    CHECK(answer.kind == rp::CloudAnswerKind::cloud);
+    CHECK(answer.word.empty());
+    CHECK(rp::parse_jobs(answer.body).state == rp::JobsState::read);
+    const rp::HttpRequest request = lab.cloud.requests().at(0);
+    CHECK(request.url == url);
+    CHECK(request.headers.at("Authorization") == "Bearer " + kBodyToken);
+    CHECK(request.headers.at("Accept") == "application/json");
+    CHECK(request.max_attempts == 1);
+    CHECK_FALSE(request.retry_on_status);
+    CHECK(request.timeout == std::chrono::milliseconds{30000});
+    CHECK(request.max_body_bytes == rp::kMaxJobsFileBytes);
+
+    const rp::CloudJobsAnswer proxy = env.poll_jobs(kBodyToken);
+    CHECK(proxy.status == 502);
+    CHECK(proxy.kind == rp::CloudAnswerKind::not_cloud);
+
+    lab.cloud.on(rp::HttpMethod::get, url, [](const rp::HttpRequest&) -> rp::HttpResponse {
+        throw rp::HttpError("GET: refused", rp::TransportError::connect, 0, 1);
+    });
+    const rp::CloudJobsAnswer refused = env.poll_jobs(kBodyToken);
+    CHECK_FALSE(refused.status);
+    CHECK(refused.word == "unreachable");
+}
+
+TEST_CASE("worker body: state\\jobs.json is kept, aged, read by the jobs reader and dropped",
+          "[worker_body][w51]")
+{
+    BodyLab lab;
+    rp::ServiceLoopEnv env = lab.env();
+    const std::filesystem::path kept = lab.h.dir.path() / "state" / "jobs.json";
+    CHECK(env.kept_jobs_file == kept);
+    CHECK_FALSE(env.kept_jobs_age());
+
+    const std::string text = R"({"format":"restoreproof.jobs.v1","jobs":[]})";
+    REQUIRE(env.keep_jobs(text));
+    CHECK(env.read_jobs(kept).state == rp::JobsState::read);
+    const std::optional<std::chrono::system_clock::duration> age = env.kept_jobs_age();
+    REQUIRE(age);
+    // The real file clock, whatever the lab's wall clock says (the W5.1 code
+    // review's finding 14: a negative age passed the old check).
+    CHECK(*age >= std::chrono::system_clock::duration::zero());
+    CHECK(*age < std::chrono::hours{1});
+    std::filesystem::last_write_time(kept, std::filesystem::file_time_type::clock::now() -
+                                               std::chrono::hours{7});
+    const std::optional<std::chrono::system_clock::duration> old = env.kept_jobs_age();
+    REQUIRE(old);
+    CHECK(*old >= std::chrono::hours{7});
+    CHECK(*old < std::chrono::hours{8});
+    // Written over.
+    REQUIRE(env.keep_jobs(R"({"format":"restoreproof.jobs.v1","jobs":[ ]})"));
+
+    env.drop_jobs();
+    CHECK_FALSE(std::filesystem::exists(kept));
+    CHECK(env.read_jobs(kept).state == rp::JobsState::no_file);
+    env.drop_jobs();
+}
+
+TEST_CASE("worker body: a state folder that is a file keeps no document", "[worker_body][w51]")
+{
+    BodyLab lab;
+    lab.h.dir.write("state", "a file in the folder's place");
+    rp::ServiceLoopEnv env = lab.env();
+
+    CHECK_FALSE(env.keep_jobs("{}"));
+}
+
+TEST_CASE("worker body: state\\worker.json names the Worker when it reads", "[worker_body][w51]")
+{
+    BodyLab lab;
+    CHECK_FALSE(lab.env().worker_id);
+
+    std::filesystem::create_directories(lab.h.dir.path() / "state");
+    lab.h.dir.write("state/worker.json", "not a record");
+    CHECK_FALSE(lab.env().worker_id);
+
+    lab.h.dir.write("state/worker.json",
+                    rp::worker_record_text({"65fddc39-0792-4178-8361-49d53450b29e",
+                                            std::string(64, 'a'), "https://cloud.example.invalid",
+                                            "2026-10-15T12:40:20Z"}));
+    CHECK(lab.env().worker_id == std::optional<std::string>{"65fddc39-0792-4178-8361-49d53450b29e"});
+}
+
+TEST_CASE("worker body: a heartbeat whose 2xx isn't the Cloud's is the loop's not_cloud", "[worker_body][w51]")
+{
+    BodyLab lab;
+    lab.cloud.on(rp::HttpMethod::post, kHeartbeatUrl, {rp::test::make_response(204)});
+    rp::ServiceLoopEnv env = lab.env();
+
+    CHECK(env.heartbeat({}, kBodyToken) == "not_cloud");
+    CHECK(lab.cloud.requests().at(0).headers.at("Authorization") == "Bearer " + kBodyToken);
 }

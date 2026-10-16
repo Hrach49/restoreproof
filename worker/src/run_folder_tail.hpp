@@ -85,7 +85,8 @@ enum class RunFolderState {
 //    bytes hashed when it was read back), "holds_secret", "not_signed", or
 //    "invalid" (no valid result to write);
 //  - complete: empty when no outbox was asked for, else why the folder isn't
-//    in it: "already_queued", "already_sent", "no_outbox_folder",
+//    in it: "already_queued", "already_sent", "already_failed" (W5.1),
+//    "no_outbox_folder",
 //    "not_same_volume", "not_moved" or "not_complete";
 //  - queued: empty, or "manifest_not_written" (the next flush makes it).
 struct RunFolderOutcome {

@@ -28,6 +28,8 @@ namespace {
 
 const std::string kCloud = "https://cloud.example.invalid";
 const std::string kResults = kCloud + "/v1/results";
+// A token of the Cloud's shape (W5.1), never a real one.
+const std::string kToken = "UploadTok-w51-0123456789abcdefABCDEF_-01234";
 
 std::vector<rp::UploadPart> three_parts()
 {
@@ -39,7 +41,7 @@ std::vector<rp::UploadPart> three_parts()
 
 } // namespace
 
-TEST_CASE("uploader: anything but a 202 is a failed attempt with its code", "[uploader]")
+TEST_CASE("uploader: anything but the Cloud's 202 is a failed attempt with its code", "[uploader]")
 {
     struct Row {
         const char* name;
@@ -47,7 +49,19 @@ TEST_CASE("uploader: anything but a 202 is a failed attempt with its code", "[up
         std::string code;
     };
     const auto status = [](int code) {
+        return [code](const rp::HttpRequest&) { return rp::test::cloud_answer(code, "x"); };
+    };
+    // W5.1 (docs/decisions.md 2026-10-15, point 5): a 2xx without the
+    // contract header, or with another value, is not the Cloud's.
+    const auto bare = [](int code) {
         return [code](const rp::HttpRequest&) { return rp::test::make_response(code, "x"); };
+    };
+    const auto other_contract = [](int code) {
+        return [code](const rp::HttpRequest&) {
+            rp::HttpResponse response = rp::test::make_response(code, "x");
+            response.headers["X-RestoreProof-API"] = "2";
+            return response;
+        };
     };
     const auto transport = [](rp::TransportError error, int http_status = 0) {
         return [error, http_status](const rp::HttpRequest&) -> rp::HttpResponse {
@@ -63,6 +77,12 @@ TEST_CASE("uploader: anything but a 202 is a failed attempt with its code", "[up
         Row{"301", status(301), "upload_http_301"},
         Row{"401", status(401), "upload_http_401"},
         Row{"413", status(413), "upload_http_413"},
+        Row{"409", status(409), "upload_http_409"},
+        Row{"202 without the contract header", bare(202), "upload_not_cloud"},
+        Row{"200 without the contract header", bare(200), "upload_not_cloud"},
+        Row{"202 of another contract", other_contract(202), "upload_not_cloud"},
+        Row{"a proxy's 502, which has no header", bare(502), "upload_http_502"},
+        Row{"a server's 400, which has no header", bare(400), "upload_http_400"},
         Row{"a status of two digits", status(99), "upload_internal"},
         Row{"a status of four digits", status(1000), "upload_internal"},
         Row{"no connection", transport(rp::TransportError::connect), "upload_unreachable"},
@@ -82,7 +102,7 @@ TEST_CASE("uploader: anything but a 202 is a failed attempt with its code", "[up
     CAPTURE(row.name);
     rp::test::FakeHttpClient http;
     http.on(rp::HttpMethod::post, kResults, row.answer);
-    rp::CloudUploader uploader(http, kCloud);
+    rp::CloudUploader uploader(http, kCloud, kToken);
 
     const rp::UploadAnswer answer = uploader.upload("run-0001", three_parts());
 
@@ -97,8 +117,8 @@ TEST_CASE("uploader: 500 then 202: the second upload is accepted", "[uploader]")
 {
     rp::test::FakeHttpClient http;
     http.on(rp::HttpMethod::post, kResults,
-            {rp::test::make_response(500, "busy", "text/plain"), rp::test::make_response(202)});
-    rp::CloudUploader uploader(http, kCloud);
+            {rp::test::make_response(500, "busy", "text/plain"), rp::test::cloud_answer(202)});
+    rp::CloudUploader uploader(http, kCloud, kToken);
 
     const rp::UploadAnswer first = uploader.upload("run-0001", three_parts());
     const rp::UploadAnswer second = uploader.upload("run-0001", three_parts());
@@ -111,15 +131,15 @@ TEST_CASE("uploader: 500 then 202: the second upload is accepted", "[uploader]")
 }
 
 TEST_CASE("uploader: one POST to <cloud_url>/v1/results, the parts in their order, sent once and "
-          "with no credential",
+          "with the API token alone",
           "[uploader][acceptance]")
 {
     const std::string base = GENERATE("https://cloud.example.invalid",
                                       "https://cloud.example.invalid/",
                                       "https://cloud.example.invalid///");
     rp::test::FakeHttpClient http;
-    http.on(rp::HttpMethod::post, kResults, {rp::test::make_response(202)});
-    rp::CloudUploader uploader(http, base);
+    http.on(rp::HttpMethod::post, kResults, {rp::test::cloud_answer(202)});
+    rp::CloudUploader uploader(http, base, kToken);
     CHECK(uploader.url() == kResults);
     const std::vector<rp::UploadPart> parts = three_parts();
 
@@ -131,8 +151,8 @@ TEST_CASE("uploader: one POST to <cloud_url>/v1/results, the parts in their orde
     const rp::HttpRequest& request = requests.front();
     CHECK(request.method == rp::HttpMethod::post);
     CHECK(request.url == kResults);
-    // W5.1 adds the token; until then nothing that could be one is sent.
-    CHECK(request.headers.empty());
+    // W5.1: the API token as a bearer token, and no other header.
+    CHECK(request.headers == rp::HttpHeaders{{"Authorization", "Bearer " + kToken}});
     CHECK(request.body.empty());
     CHECK(request.max_attempts == 1);
     CHECK_FALSE(request.retry_on_status);
@@ -159,6 +179,7 @@ TEST_CASE("uploader: over a real connection every part arrives byte for byte, an
         received = req.form;
         authorization = req.get_header_value("Authorization");
         res.status = 202;
+        res.set_header("X-RestoreProof-API", "1");
     });
     rp::HttpClientOptions options;
     options.sleep = [](std::chrono::milliseconds) {};
@@ -166,10 +187,10 @@ TEST_CASE("uploader: over a real connection every part arrives byte for byte, an
     const std::vector<rp::UploadPart> parts = three_parts();
 
     const rp::UploadAnswer answer =
-        rp::CloudUploader(http, server.url()).upload("run-0001", parts);
+        rp::CloudUploader(http, server.url(), kToken).upload("run-0001", parts);
 
     CHECK(answer.accepted);
-    CHECK(authorization.empty());
+    CHECK(authorization == "Bearer " + kToken);
     for (const rp::UploadPart& part : parts) {
         CAPTURE(part.name);
         REQUIRE(received.has_file(part.name));
@@ -180,7 +201,7 @@ TEST_CASE("uploader: over a real connection every part arrives byte for byte, an
 
     const std::string closed =
         "http://127.0.0.1:" + std::to_string(rp::test::closed_local_port());
-    const rp::UploadAnswer refused = rp::CloudUploader(http, closed).upload("run-0001", parts);
+    const rp::UploadAnswer refused = rp::CloudUploader(http, closed, kToken).upload("run-0001", parts);
     CHECK_FALSE(refused.accepted);
     CHECK(refused.error == "upload_unreachable");
 }

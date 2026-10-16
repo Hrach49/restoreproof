@@ -2,20 +2,27 @@
 
 #include "atomic_file.hpp"
 #include "folder_ops.hpp"
+#include "file_read.hpp"
 #include "heartbeat.hpp"
+#include "http_exchange.hpp"
 #include "path_utf8.hpp"
 #include "run_folder_tail.hpp"
 #include "run_pipeline.hpp"
+#include "scm.hpp"
 #include "service_log_stream.hpp"
 #include "text_util.hpp"
 
+#include <rp/cert_export.hpp>
 #include <rp/cli.hpp>
+#include <rp/cloud_api.hpp>
+#include <rp/cloud_command.hpp>
 #include <rp/connector_registry.hpp>
 #include <rp/evidence_builder.hpp>
 #include <rp/outbox_command.hpp>
 #include <rp/rfc3161.hpp>
 #include <rp/secrets.hpp>
 #include <rp/service_jobs.hpp>
+#include <rp/service_command.hpp>
 #include <rp/service_recovery.hpp>
 #include <rp/signer.hpp>
 #include <rp/uploader.hpp>
@@ -154,6 +161,10 @@ RecordFiles record_files()
     return files;
 }
 
+// W5.1 point 7: the poll's one request, and the kept document's name.
+constexpr std::chrono::milliseconds kJobsPollTimeout{30000};
+constexpr std::string_view kKeptJobsName = "jobs.json";
+
 // Everything the env's functions share, kept by each of them.
 struct Body {
     std::shared_ptr<ServiceContext> context;
@@ -168,10 +179,10 @@ struct Body {
     std::string vault_arg;
     std::string config_arg;
 
-    // The Cloud's client and its uploader, from the first flush or heartbeat
-    // to the service's end.
+    // The Cloud's client, from the first flush or heartbeat to the service's
+    // end. The uploader is made per flush with the token the vault then holds
+    // (W5.1).
     std::unique_ptr<IHttpClient> cloud_http;
-    std::optional<CloudUploader> uploader;
     // The hold's one connector and the account it signs in with (point 9).
     std::unique_ptr<connector::IConnector> hold_connector;
     std::string hold_account;
@@ -427,23 +438,117 @@ struct Body {
                 throw std::logic_error("no cloud client");
             }
             cloud_http = std::move(made);
-            uploader.emplace(*cloud_http, config().cloud_url);
         }
         return *cloud_http;
     }
 
-    // Point 10: one pass under the flush mutex.
-    std::optional<FlushReport> flush(const std::function<bool()>& stop)
+    // W5.1 (docs/decisions.md 2026-10-15, point 6): the vault's
+    // cloud_api_token, read at each use, so a token registered or replaced
+    // while the service runs is the next request's; empty for none or a vault
+    // that can't be read. The other values read with it are wiped.
+    std::string api_token() const
+    {
+        try {
+            Secrets secrets = pipeline_env().load_secrets(vault);
+            std::string token = secrets.cloud_api_token.value_or(std::string{});
+            for (const std::string_view name : kSecretNames) {
+                if (std::optional<std::string>* field = secret_field(secrets, name); *field) {
+                    secure_wipe(**field);
+                }
+            }
+            return token;
+        } catch (const ConfigError&) {
+            return {};
+        }
+    }
+
+    // Point 10: one pass under the flush mutex, the uploader carrying the
+    // token the loop hands it (W5.1).
+    std::optional<FlushReport> flush(const std::function<bool()>& stop, std::string_view token,
+                                     bool token_is_new)
     {
         const std::unique_ptr<RunLock> lock = take_outbox_flush_lock(options.take_flush_lock);
         if (!lock) {
             return std::nullopt;
         }
-        cloud();
-        return outbox().flush(*uploader, wall_now(), stop);
+        CloudUploader uploader(cloud(), config().cloud_url, std::string{token});
+        return outbox().flush(uploader, wall_now(), stop, token_is_new);
     }
 
-    std::string heartbeat(const LoopHeartbeat& beat)
+    // W5.1 point 7: GET <cloud_url>/v1/jobs with the token, sent once, at
+    // most kMaxJobsFileBytes of the answer read; what it means is the loop's.
+    CloudJobsAnswer poll_jobs(std::string_view token)
+    {
+        HttpRequest request;
+        request.method = HttpMethod::get;
+        request.url = cloud_endpoint(config().cloud_url, kJobsPath);
+        request.headers["Authorization"] = bearer(token);
+        request.headers["Accept"] = "application/json";
+        request.timeout = kJobsPollTimeout;
+        request.retry_on_status = false;
+        request.max_attempts = 1;
+        request.max_body_bytes = kMaxJobsFileBytes;
+        Exchange answer = exchange(cloud(), request);
+        secure_wipe(request.headers["Authorization"]);
+        CloudJobsAnswer jobs;
+        jobs.word = std::move(answer.word);
+        if (answer.response) {
+            jobs.status = answer.response->status;
+            jobs.kind = cloud_answer_kind(*answer.response);
+            jobs.other_value = other_contract_text(*answer.response);
+            jobs.body = std::move(answer.response->body);
+        }
+        return jobs;
+    }
+
+    std::filesystem::path kept_jobs_file() const { return state_dir / std::string{kKeptJobsName}; }
+
+    // state\jobs.json written whole, over the one there.
+    bool keep_jobs(std::string_view bytes) const
+    {
+        if (!make_folder(state_dir)) {
+            return false;
+        }
+        AtomicWriteOptions replace;
+        replace.replace = true;
+        return write_file_atomically(kept_jobs_file(), bytes, replace);
+    }
+
+    void drop_jobs() const
+    {
+        std::error_code ec;
+        std::filesystem::remove(kept_jobs_file(), ec);
+    }
+
+    // Its age by its last write; nullopt when it isn't there or can't be told.
+    // Both times are the file clock's: clock_cast to system_clock goes
+    // through utc_clock, which in MSVC loads icu.dll's time-zone data and
+    // throws where Windows has none (Server 2016 and 2019; the W5.1 code
+    // review's finding 1).
+    std::optional<std::chrono::system_clock::duration> kept_jobs_age() const
+    {
+        std::error_code ec;
+        const std::filesystem::file_time_type written =
+            std::filesystem::last_write_time(kept_jobs_file(), ec);
+        if (ec) {
+            return std::nullopt;
+        }
+        return std::chrono::duration_cast<std::chrono::system_clock::duration>(
+            std::filesystem::file_time_type::clock::now() - written);
+    }
+
+    // state\worker.json's worker_id, when it reads.
+    std::optional<std::string> worker_id() const
+    {
+        const FileRead file = read_whole_file(state_dir / std::string{kWorkerFileName}, 64u * 1024u);
+        if (file.state != FileState::read) {
+            return std::nullopt;
+        }
+        const std::optional<WorkerRecord> record = parse_worker_record(file.bytes);
+        return record ? std::optional<std::string>{record->worker_id} : std::nullopt;
+    }
+
+    std::string heartbeat(const LoopHeartbeat& beat, std::string_view token)
     {
         Heartbeat heartbeat;
         heartbeat.version = std::string{version()};
@@ -451,7 +556,9 @@ struct Body {
         heartbeat.last_error_at = beat.last_error_at;
         heartbeat.outbox_depth = beat.outbox_depth;
         heartbeat.uptime_s = beat.uptime_s;
-        return send_heartbeat(cloud(), config().cloud_url, heartbeat).error;
+        const HeartbeatAnswer answer = send_heartbeat(cloud(), config().cloud_url, token, heartbeat);
+        // W5.1 point 5: taken, and the loop says it once.
+        return answer.not_cloud ? std::string{kHeartbeatNotCloud} : answer.error;
     }
 
     // The runs under outbox\, the ones that can't be sent included.
@@ -581,8 +688,27 @@ ServiceLoopEnv make_worker_loop_env(const std::shared_ptr<ServiceContext>& conte
             body->config(), *record.client, body->vault, out, body->pipeline_env()))};
     };
 
-    env.flush = [body](const std::function<bool()>& stop) { return body->flush(stop); };
-    env.heartbeat = [body](const LoopHeartbeat& beat) { return body->heartbeat(beat); };
+    env.flush = [body](const std::function<bool()>& stop, std::string_view token, bool token_is_new) {
+        return body->flush(stop, token, token_is_new);
+    };
+    env.heartbeat = [body](const LoopHeartbeat& beat, std::string_view token) {
+        return body->heartbeat(beat, token);
+    };
+    // W5.1: the token at each use, the Cloud as the job source without a
+    // jobs_file, its answer kept in state\jobs.json, the Worker's id.
+    env.api_token = [body]() -> std::optional<std::string> {
+        std::string token = body->api_token();
+        if (token.empty()) {
+            return std::nullopt;
+        }
+        return token;
+    };
+    env.poll_jobs = [body](std::string_view token) { return body->poll_jobs(token); };
+    env.kept_jobs_file = body->kept_jobs_file();
+    env.keep_jobs = [body](std::string_view bytes) { return body->keep_jobs(bytes); };
+    env.drop_jobs = [body] { body->drop_jobs(); };
+    env.kept_jobs_age = [body] { return body->kept_jobs_age(); };
+    env.worker_id = body->worker_id();
     return env;
 }
 
@@ -592,6 +718,26 @@ ServiceBody make_worker_body(WorkerBodyOptions options)
         ServiceLoop loop(make_worker_loop_env(context, options));
         loop.run();
     };
+}
+
+int service_first_start(std::ostream& out, std::ostream& err)
+{
+    ServiceSetup setup;
+    if (scm::read_setup(kServiceName, setup).error != 0) {
+        return exit_code::ok;
+    }
+    std::filesystem::path config;
+    std::filesystem::path vault;
+    try {
+        const std::optional<std::string> arg = service_config_argument(setup.command_line);
+        const std::optional<std::filesystem::path> named = arg ? path_from_utf8(*arg) : std::nullopt;
+        config = named ? *named : default_config_path();
+        vault = default_vault_path();
+    } catch (const ConfigError& e) {
+        err << "config error: " << e.what() << '\n';
+        return exit_code::config;
+    }
+    return first_start(config, vault, out, err, default_cloud_command_env());
 }
 
 } // namespace rp

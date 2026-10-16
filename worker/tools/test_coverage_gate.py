@@ -142,6 +142,7 @@ class GateTest(unittest.TestCase):
             ("src/service_log.cpp", "service"),
             ("src/client_profile.cpp", "client_profile"),
             ("src/client_check.cpp", "client_check"),
+            ("src/cloud_command.cpp", "cloud"),
         ):
             with self.subTest(rel=rel):
                 code, out, summary = self.run_gate(
@@ -182,6 +183,10 @@ class GateTest(unittest.TestCase):
             # W4.11: the client check's rule.
             r"src\client_check.cpp",
             r"include\rp\client_check.hpp",
+            # W5.1: the Cloud's answers and the registration.
+            r"src\cloud_api.cpp",
+            r"src\cloud_command.cpp",
+            r"include\rp\cloud_api.hpp",
         ):
             with self.subTest(name=name):
                 xml = cobertura((r"src\big.cpp", covered(1000)), (name, mixed(1, 1)))
@@ -279,6 +284,7 @@ class GateTest(unittest.TestCase):
             "client_profile",
             "strict_json",
             "client_check",
+            "cloud",
         ):
             self.assertIn(f"`{name}`: not present yet", summary)
 

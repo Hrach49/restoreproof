@@ -27,6 +27,10 @@ namespace rp {
 
 inline constexpr std::string_view kOutboxFolderName = "outbox";
 inline constexpr std::string_view kSentFolderName = "sent";
+// W5.1 (docs/decisions.md 2026-10-15, point 8): a run the Cloud refused for
+// good, byte for byte as queued but manifest.json, for the operator. Never
+// sent again, never pruned, never deleted by the Worker.
+inline constexpr std::string_view kFailedFolderName = "failed";
 inline constexpr std::string_view kOutboxManifestName = "manifest.json";
 inline constexpr std::string_view kOutboxManifestFormat = "restoreproof.outbox-manifest.v1";
 
@@ -65,6 +69,9 @@ inline constexpr std::string_view kTimeout = "upload_timeout";
 inline constexpr std::string_view kInternal = "upload_internal"; // the uploader itself failed
 // Then the answer's status, three digits: any answer but 202.
 inline constexpr std::string_view kHttpPrefix = "upload_http_";
+// W5.1: a 2xx without X-RestoreProof-API: 1 (or with another value) is not the
+// Cloud's answer: a proxy or a wrong cloud_url, retried like unreachable.
+inline constexpr std::string_view kNotCloud = "upload_not_cloud";
 // Not an attempt: a file of the folder isn't what the run signed.
 inline constexpr std::string_view kFolderChanged = "folder_changed";
 } // namespace upload_code
@@ -76,9 +83,16 @@ inline constexpr std::string_view kFolderChanged = "folder_changed";
 inline constexpr std::string_view kFlushNotRead = "not_read";
 
 // Whether `code` is what an uploader may answer for a failed attempt:
-// upload_unreachable, upload_timeout, upload_internal, or upload_http_ and a
-// status of three digits.
+// upload_unreachable, upload_timeout, upload_internal, upload_not_cloud, or
+// upload_http_ and a status of three digits.
 bool is_upload_error(std::string_view code) noexcept;
+
+// W5.1 (C5.7 point 15): the Cloud's answers that will never succeed, whose run
+// goes to failed\: upload_http_400, _404, _409, _415 and _422.
+bool is_refused_for_good(std::string_view code) noexcept;
+
+// W5.1: the Cloud refused the token (the run waits for another token).
+inline constexpr std::string_view kTokenRefused = "upload_http_401";
 
 // now + min(60 s x 2^(attempts - 1), 3600 s) is when a run that has failed
 // `attempts` times is tried again: 60, 120, 240, 480, 960, 1920, then 3600 s.
@@ -176,6 +190,7 @@ enum class QueueResult {
     not_complete,     // no result.json in the run folder: never queued
     already_queued,   // <root>\outbox\<run_id> is there
     already_sent,     // <root>\sent\<run_id> is there
+    already_failed,   // <root>\failed\<run_id> is there (W5.1)
     no_outbox_folder, // <root>\outbox couldn't be made
     not_same_volume,  // the rename would be a copy
     not_moved         // the rename failed; `error` is Windows' code
@@ -201,6 +216,7 @@ struct OutboxListing {
     bool readable = true;
     std::vector<QueuedRun> queued; // by run ID
     std::size_t sent = 0;          // folders under sent
+    std::size_t failed = 0;        // folders under failed (W5.1)
     // "outbox error: <folder>: no result.json; not a queued run", per folder
     // under outbox\ that isn't a run.
     std::vector<std::string> errors;
@@ -210,7 +226,8 @@ struct OutboxListing {
 enum class OutboxHolds {
     none,
     queued, // something is at <root>\outbox\<run_id>
-    sent    // something is at <root>\sent\<run_id>
+    sent,   // something is at <root>\sent\<run_id>
+    failed  // something is at <root>\failed\<run_id> (W5.1)
 };
 
 // What one flush did. The lines are whole, without their line end.
@@ -224,6 +241,10 @@ struct FlushReport {
     bool stopped = false;
     std::size_t queued = 0;       // runs still under outbox
     std::size_t sent = 0;         // folders under sent
+    std::size_t failed = 0;       // folders under failed (W5.1)
+    // W5.1: the Cloud answered 401: the pass stopped there, the runs after it
+    // counted in `queued` with no line.
+    bool token_refused = false;
 };
 
 class Outbox {
@@ -232,6 +253,7 @@ public:
 
     std::filesystem::path outbox_folder() const;
     std::filesystem::path sent_folder() const;
+    std::filesystem::path failed_folder() const;
 
     // Queues the finished run folder `run_folder` (one that holds result.json)
     // as <root>\outbox\<run_id>: makes <root>\outbox when it isn't there,
@@ -276,8 +298,16 @@ public:
     // asked again, no further upload is started and no folder moved, and the
     // runs left are counted as queued (W4.8 point 10). An upload in flight is
     // not ended by it. Never throws but for no memory and what `stop` throws.
+    //
+    // W5.1 (docs/decisions.md 2026-10-15, point 8): an answer that is a
+    // refusal for good (is_refused_for_good) moves the run to failed\ after
+    // its manifest is written ("failed <run>: <code>" on out, "outbox error:
+    // <run>: refused by the Cloud (<code>); moved to failed" on err); a 401
+    // stops the pass (token_refused). failed\ counts under the cap with the
+    // queue and is never pruned. `token_is_new`: the token is not the one a
+    // 401 refused, so a run whose last_error is upload_http_401 is due now.
     FlushReport flush(IUploader& uploader, std::chrono::system_clock::time_point now,
-                      const std::function<bool()>& stop = {});
+                      const std::function<bool()>& stop = {}, bool token_is_new = false);
 
 private:
     OutboxOptions options_;

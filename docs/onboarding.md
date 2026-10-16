@@ -95,12 +95,23 @@ nothing and prints no secret but the one token it exists to print.
    the install token is shown once; the Cloud stores its hash alone      (stderr)
    ```
 
-   Give the token to the Worker's operator by a channel of yours; it goes into the Worker's
-   vault as `cloud_install_token` (W5.1) and the Worker registers itself at its first start
-   (`POST /v1/workers/register`, C5.5), which prints nothing here. Until W5.1 is built, the
-   registration is a curl with the token in the body (`docs/testing.md`, "The onboarding CLI and
-   the scheduler"). The registration's answer carries the **`worker_id`** the next step needs
-   (it is also the Worker's row; C6.2's page lists it).
+   Give the token to the Worker's operator by a channel of yours. On the Worker's machine, from
+   an elevated prompt (W5.1; `docs/worker-config.md` "`rpworker cloud register`"):
+
+   ```
+   rpworker vault set cloud_install_token          (the token at the console, or one line on stdin)
+   rpworker service install --config <path>
+   rpworker service start                          (the first start registers, then starts)
+   registered worker 65fd… key 06e3…
+   started RestoreProof
+   ```
+
+   `rpworker cloud register` does the registration alone, for a service started another way.
+   The token is spent there (`POST /v1/workers/register`, C5.5) and removed from the vault in
+   the write that stores the API token; it is never typed on a command line. The **`worker_id`**
+   the next step needs is on that line (and in `state\worker.json`; C6.2's `/workers` page lists
+   the Worker). A Cloud reached over a private CA (the laptop's Compose stack behind Caddy,
+   `https://localhost:8443`) is trusted through the Worker's `cloud_ca_file`.
 
 4. **The connector**: the client on that Worker, with the client's profile. The profile file is
    the same `restoreproof.client-profile.v1` document `rpworker client check --profile-file`

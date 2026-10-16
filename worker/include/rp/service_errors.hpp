@@ -28,6 +28,10 @@ inline constexpr std::string_view kNotRead = "not_read";
 inline constexpr std::string_view kVeeamLookFailed = "veeam_look_failed";
 inline constexpr std::string_view kVeeamSessionsWorking = "veeam_sessions_working";
 inline constexpr std::string_view kRecoveryCleanIncomplete = "recovery_clean_incomplete";
+// W5.1 (docs/decisions.md 2026-10-15, point 6): the vault holds no API token,
+// and the Cloud refused the one it holds.
+inline constexpr std::string_view kNotRegistered = "not_registered";
+inline constexpr std::string_view kTokenRefused = "token_refused";
 } // namespace service_error
 
 // The fixed words, in the entry's order: the thirteen above, then the

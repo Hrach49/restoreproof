@@ -91,6 +91,25 @@ class ShapeTests(unittest.TestCase):
                 self.assertEqual(["keyed_secret"], [f.shape for f in found])
                 self.assertEqual(value, found[0].value)
 
+    def test_the_cloud_s_tokens_are_keyed_secrets_and_a_placeholder_is_none(self):
+        """W5.1 (docs/decisions.md 2026-10-15, point 10): registration's
+        install_token and api_token and the vault's names ending in them."""
+        token = "Zm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9vYmFyZm9"
+        for text in [
+            '{"api_token": "%s"}' % token,
+            '{"install_token":"%s","version":"0.0.0"}' % token,
+            "cloud_api_token=%s" % token,
+            "cloud_install_token = %s" % token,
+        ]:
+            with self.subTest(text=text):
+                found = scan.find_shapes(text)
+                self.assertEqual(["keyed_secret"], [f.shape for f in found])
+                self.assertEqual(token, found[0].value)
+        for text in ['{"api_token": "SCRUBBED"}', '"install_token": "<token>"', '{"api_tokens_left": 3}',
+                     "install_token.create install_token:b2e92b1d-c49a-4934-be83-ad9002ca6fa1"]:
+            with self.subTest(text=text):
+                self.assertEqual([], scan.find_shapes(text))
+
     def test_a_finding_carries_the_value_for_the_allowlist_only(self):
         found = scan.find_shapes("x " + RFC_KEY_1 + " y")
         self.assertEqual(1, len(found))

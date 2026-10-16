@@ -1,5 +1,8 @@
 #include <rp/uploader.hpp>
 
+#include <rp/cert_export.hpp>
+#include <rp/cloud_api.hpp>
+
 #include "command_config.hpp"
 
 #include <format>
@@ -34,9 +37,14 @@ std::string cloud_endpoint(std::string cloud_url, std::string_view path)
     return cloud_url.append(path);
 }
 
-CloudUploader::CloudUploader(IHttpClient& http, std::string cloud_url)
-    : http_(http), url_(cloud_endpoint(std::move(cloud_url), kResultsPath))
+CloudUploader::CloudUploader(IHttpClient& http, std::string cloud_url, std::string token)
+    : http_(http), url_(cloud_endpoint(std::move(cloud_url), kResultsPath)), token_(std::move(token))
 {
+}
+
+CloudUploader::~CloudUploader()
+{
+    secure_wipe(token_);
 }
 
 UploadAnswer CloudUploader::upload(const std::string&, const std::vector<UploadPart>& parts)
@@ -45,6 +53,7 @@ UploadAnswer CloudUploader::upload(const std::string&, const std::vector<UploadP
         HttpRequest request;
         request.method = HttpMethod::post;
         request.url = url_;
+        request.headers["Authorization"] = bearer(token_);
         for (const UploadPart& part : parts) {
             request.parts.push_back({part.name, part.bytes, part.filename, part.content_type});
         }
@@ -53,6 +62,11 @@ UploadAnswer CloudUploader::upload(const std::string&, const std::vector<UploadP
         request.max_attempts = 1;
         request.max_body_bytes = kMaxUploadAnswerBytes;
         const HttpResponse response = http_.send(request);
+        // A 2xx is the Cloud's only with its contract header (W5.1 point 5).
+        if (response.status >= 200 && response.status <= 299 &&
+            cloud_answer_kind(response) != CloudAnswerKind::cloud) {
+            return {false, std::string{upload_code::kNotCloud}};
+        }
         if (response.status == kUploadAccepted) {
             return {true, {}};
         }

@@ -819,3 +819,45 @@ async def test_the_vector_s_run_must_be_the_cloud_s(lab):
 
     assert (response.status_code, response.json()) == (404, {"detail": results.NO_SUCH_RUN})
     assert await lab.wrote(before) == [("result.rejected", f"worker:{lab.worker_id} {results.NO_SUCH_RUN}")]
+
+
+# --- W5.1: the Worker's wire bytes (C5.11's code review, finding 3) ---------------------------
+
+WIRE_FILE = VECTOR_FILE.with_suffix(".wire")
+WIRE_NOTE_FILE = VECTOR_FILE.with_suffix(".wire.json")
+
+
+def test_the_wire_vector_is_what_its_note_says():
+    """`rptests "[.write_shared_upload_wire]"` wrote both files from one
+    capture of the C++ uploader (docs/decisions.md 2026-10-15, "W5.1 (#66)",
+    point 10)."""
+    wire = WIRE_FILE.read_bytes()
+    note = json.loads(WIRE_NOTE_FILE.read_bytes().decode("utf-8"))
+
+    assert note["length"] == len(wire)
+    assert note["sha256"] == hashlib.sha256(wire).hexdigest()
+    assert note["content_type"] == "multipart/form-data; boundary=" + note["boundary"]
+    # The bytes hold the vector's parts, in the outbox's order, and no token.
+    names = [p["name"] for p in VECTOR["upload"]]
+    positions = [wire.index(f'name="{name}"'.encode()) for name in names]
+    assert positions == sorted(positions)
+    assert b"Bearer" not in wire and b"Authorization" not in wire
+
+
+async def test_the_cloud_takes_the_bytes_the_cpp_worker_put_on_the_wire(lab):
+    """The body cpr and curl framed, posted unchanged with the content type
+    they sent: the same 202 `pass` as the part list's."""
+    note = json.loads(WIRE_NOTE_FILE.read_bytes().decode("utf-8"))
+    parts = {p["name"]: vector_bytes(p["filename"]) for p in VECTOR["upload"]}
+    lab.expect_puts(lab.run_id, parts)
+
+    response = await lab.post(
+        None, lab.token, content=WIRE_FILE.read_bytes(), headers={"Content-Type": note["content_type"]}
+    )
+
+    assert response.status_code == 202, response.text
+    assert response.json() == {"run_id": VECTOR["run_id"], "state": "pass"}
+    row = await lab.run_row(lab.run_id)
+    assert (row.state, row.signature_ok) == ("pass", True)
+    assert row.bundle_sha256 == VECTOR["bundle_sha256"]
+    lab.stubber.assert_no_pending_responses()

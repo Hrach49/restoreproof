@@ -1,0 +1,13 @@
+{
+  "source": "docs/api/cloud-lab/w5.1-record/record_cloud.py against the Compose stack through Caddy",
+  "request": "POST /v1/workers/register",
+  "status": 401,
+  "headers": {
+    "Content-Type": "application/json",
+    "Www-Authenticate": "Bearer",
+    "X-Restoreproof-Api": "1"
+  },
+  "body": {
+    "detail": "not authenticated"
+  }
+}

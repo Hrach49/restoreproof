@@ -346,6 +346,12 @@ Refusal start_refusal(const ScmResult& sent)
 // `rpworker service start`.
 int run_start(const Context& context)
 {
+    // W5.1 point 2: the first start registers before anything is started.
+    if (context.env.first_start) {
+        if (const int code = context.env.first_start(context.out, context.err); code != 0) {
+            return code;
+        }
+    }
     const Clock::time_point began = context.now();
     ScmResult sent = context.scm.start_service(kServiceName);
     if (sent.error == kAlreadyRunning) {
@@ -501,7 +507,28 @@ ServiceCommandEnv default_service_command_env()
     ServiceCommandEnv env;
     // W4.8: the scheduler loop over its real calls and paths.
     env.body = make_worker_body();
+    // W5.1: the first start registers.
+    env.first_start = service_first_start;
     return env;
+}
+
+std::optional<std::string> service_config_argument(std::string_view command_line)
+{
+    // install's own form: a quoted executable, then exactly this, then a path
+    // in quotes holding none (install refuses one).
+    constexpr std::string_view kConfigPart = "\" service run --config \"";
+    const std::size_t at = command_line.find(kConfigPart);
+    if (!command_line.starts_with('"') || at == std::string_view::npos ||
+        !command_line.ends_with('"')) {
+        return std::nullopt;
+    }
+    const std::string_view path =
+        command_line.substr(at + kConfigPart.size(),
+                            command_line.size() - at - kConfigPart.size() - 1);
+    if (path.empty() || path.find('"') != std::string_view::npos) {
+        return std::nullopt;
+    }
+    return std::string{path};
 }
 
 int run_service_command(std::span<const std::string_view> args, std::ostream& out,

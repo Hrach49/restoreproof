@@ -240,18 +240,42 @@ struct SentRun {
     std::uintmax_t bytes = 0;
 };
 
+// The refusal for a run ID the outbox already holds somewhere.
+QueueResult held_result(OutboxHolds held) noexcept
+{
+    switch (held) {
+    case OutboxHolds::queued:
+        return QueueResult::already_queued;
+    case OutboxHolds::sent:
+        return QueueResult::already_sent;
+    default:
+        return QueueResult::already_failed;
+    }
+}
+
 } // namespace
 
 bool is_upload_error(std::string_view code) noexcept
 {
     if (code == upload_code::kUnreachable || code == upload_code::kTimeout ||
-        code == upload_code::kInternal) {
+        code == upload_code::kInternal || code == upload_code::kNotCloud) {
         return true;
     }
     const std::string_view prefix = upload_code::kHttpPrefix;
     return code.size() == prefix.size() + 3 && code.starts_with(prefix) &&
            std::ranges::all_of(code.substr(prefix.size()),
                                [](char c) { return c >= '0' && c <= '9'; });
+}
+
+bool is_refused_for_good(std::string_view code) noexcept
+{
+    return code == "upload_http_400" || code == "upload_http_404" || code == "upload_http_409" ||
+           code == "upload_http_415" || code == "upload_http_422";
+}
+
+std::filesystem::path Outbox::failed_folder() const
+{
+    return options_.root / std::string{kFailedFolderName};
 }
 
 std::chrono::seconds upload_retry_delay(int attempts) noexcept
@@ -404,8 +428,7 @@ QueueOutcome Outbox::queue(const std::filesystem::path& run_folder, std::string_
     }
     outcome.folder = outbox_folder() / *name;
     if (const OutboxHolds held = holds(run_id); held != OutboxHolds::none) {
-        outcome.result = held == OutboxHolds::queued ? QueueResult::already_queued
-                                                     : QueueResult::already_sent;
+        outcome.result = held_result(held);
         return outcome;
     }
     if (!make_folder(outbox_folder())) {
@@ -454,6 +477,9 @@ std::string Outbox::queue_error(const QueueOutcome& outcome,
     case QueueResult::already_sent:
         return "outbox error: " + shown(sent_folder() / outcome.folder.filename()) +
                ": already sent";
+    case QueueResult::already_failed:
+        return "outbox error: " + shown(failed_folder() / outcome.folder.filename()) +
+               ": already failed";
     case QueueResult::no_outbox_folder:
         return "outbox error: " + shown(outbox_folder()) + ": the folder couldn't be made";
     case QueueResult::not_same_volume:
@@ -481,8 +507,7 @@ std::string Outbox::prepare(const std::filesystem::path& runs_root,
     };
     if (const OutboxHolds held = run_id ? holds(*run_id) : OutboxHolds::none;
         held != OutboxHolds::none) {
-        return refused(held == OutboxHolds::queued ? QueueResult::already_queued
-                                                   : QueueResult::already_sent);
+        return refused(held_result(held));
     }
     if (!make_folder(outbox_folder())) {
         return refused(QueueResult::no_outbox_folder);
@@ -500,10 +525,14 @@ OutboxHolds Outbox::holds(std::string_view run_id) const
     if (!name || name->empty()) {
         return OutboxHolds::none;
     }
-    return path_kind(outbox_folder() / *name) != PathKind::none
-               ? OutboxHolds::queued
-               : path_kind(sent_folder() / *name) != PathKind::none ? OutboxHolds::sent
-                                                                    : OutboxHolds::none;
+    if (path_kind(outbox_folder() / *name) != PathKind::none) {
+        return OutboxHolds::queued;
+    }
+    if (path_kind(sent_folder() / *name) != PathKind::none) {
+        return OutboxHolds::sent;
+    }
+    return path_kind(failed_folder() / *name) != PathKind::none ? OutboxHolds::failed
+                                                                : OutboxHolds::none;
 }
 
 OutboxListing Outbox::list() const
@@ -511,11 +540,13 @@ OutboxListing Outbox::list() const
     OutboxListing listing;
     const std::optional<std::vector<std::string>> queued = folders_in(outbox_folder());
     const std::optional<std::vector<std::string>> sent = folders_in(sent_folder());
-    if (!queued || !sent) {
+    const std::optional<std::vector<std::string>> failed = folders_in(failed_folder());
+    if (!queued || !sent || !failed) {
         listing.readable = false;
         return listing;
     }
     listing.sent = sent->size();
+    listing.failed = failed->size();
     for (const std::string& run_id : *queued) {
         const path folder = outbox_folder() / *path_from_utf8(run_id);
         if (!is_run_folder(folder, run_id)) {
@@ -528,7 +559,7 @@ OutboxListing Outbox::list() const
 }
 
 FlushReport Outbox::flush(IUploader& uploader, std::chrono::system_clock::time_point now,
-                          const std::function<bool()>& stop)
+                          const std::function<bool()>& stop, bool token_is_new)
 {
     FlushReport report;
     const std::string now_text = outbox_time_text(now);
@@ -543,7 +574,8 @@ FlushReport Outbox::flush(IUploader& uploader, std::chrono::system_clock::time_p
 
     const std::optional<std::vector<std::string>> queued_names = folders_in(outbox_folder());
     const std::optional<std::vector<std::string>> sent_names = folders_in(sent_folder());
-    if (!queued_names || !sent_names) {
+    const std::optional<std::vector<std::string>> failed_names = folders_in(failed_folder());
+    if (!queued_names || !sent_names || !failed_names) {
         report.readable = false;
         error(shown(options_.root) + ": the outbox can't be read");
         return report;
@@ -578,6 +610,13 @@ FlushReport Outbox::flush(IUploader& uploader, std::chrono::system_clock::time_p
             warning(shown(folder) + ": manifest.json was made again");
         }
         queue.push_back(std::move(*manifest));
+    }
+
+    // W5.1: the runs the Cloud refused for good count with the queue, and are
+    // never pruned.
+    report.failed = failed_names->size();
+    for (const std::string& run_id : *failed_names) {
+        queue_bytes += files.folder_bytes(failed_folder() / *path_from_utf8(run_id)).value_or(0);
     }
 
     // The caps (point 4): only runs the Cloud has, by their sent_at.
@@ -634,6 +673,7 @@ FlushReport Outbox::flush(IUploader& uploader, std::chrono::system_clock::time_p
         const path folder = outbox_folder() / name;
         const path manifest_file = folder / kOutboxManifestName;
         const path sent = sent_folder() / name;
+        const path refused = failed_folder() / name;
         // To sent\: the last step of this flush's upload, or all that is left
         // of an earlier one's.
         const auto move_to_sent = [&](std::string_view word) {
@@ -649,12 +689,41 @@ FlushReport Outbox::flush(IUploader& uploader, std::chrono::system_clock::time_p
             ++report.sent;
             report.out.push_back(std::string{word} + " " + id);
         };
+        // To failed\ (W5.1): a run the Cloud refused for good, whose manifest
+        // says so; `word` is the line on out.
+        const auto move_to_failed = [&](const std::string& code, const std::string& word) {
+            static_cast<void>(make_folder(failed_folder()));
+            const unsigned long moved = files.move_folder(folder, refused);
+            if (moved != 0) {
+                error(id + std::format(": refused by the Cloud ({}), but couldn't be moved to "
+                                       "failed (error {})",
+                                       code, moved));
+                report.out.push_back("kept " + id + ": " + code);
+                return;
+            }
+            --report.queued;
+            ++report.failed;
+            report.out.push_back(word);
+        };
         if (manifest.sent_at) {
             move_to_sent("moved");
             continue;
         }
         ++report.queued;
-        if (manifest.next_attempt_at && *manifest.next_attempt_at > now_text) {
+        // A move left by an earlier pass is a rename, sent nowhere: made
+        // even after a 401 (the W5.1 code review's finding 13).
+        if (manifest.last_error && is_refused_for_good(*manifest.last_error) &&
+            !manifest.next_attempt_at) {
+            move_to_failed(*manifest.last_error, "moved " + id + " to failed");
+            continue;
+        }
+        if (report.token_refused) {
+            // The Cloud refused the token: nothing more is sent with it.
+            continue;
+        }
+        const bool token_waits =
+            token_is_new && manifest.last_error == std::string{kTokenRefused};
+        if (!token_waits && manifest.next_attempt_at && *manifest.next_attempt_at > now_text) {
             report.out.push_back("waiting " + id + ": next at " + *manifest.next_attempt_at);
             continue;
         }
@@ -709,13 +778,30 @@ FlushReport Outbox::flush(IUploader& uploader, std::chrono::system_clock::time_p
         }
         manifest.last_error = is_upload_error(answer.error) ? answer.error
                                                             : std::string{upload_code::kInternal};
-        manifest.next_attempt_at = outbox_time_text(now + upload_retry_delay(manifest.attempts));
+        // W5.1: a refusal for good is never tried again; the manifest is
+        // written first, so a move that fails leaves a run the next flush only
+        // moves.
+        const bool for_good = is_refused_for_good(*manifest.last_error);
+        report.token_refused = *manifest.last_error == kTokenRefused;
+        manifest.next_attempt_at =
+            for_good ? std::nullopt
+                     : std::optional<std::string>{
+                           outbox_time_text(now + upload_retry_delay(manifest.attempts))};
         if (!files.write_manifest(manifest_file, manifest_text(manifest))) {
             error(shown(manifest_file) + ": could not be written");
         }
-        report.out.push_back(std::format("kept {}: {}; attempt {}, next at {}", id,
-                                         *manifest.last_error, manifest.attempts,
-                                         *manifest.next_attempt_at));
+        if (for_good) {
+            const std::string code = *manifest.last_error;
+            const std::size_t errors_before = report.err.size();
+            move_to_failed(code, "failed " + id + ": " + code);
+            if (report.err.size() == errors_before) {
+                error(id + ": refused by the Cloud (" + code + "); moved to failed");
+            }
+        } else {
+            report.out.push_back(std::format("kept {}: {}; attempt {}, next at {}", id,
+                                             *manifest.last_error, manifest.attempts,
+                                             *manifest.next_attempt_at));
+        }
     }
     return report;
 }

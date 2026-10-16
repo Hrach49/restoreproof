@@ -34,7 +34,8 @@ TEST_CASE("service errors: the fixed list, in the entry's order", "[service_erro
         "run_not_closed",     "run_not_queued",     "folder_changed",
         "not_read",           "veeam_look_failed",  "veeam_sessions_working",
         "recovery_clean_incomplete", "upload_unreachable", "upload_timeout",
-        "upload_internal"};
+        "upload_internal",           "not_registered",     "token_refused",
+        "upload_not_cloud"};
     const auto codes = rp::service_error_codes();
 
     CHECK(std::vector<std::string_view>(codes.begin(), codes.end()) == expected);

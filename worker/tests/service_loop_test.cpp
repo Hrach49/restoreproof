@@ -308,9 +308,12 @@ TEST_CASE("a job whose run is already queued, sent or has a run folder is skippe
           "[service_loop]")
 {
     LoopLab lab;
-    lab.jobs = jobs_text({job_text("job-q"), job_text("job-s"), job_text("job-f")});
+    lab.jobs = jobs_text(
+        {job_text("job-q"), job_text("job-s"), job_text("job-x"), job_text("job-f")});
     lab.queued.insert("job-q");
     lab.sent.insert("job-s");
+    // In failed\ with no done mark (the W5.1 code review's finding 12).
+    lab.failed.insert("job-x");
     lab.folders.insert("job-f");
     lab.on_flush = [] { return rp::FlushReport{}; };
 
@@ -318,6 +321,7 @@ TEST_CASE("a job whose run is already queued, sent or has a run folder is skippe
 
     CHECK(lab.lines == Lines{kStarted, "info skipped job-q: already queued",
                              "info skipped job-s: already sent",
+                             "info skipped job-x: already failed",
                              "info skipped job-f: a run folder is already there"});
     CHECK(lab.runs.empty());
     CHECK(lab.writes.empty());
@@ -1860,4 +1864,450 @@ TEST_CASE("one job from poll to queued and sent: every line in order, the record
     CHECK(lab.waited == std::vector<std::chrono::milliseconds>{60s});
     CHECK(lab.heartbeats.size() == 1);
     CHECK_FALSE(lab.last_error);
+}
+
+
+// --- W5.1: the Cloud (docs/decisions.md 2026-10-15, points 5, 6 and 7) -----------------
+
+namespace {
+
+const std::string kKept = "C:\\rp\\state\\jobs.json";
+const std::string kNoToken = "warning cloud: cloud_api_token is not in the vault; nothing is sent "
+                             "to the Cloud (rpworker cloud register)";
+const std::string kRefused = "warning cloud: the Cloud refused the API token (401); nothing is "
+                             "polled or uploaded until the vault holds another token";
+
+rp::CloudJobsAnswer status_answer(int status, rp::CloudAnswerKind kind = rp::CloudAnswerKind::cloud)
+{
+    rp::CloudJobsAnswer answer;
+    answer.status = status;
+    answer.kind = kind;
+    return answer;
+}
+
+// A lab whose job source is the Cloud, with a token.
+void on_the_cloud(LoopLab& lab)
+{
+    lab.has_jobs_file = false;
+    lab.cloud = true;
+    lab.token = std::optional<std::string>{"tok"};
+}
+
+} // namespace
+
+TEST_CASE("cloud: without an API token nothing goes to the Cloud, said once an hour; a jobs file "
+          "still runs",
+          "[service_loop][w51]")
+{
+    LoopLab lab;
+    lab.token = std::optional<std::string>{};
+    lab.config.poll_interval_s = 1800;
+    lab.config.heartbeat_interval_s = 86400;
+    lab.jobs = jobs_text({job_text("job-2")});
+
+    lab.run(3);
+
+    CHECK(lab.count(kNoToken) == 2);
+    CHECK(lab.count_call("heartbeat") == 0);
+    CHECK(lab.count_call("flush") == 0);
+    CHECK(lab.runs == Lines{"job-2"});
+    CHECK(lab.last_error == "not_registered");
+}
+
+TEST_CASE("cloud: an empty API token is none", "[service_loop][w51]")
+{
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.token = std::optional<std::string>{""};
+
+    lab.run();
+
+    CHECK(lab.count(kNoToken) == 1);
+    CHECK(lab.count_call("poll jobs") == 0);
+    CHECK(lab.count_call("flush") == 0);
+}
+
+TEST_CASE("cloud: the start says the Cloud is the job source and names the Worker", "[service_loop][w51]")
+{
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.worker_id = "65fddc39-0792-4178-8361-49d53450b29e";
+    lab.stop = true;
+
+    lab.run();
+
+    CHECK(lab.lines == Lines{"info scheduler started: poll 60 s, heartbeat 600 s, jobs the Cloud, "
+                             "runs C:\\rp\\runs, outbox C:\\rp",
+                             "info cloud: registered as worker 65fddc39-0792-4178-8361-49d53450b29e"});
+}
+
+TEST_CASE("cloud: the Cloud's document is kept and run; the Cloud is asked again once its jobs are "
+          "settled",
+          "[service_loop][w51]")
+{
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.polls = {LoopLab::cloud_jobs(jobs_text({job_text("job-2"), job_text("job-3")}))};
+
+    lab.run();
+
+    CHECK(lab.runs == Lines{"job-2", "job-3"});
+    CHECK(lab.polled_with == Lines{"tok"});
+    CHECK(lab.kept == jobs_text({job_text("job-2"), job_text("job-3")}));
+    const Lines first{lab.calls.begin(), lab.calls.begin() + 6};
+    CHECK(first == Lines{"read record", "heartbeat", "read record", "read kept jobs", "poll jobs",
+                         "keep jobs"});
+    CHECK(lab.flush_tokens.front() == "tok");
+    CHECK(lab.heartbeat_tokens == Lines{"tok"});
+
+    // Another life: both are settled, so the document goes and the Cloud is asked.
+    lab.polls.clear();
+    lab.calls.clear();
+    lab.run();
+    CHECK(lab.runs == Lines{"job-2", "job-3"});
+    CHECK(lab.count_call("drop jobs") == 1);
+    CHECK(lab.count_call("poll jobs") == 1);
+}
+
+TEST_CASE("cloud: a kept job that hasn't run is run from the kept document, the Cloud not asked",
+          "[service_loop][w51]")
+{
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.kept = jobs_text({job_text("job-5")});
+    lab.kept_age = std::chrono::hours{5} + std::chrono::minutes{59};
+
+    lab.run();
+
+    CHECK(lab.runs == Lines{"job-5"});
+    CHECK(lab.count_call("poll jobs") == 0);
+    CHECK(lab.count_call("drop jobs") == 0);
+}
+
+TEST_CASE("cloud: a kept document six hours old, or of no age, is dropped and the Cloud asked",
+          "[service_loop][w51]")
+{
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.kept = jobs_text({job_text("job-5")});
+    lab.kept_age = GENERATE(std::optional<std::chrono::system_clock::duration>{std::chrono::hours{6}},
+                            std::optional<std::chrono::system_clock::duration>{});
+
+    lab.run();
+
+    CHECK(lab.runs.empty());
+    CHECK(lab.count_call("drop jobs") == 1);
+    CHECK(lab.count_call("poll jobs") == 1);
+}
+
+TEST_CASE("cloud: a kept document whose age is below zero is dropped and the Cloud asked",
+          "[service_loop][w51]")
+{
+    // A clock stepped back (the W5.1 code review's finding 14).
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.kept = jobs_text({job_text("job-5")});
+    lab.kept_age = -std::chrono::minutes{1};
+
+    lab.run();
+
+    CHECK(lab.runs.empty());
+    CHECK(lab.count_call("drop jobs") == 1);
+    CHECK(lab.count_call("poll jobs") == 1);
+}
+
+TEST_CASE("cloud: a job that ended before its run line holds the kept document no longer; it is "
+          "tried again beside the Cloud's next answer",
+          "[service_loop][w51]")
+{
+    // The W5.1 code review's finding 2: a job of client A that can't start
+    // kept every other client's jobs at the Cloud for six hours.
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.polls = {LoopLab::cloud_jobs(jobs_text({job_text("job-a"), job_text("job-b")})),
+                 LoopLab::cloud_jobs(jobs_text({job_text("job-c")}))};
+    lab.on_run = [&lab](const rp::Job& job, const rp::JobCallbacks& callbacks) {
+        if (job.run_id == "job-a") {
+            JobRun run;
+            run.exit_code = 4;
+            return run;
+        }
+        return queued_run(lab, job, callbacks);
+    };
+
+    lab.run(3);
+
+    CHECK(lab.runs == Lines{"job-a", "job-b", "job-c", "job-a", "job-a"});
+    CHECK(lab.count_call("poll jobs") == 3);
+    CHECK(lab.count("warning run job-a: ended before its run line; nothing was done") == 1);
+}
+
+TEST_CASE("cloud: a job that ended before its run line is tried again until it runs or six hours "
+          "have passed",
+          "[service_loop][w51]")
+{
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.polls = {LoopLab::cloud_jobs(jobs_text({job_text("job-a")})),
+                 LoopLab::cloud_jobs(R"({"format":"restoreproof.jobs.v1","jobs":[]})")};
+    bool starts = false;
+    lab.on_run = [&](const rp::Job& job, const rp::JobCallbacks& callbacks) {
+        if (!starts) {
+            return JobRun{};
+        }
+        return queued_run(lab, job, callbacks);
+    };
+    const bool later = GENERATE(false, true);
+    lab.on_wait = [&](int wait) {
+        if (wait == 1) {
+            if (later) {
+                lab.t += std::chrono::hours{6};
+            } else {
+                starts = true;
+            }
+        }
+    };
+
+    lab.run(3);
+
+    // Run, then settled; or six hours later dropped untried.
+    CHECK(lab.runs == (later ? Lines{"job-a"} : Lines{"job-a", "job-a"}));
+}
+
+TEST_CASE("cloud: a kept document that doesn't read is said, dropped, and the Cloud asked",
+          "[service_loop][w51]")
+{
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.kept = "not json";
+
+    lab.run();
+
+    CHECK(lab.count("warning jobs error: " + kKept + ": not JSON") == 1);
+    CHECK(lab.count_call("drop jobs") == 1);
+    CHECK(lab.count_call("poll jobs") == 1);
+}
+
+TEST_CASE("cloud: each answer of the poll that runs nothing is said once", "[service_loop][w51]")
+{
+    struct Row {
+        const char* name;
+        rp::CloudJobsAnswer answer;
+        std::string line;
+        bool kept;
+    };
+    rp::CloudJobsAnswer none;
+    none.word = "unreachable";
+    rp::CloudJobsAnswer other = status_answer(200, rp::CloudAnswerKind::other_contract);
+    other.other_value = "2";
+    rp::CloudJobsAnswer big = LoopLab::cloud_jobs(std::string(rp::kMaxJobsFileBytes + 1, ' '));
+    const Row row = GENERATE_COPY(
+        Row{"no answer", none, "warning jobs: the Cloud couldn't be reached (unreachable)", false},
+        Row{"no header", status_answer(200, rp::CloudAnswerKind::not_cloud),
+            "warning jobs: the Cloud's answer has no X-RestoreProof-API: 1; not read", false},
+        Row{"another contract", other,
+            "warning jobs: the Cloud's answer is of another contract (X-RestoreProof-API: 2); not read",
+            false},
+        Row{"a 500", status_answer(500, rp::CloudAnswerKind::not_cloud),
+            "warning jobs: the Cloud answered http_500", false},
+        Row{"a 204", status_answer(204), "warning jobs: the Cloud answered http_204", false},
+        Row{"over 1 MiB", big, "warning jobs error: the Cloud's answer: over 1 MiB", false},
+        Row{"not JSON", LoopLab::cloud_jobs("not json"), "warning jobs error: " + kKept + ": not JSON", true});
+    CAPTURE(row.name);
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.polls = {row.answer};
+
+    lab.run(2);
+
+    CHECK(lab.count(row.line) == 1);
+    CHECK(lab.count_call("poll jobs") == 2);
+    CHECK(lab.count_call("keep jobs") == (row.kept ? 2u : 0u));
+    CHECK(lab.runs.empty());
+    CHECK(lab.last_error == "jobs_unreadable");
+    // Nothing of these stops the upload.
+    CHECK(lab.count_call("flush") == 2);
+}
+
+TEST_CASE("cloud: a poll that works again is said again when it fails again", "[service_loop][w51]")
+{
+    LoopLab lab;
+    on_the_cloud(lab);
+    rp::CloudJobsAnswer none;
+    none.word = "timeout";
+    lab.polls = {none, LoopLab::cloud_jobs(jobs_text({})), none};
+
+    lab.run(3);
+
+    CHECK(lab.count("warning jobs: the Cloud couldn't be reached (timeout)") == 2);
+}
+
+TEST_CASE("cloud: a document that can't be kept is run from the answer", "[service_loop][w51]")
+{
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.keep_ok = false;
+    lab.polls = {LoopLab::cloud_jobs(jobs_text({job_text("job-2")}))};
+
+    lab.run();
+
+    CHECK(lab.runs == Lines{"job-2"});
+    CHECK(lab.count("warning jobs error: " + kKept + ": couldn't be written; the answer is run from "
+                    "memory") == 1);
+}
+
+TEST_CASE("cloud: a job of the Cloud's without a usable run_id names the kept document", "[service_loop][w51]")
+{
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.polls = {LoopLab::cloud_jobs(jobs_text({R"({"client_id":null})"}))};
+
+    lab.run();
+
+    CHECK(lab.count("warning job 1 of " + kKept + ": no usable run_id; not run") == 1);
+}
+
+TEST_CASE("cloud: a 401 of the poll stops the poll and the upload with that token; the heartbeat "
+          "goes on; another token ends it",
+          "[service_loop][w51]")
+{
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.config.heartbeat_interval_s = 60;
+    lab.polls = {status_answer(401, rp::CloudAnswerKind::not_cloud),
+                 LoopLab::cloud_jobs(jobs_text({}))};
+    lab.on_wait = [&lab](int n) {
+        if (n == 2) {
+            lab.token = std::optional<std::string>{"tok2"};
+        }
+    };
+
+    lab.run(3);
+
+    CHECK(lab.count(kRefused) == 1);
+    CHECK(lab.count("info cloud: a new API token; polling again") == 1);
+    CHECK(lab.polled_with == Lines{"tok", "tok2"});
+    CHECK(lab.flush_tokens == Lines{"tok2"});
+    CHECK(lab.flush_token_new == std::vector<bool>{true});
+    CHECK(lab.heartbeat_tokens == Lines{"tok", "tok", "tok2"});
+}
+
+TEST_CASE("cloud: a refused token is the loop's last error while it lasts", "[service_loop][w51]")
+{
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.polls = {status_answer(401, rp::CloudAnswerKind::not_cloud)};
+
+    lab.run(2);
+
+    CHECK(lab.last_error == "token_refused");
+    CHECK(lab.count_call("poll jobs") == 1);
+}
+
+TEST_CASE("cloud: a 401 of an upload enters the same state", "[service_loop][w51]")
+{
+    LoopLab lab;
+    lab.token = std::optional<std::string>{"tok"};
+    lab.on_flush = [] {
+        rp::FlushReport report;
+        report.out = {"kept run-1: upload_http_401; attempt 1, next at 2026-10-08T10:01:00Z"};
+        report.queued = 1;
+        report.token_refused = true;
+        return std::optional<rp::FlushReport>{report};
+    };
+
+    lab.run(2);
+
+    CHECK(lab.count(kRefused) == 1);
+    CHECK(lab.count_call("flush") == 1);
+    // The jobs file is the Worker's own: still read.
+    CHECK(lab.count_call("read jobs") == 2);
+}
+
+TEST_CASE("cloud: a run the Cloud refused for good is the loop's last error", "[service_loop][w51]")
+{
+    // The W5.1 code review's finding 8: the "failed" line was only logged.
+    LoopLab lab;
+    lab.token = std::optional<std::string>{"tok"};
+    lab.on_flush = [] {
+        rp::FlushReport report;
+        report.out = {"failed run-1: upload_http_409"};
+        report.err = {"outbox error: run-1: refused by the Cloud (upload_http_409); moved to failed"};
+        report.failed = 1;
+        return std::optional<rp::FlushReport>{report};
+    };
+
+    lab.run();
+
+    CHECK(lab.last_error == "upload_http_409");
+    CHECK(lab.count("info failed run-1: upload_http_409") == 1);
+}
+
+TEST_CASE("cloud: an upload's answer that isn't the Cloud's is said once until a run is sent",
+          "[service_loop][w51]")
+{
+    LoopLab lab;
+    lab.token = std::optional<std::string>{"tok"};
+    int flush = 0;
+    lab.on_flush = [&flush] {
+        rp::FlushReport report;
+        if (++flush == 3) {
+            report.out = {"sent run-1"};
+            return std::optional<rp::FlushReport>{report};
+        }
+        report.out = {"kept run-1: upload_not_cloud; attempt 1, next at 2026-10-08T10:01:00Z"};
+        report.queued = 1;
+        return std::optional<rp::FlushReport>{report};
+    };
+
+    lab.run(4);
+
+    CHECK(lab.count("warning cloud: an upload's answer is not a RestoreProof Cloud's (no "
+                    "X-RestoreProof-API: 1); the run stays queued") == 2);
+}
+
+TEST_CASE("cloud: a heartbeat whose 2xx isn't the Cloud's is taken and said once", "[service_loop][w51]")
+{
+    LoopLab lab;
+    lab.token = std::optional<std::string>{"tok"};
+    lab.config.heartbeat_interval_s = 60;
+    lab.heartbeat_word = "not_cloud";
+
+    lab.run(3);
+
+    CHECK(lab.count("warning heartbeat: the Cloud's answer has no X-RestoreProof-API: 1") == 1);
+    for (const std::string& line : lab.lines) {
+        CHECK_FALSE(line.starts_with("warning heartbeat failed"));
+    }
+}
+
+TEST_CASE("cloud: without a token a run closed at the start is queued and not flushed", "[service_loop][w51]")
+{
+    LoopLab lab;
+    lab.token = std::optional<std::string>{};
+    lab.put_record(lab.found());
+    lab.stop_at_wait = 1;
+
+    lab.run();
+
+    CHECK(lab.closed.size() == 1);
+    CHECK(lab.count_call("flush") == 0);
+}
+
+TEST_CASE("cloud: an env without tokens (W4.8's shape) treats a 401 of an upload as no token state",
+          "[service_loop][w51]")
+{
+    LoopLab lab;
+    lab.on_flush = [] {
+        rp::FlushReport report;
+        report.token_refused = true;
+        return std::optional<rp::FlushReport>{report};
+    };
+
+    lab.run(2);
+
+    CHECK(lab.count(kRefused) == 0);
+    // Not refused for good: there is no token to tell another by, so every
+    // poll still flushes.
+    CHECK(lab.count_call("flush") == 2);
 }

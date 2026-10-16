@@ -1,0 +1,11 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/sites/root?$select=id,webUrl,displayName",
+  "status": 200,
+  "reply": {
+    "displayName": "Witryna do komunikacji",
+    "id": "restoreprooflab.sharepoint.com,2ce7dd81-391c-4550-8a71-a69801456911,ab951931-99dc-480a-bc98-9486e09da443",
+    "webUrl": "https://restoreprooflab.sharepoint.com",
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#sites(id,webUrl,displayName)/$entity"
+  }
+}

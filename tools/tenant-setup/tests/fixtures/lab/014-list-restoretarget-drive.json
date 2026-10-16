@@ -1,0 +1,11 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/sites/restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689/lists/ffec069d-65e4-4c3a-9da2-ac086cf9dafa/drive?$select=id,name,webUrl",
+  "status": 200,
+  "reply": {
+    "id": "b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6",
+    "name": "RestoreTarget",
+    "webUrl": "https://restoreprooflab.sharepoint.com/sites/RestoreTest/RestoreTarget",
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#drives(id,name,webUrl)/$entity"
+  }
+}

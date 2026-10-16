@@ -1,0 +1,22 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/root:/RestoreTarget?$select=id,name,folder,file,parentReference",
+  "status": 200,
+  "reply": {
+    "id": "01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH",
+    "folder": {
+      "childCount": 0
+    },
+    "parentReference": {
+      "id": "01ZK75LGF6Y2GOVW7725BZO354PWSELRRZ",
+      "driveType": "business",
+      "driveId": "b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3",
+      "siteId": "6d600fc0-65f8-4811-ad18-096ec5b7e834",
+      "name": "Documents",
+      "path": "/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/root:"
+    },
+    "@odata.etag": "\"{E7A00F66-866D-4D69-8763-C2F5423375C7},2\"",
+    "name": "RestoreTarget",
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(driveItem)/$entity"
+  }
+}

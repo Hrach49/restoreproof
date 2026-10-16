@@ -36,12 +36,12 @@ if ($WhatIf) { $SaveEvidence = $false }
 $TargetMailbox        = 'restoretest@RestoreProofLab.onmicrosoft.com'
 $TargetMailFolder     = 'Inbox'
 $TargetSiteUrl        = 'https://restoreprooflab.sharepoint.com/sites/RestoreTest'
-$TargetLibrary        = 'RestoreTarget'   # display name of list ffec069d-65e4-4c3a-9da2-ac086cf9dafa
+$TargetLibrary        = 'RestoreTarget'   # display name of list 29dfd30b-9223-49fc-ab87-a205a757f896
 $TargetOneDriveUrl    = 'https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com'
-$TargetOneDriveFolder = 'RestoreTarget'   # alice's /RestoreTarget, item 01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH
+$TargetOneDriveFolder = 'RestoreTarget'   # alice's /RestoreTarget, item 01ZK75LGEIWSMV5NCPERHJYGWANJI7YUFB
 # The canary SOURCES (never a target) and names a target must never take.
 $CanaryListId   = '7eb0f08a-f57b-418c-8ca6-f2ab81297666'   # RestoreTest library
-$TargetListId   = 'ffec069d-65e4-4c3a-9da2-ac086cf9dafa'   # RestoreTarget library: never a source (it is in the backup too)
+$TargetListId   = '29dfd30b-9223-49fc-ab87-a205a757f896'   # RestoreTarget library: never a source (it is in the backup too)
 $CanaryOdFolder = 'RestoreTest'                            # alice's /RestoreTest
 $Forbidden      = @('RestoreTest', 'Documents', 'Shared Documents')
 # Veeam's organisation app (docs/environment.md), cross-checked against GET /v8/Organizations.

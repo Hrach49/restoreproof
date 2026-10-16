@@ -89,8 +89,23 @@ CASES = [
         ["cloud/app/a.py", "shared/tools/verify_bundle.py", "worker/src/a.cpp"],
         ["cloud/app/a.py", "shared/tools/verify_bundle.py", "worker/src/a.cpp"],
     ),
+    # W7.0: the client tenant setup is source outside worker/ and cloud/, held by
+    # its own tests under tools/tenant-setup/tests/. Blocked first.
+    (["tools/tenant-setup/Initialize-RestoreProofTenant.ps1"], ["tools/tenant-setup/Initialize-RestoreProofTenant.ps1"]),
+    (["tools/tenant-setup/RestoreProofTenant.psm1", "lab/tests/test_entra_script.py"], ["tools/tenant-setup/RestoreProofTenant.psm1"]),
+    (
+        ["tools/tenant-setup/RestoreProofTenant.psm1", "tools/tenant-setup/tests/fixtures/lab/001-organization.json"],
+        ["tools/tenant-setup/RestoreProofTenant.psm1"],
+    ),
+    ([("D", "tools/tenant-setup/New-WorkerGraphCertificate.ps1")], ["tools/tenant-setup/New-WorkerGraphCertificate.ps1"]),
     # --- allowed ---
     ([], []),
+    (["tools/tenant-setup/RestoreProofTenant.psm1", "tools/tenant-setup/tests/test_app_rules.py"], []),
+    (["tools/tenant-setup/Initialize-RestoreProofTenant.ps1", "tools/tenant-setup/tests/FakeTenant.ps1"], []),
+    # Its tests and fixtures are never source of their own.
+    (["tools/tenant-setup/tests/fixtures/lab/001-organization.json"], []),
+    (["tools/tenant-setup/tests/test_profile.py"], []),
+    (["tools/tenant-setupfoo/x.ps1"], []),
     # C5.11: a Cloud test covers both the CLI and the verifier.
     (["cloud/manage.py", "cloud/tests/test_manage.py"], []),
     (["shared/tools/verify_bundle.py", "cloud/tests/test_verify_bundle.py"], []),

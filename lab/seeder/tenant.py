@@ -33,10 +33,10 @@ SHAREPOINT_HOST = "restoreprooflab.sharepoint.com"
 ONEDRIVE_HOST = "restoreprooflab-my.sharepoint.com"
 # alice's OneDrive as a site: /personal/<UPN with "@" and "." as "_">.
 ALICE_ONEDRIVE_SITE_PATH = "/personal/alice_restoreprooflab_onmicrosoft_com"
-RESTORE_TARGET_LIST_ID = "ffec069d-65e4-4c3a-9da2-ac086cf9dafa"
-RESTORE_TARGET_DRIVE_ID = "b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6"
-ONEDRIVE_TARGET_FOLDER_ID = "01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH"
+RESTORE_TARGET_LIST_ID = "29dfd30b-9223-49fc-ab87-a205a757f896"
+RESTORE_TARGET_DRIVE_ID = "b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5okL098pI5L8SauHogWnV_iW"
+ONEDRIVE_TARGET_FOLDER_ID = "01ZK75LGEIWSMV5NCPERHJYGWANJI7YUFB"
 
 # "RestoreProof Worker" app registration (lab/entra/new-worker-app.ps1, lab/tenant.md).
 # --client-id or RP_LAB_WORKER_CLIENT_ID override it. Not a secret.
-WORKER_CLIENT_ID = "737da5ef-baf2-4198-b009-e160d8ca77c9"
+WORKER_CLIENT_ID = "de8d4348-08a9-48ee-a04a-47c7189c5006"

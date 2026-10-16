@@ -396,7 +396,7 @@ class RepositoryTest(unittest.TestCase):
     def test_the_default_trees_are_the_documented_ones(self):
         self.assertEqual(
             ["worker/tests/fixtures", "shared/testdata", "docs/api", "tests/e2e", "lab/canary",
-             "lab/seed-manifest.json", "lab/tenant.md"],
+             "lab/seed-manifest.json", "lab/tenant.md", "tools/tenant-setup/tests/fixtures"],
             scan.DEFAULT_TREES,
         )
 

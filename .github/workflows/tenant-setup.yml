@@ -1,0 +1,38 @@
+name: tenant-setup
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tenant-setup-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    # W7.0: the client tenant setup script (tools/tenant-setup). Windows, for PowerShell 7 and
+    # the fake rpworker's .cmd. Nothing here signs in to a tenant: the tests run the scripts
+    # against a fake tenant (tests/FakeTenant.ps1).
+    name: Tenant setup tests
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: tools/tenant-setup/tests
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: tools/tenant-setup/tests/uv.lock
+
+      # The one test that opens the PFX with the built Worker needs worker/build/dev/rpworker.exe:
+      # deselected here by its marker, never skipped, and run locally (docs/testing.md).
+      - name: Tests
+        run: uv run --locked pytest -q -m "not worker"

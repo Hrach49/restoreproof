@@ -1,0 +1,9 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/sites/restoreprooflab-my.sharepoint.com:/personal/alice_restoreprooflab_onmicrosoft_com:/permissions",
+  "status": 200,
+  "reply": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(microsoft.graph.permission)",
+    "value": []
+  }
+}

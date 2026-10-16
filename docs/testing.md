@@ -1594,6 +1594,49 @@ python -m pytest .github/scripts          # CI: uvx --python 3.12 pytest .github
 python -m unittest discover -s worker/tools -p "test_*.py"
 ```
 
+## The tenant setup (W7.0)
+
+`tools/tenant-setup/tests/` is a uv project of its own (`pyproject.toml`, `uv.lock`) whose pytest
+runs the PowerShell under test through `pwsh` (`pwsh.py`): a machine without PowerShell 7 fails
+these tests, never skips them. From that folder:
+
+```
+uv run pytest                    # everything; one test needs worker\build\dev\rpworker.exe built
+uv run pytest -m "not worker"    # CI's selection (.github/workflows/tenant-setup.yml, Windows)
+```
+
+- `test_target_rules.py`, `test_app_rules.py`, `test_profile.py`: the module's rules
+  (`RestoreProofTenant.psm1`) row by row, refusals first, each table evaluated in one `pwsh`.
+  The profile is held by Python's jsonschema and by the script's `Test-Json` together, on every
+  case of `shared/testdata/client-profile-v1/cases.json`; `client-profile.v1.json` beside the
+  script is held equal to the shared schema.
+- `test_setup_script.py`: `Initialize-RestoreProofTenant.ps1` whole against `FakeTenant.ps1`, a
+  fake tenant dot-sourced into the session (functions named like `Invoke-MgGraphRequest` and the
+  Exchange cmdlets win over the real ones; a route the script has no business calling answers
+  400), states built by `fake_tenant.py`. Held: the first run's writes and nowhere else, each
+  write grant right after its name check's GET, a second run with no write and the same profile
+  bytes, a tenant set up by hand set back, `-WhatIf` and `-CheckOnly`, every refusal before any
+  write, a read the check can't make a problem and never a pass.
+- `test_certificate_script.py`: `New-WorkerGraphCertificate.ps1` against `fake_rpworker.py`
+  (through a `.cmd`), the PFX opened with `cryptography` and searched for AES-256-CBC, SHA-256 and
+  no legacy cipher's OID; and, marked `worker`, once against the real `rpworker.exe` on a vault of
+  the test's own (the Worker's own loader opens it).
+- `test_script_text.py`, `test_recorder.py`, `test_harness_text.py`: the scripts' text, as the
+  lab's `test_entra_script.py` does (the recorder reads only; the teardown deletes only what it
+  names, never a canary).
+- `test_recorded_lab.py`: the rules on the lab tenant's real answers, `tests/fixtures/lab/` (45
+  files, recorded read-only on 2026-10-16 by `tests/record/Record-TenantAnswers.ps1` as the lab's
+  admin while the lab held the Worker app and its targets; in `fixture_secret_scan.py`'s trees):
+  every plan empty, the check without a problem, the profile `lab/tenant.md`'s, faults planted into
+  real answers caught, and no base64 ID naming anyone but the test accounts. To record again: into
+  an empty folder, then run the suite (the file count and the date are held).
+
+"No test, no merge" holds `tools/tenant-setup/` (but its `tests/`) to a `.py` or `.ps1` change
+under `tools/tenant-setup/tests/` (`.github/scripts/tests_touched.py`).
+
+The live Done-when is by hand: `docs/api/veeam-lab/w7.0-harness/w70-teardown.ps1` (lab only, asks
+first), then `w70-live.ps1` from an elevated PowerShell 7 (the setup script twice around the W5.1
+harness; evidence `docs/api/veeam-lab/w7.0-done-when.txt`).
 ## Cloud
 
 `cloud/` is the FastAPI backend (C5.1), its data model (C5.2), its repository layer (C5.3), its

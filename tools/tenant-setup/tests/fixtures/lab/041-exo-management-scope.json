@@ -1,0 +1,11 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "Get-ManagementScope -Identity 'RestoreProof Worker - restoretest mailbox'",
+  "status": 200,
+  "reply": {
+    "Name": "RestoreProof Worker - restoretest mailbox",
+    "RecipientFilter": "PrimarySmtpAddress -eq 'restoretest@RestoreProofLab.onmicrosoft.com'",
+    "ScopeRestrictionType": "RecipientScope",
+    "Identity": "RestoreProof Worker - restoretest mailbox"
+  }
+}

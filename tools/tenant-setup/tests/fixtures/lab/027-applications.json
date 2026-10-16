@@ -1,0 +1,48 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/applications?$filter=displayName eq 'RestoreProof Worker'&$select=id,appId,displayName,signInAudience,keyCredentials,passwordCredentials,requiredResourceAccess",
+  "status": 200,
+  "reply": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#applications(id,appId,displayName,signInAudience,keyCredentials,passwordCredentials,requiredResourceAccess)",
+    "value": [
+      {
+        "id": "6b09b606-4789-4246-8299-f8b36720971e",
+        "requiredResourceAccess": [
+          {
+            "resourceAppId": "00000003-0000-0000-c000-000000000000",
+            "resourceAccess": [
+              {
+                "id": "883ea226-0bf2-4a8f-9f9d-92c9162a727d",
+                "type": "Role"
+              },
+              {
+                "id": "bd61925e-3bf4-4d62-bc0b-06b06c96d95c",
+                "type": "Role"
+              },
+              {
+                "id": "23c5a9bd-d900-4ecf-be26-a0689755d9e5",
+                "type": "Role"
+              }
+            ]
+          }
+        ],
+        "keyCredentials": [
+          {
+            "customKeyIdentifier": "B56D2BD39945BAB1484A53F6C78C059A369EDBB3",
+            "startDateTime": "2026-09-27T15:02:16Z",
+            "type": "AsymmetricX509Cert",
+            "endDateTime": "2027-09-27T15:12:16Z",
+            "key": "MIIDIjCCAgqgAwIBAgIQRaT3PocLmINCbyn+fY8QSjANBgkqhkiG9w0BAQsFADAkMSIwIAYDVQQDDBlSZXN0b3JlUHJvb2YgV29ya2VyIChsYWIpMB4XDTI2MDkyNzE1MDIxNloXDTI3MDkyNzE1MTIxNlowJDEiMCAGA1UEAwwZUmVzdG9yZVByb29mIFdvcmtlciAobGFiKTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALnRSbmi5mzE19fBtIFPGmbQhHQzkTMSkhw9FJcUePGzWZwsC48G23JXI6OKiLG4BduFdBaUuiG617bOJakJtvn2eSeoCfEjGMrUQ7WPZ7tHZdmiUn/+Z2oFzVwLx7GGuCmW7/hScIxXtk7oKu0jdfOt5s8KmqHRH0TtvQfqQWnFnM/zIssgsiy/37JCdZKKZHVw11RuZBnPdDdiig6rnJZ+707bNatxFCe70a6dnbEkXhwyt8DV9eQNeZVI/WQjIteTGVD94syotihbEPinuYLgHfr5FTb3EiT4Nf3surRmeYmUqLKHwlHwre5W9Neq9TdOCdsW0eqOgJ1c59oHvEECAwEAAaNQME4wDgYDVR0PAQH/BAQDAgeAMB0GA1UdJQQWMBQGCCsGAQUFBwMCBggrBgEFBQcDATAdBgNVHQ4EFgQU58j2mZa6AoSQXEAN0nB/chuJinQwDQYJKoZIhvcNAQELBQADggEBAIV8xRd89ceySS0bU6Cmn3zTw/+ECoWLIe8rT5vlFlH7FBSh6pUVaSqOBmSTbj3br6M9KhcjWnjlYxdJeOnxGx5u8tktOl+V977W3FM1G/ROjbcUt3r6DLDKqQ14h2dSBlR0ZpP2JgY029cWfbVAH8omrUZl1yrM5iU7g63Dp5viOWzRQvaKRAj1LH6Qn/cJFv7rMxC11mBs9axlTcy8cE1iwHNB7PeIWpZIcmmpduFl3NVpCAstHJ9R6BiK/i1T4b87CZTNMFdM4B8DEkOGhWUAFgO6jWd9hQgbRaPdcTsnx01J7bAxLN/sgO9olRR7b7WrY0N7RxViOHciKwlPZGA=",
+            "displayName": "CN=RestoreProof Worker (lab) B56D2BD39945BAB1484A53F6C78C059A369EDBB3",
+            "usage": "Verify",
+            "keyId": "b7d02679-3073-4231-ba44-bb5849a22587"
+          }
+        ],
+        "appId": "737da5ef-baf2-4198-b009-e160d8ca77c9",
+        "signInAudience": "AzureADMyOrg",
+        "passwordCredentials": [],
+        "displayName": "RestoreProof Worker"
+      }
+    ]
+  }
+}

@@ -20,7 +20,15 @@
 #include <rp/sha256.hpp>
 #include <rp/text_v1.hpp>
 
+#include <rp/client_assertion.hpp>
+
 #include <nlohmann/json.hpp>
+
+#include <openssl/bio.h>
+#include <openssl/crypto.h>
+#include <openssl/pem.h>
+#include <openssl/sha.h>
+#include <openssl/x509.h>
 
 #include <spdlog/logger.h>
 #include <spdlog/sinks/ostream_sink.h>
@@ -34,6 +42,7 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <format>
 #include <functional>
 #include <fstream>
 #include <ios>
@@ -1152,4 +1161,113 @@ TEST_CASE("rpworker graph list --hash --record keeps Graph and downloads apart, 
         CHECK(fixture["body"].is_null());
         CHECK(fixture["body_sha256"].get<std::string>().size() == 64);
     }
+}
+
+// --- graph certificate (W7.0) ------------------------------------------------------
+
+namespace {
+
+// The SHA-1 of the DER of the one certificate a PEM text holds, in uppercase
+// hex, read with OpenSSL here and not by the command's code; "" when the text
+// holds no certificate.
+std::string pem_thumbprint(const std::string& pem)
+{
+    std::unique_ptr<BIO, decltype(&BIO_free)> bio{BIO_new_mem_buf(pem.data(), static_cast<int>(pem.size())), &BIO_free};
+    std::unique_ptr<X509, decltype(&X509_free)> cert{PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr), &X509_free};
+    if (!cert) {
+        return {};
+    }
+    unsigned char* der = nullptr;
+    const int size = i2d_X509(cert.get(), &der);
+    unsigned char digest[SHA_DIGEST_LENGTH];
+    SHA1(der, static_cast<std::size_t>(size), digest);
+    OPENSSL_free(der);
+    std::string hex;
+    for (unsigned char byte : digest) {
+        hex += std::format("{:02X}", byte);
+    }
+    return hex;
+}
+
+} // namespace
+
+TEST_CASE("rpworker graph certificate prints usage for arguments it doesn't understand",
+          "[graph_command]")
+{
+    const Args args = GENERATE(Args{"certificate", "--hash"}, Args{"certificate", "extra"},
+                               Args{"certificate", "--vault"}, Args{"certificate", "--config", "c.json"},
+                               Args{"certificate", "--vault", "a", "--vault", "b"},
+                               Args{"certificate", "--vault", ""}, Args{"certificates"});
+    CAPTURE(args);
+    Harness lab;
+
+    const Run result = lab.run(args);
+
+    CHECK(result.exit_code == rp::exit_code::usage);
+    CHECK(result.out.empty());
+    CHECK(result.err == kUsage);
+    CHECK(lab.load_secrets_calls == 0);
+}
+
+TEST_CASE("rpworker graph certificate needs the certificate in the vault, and prints nothing else",
+          "[graph_command]")
+{
+    struct Row {
+        const char* name;
+        rp::Secrets secrets;
+        std::string err;
+    };
+    const Row row = GENERATE(
+        Row{"no PFX", rp::Secrets{std::nullopt, std::nullopt, std::nullopt, kPfxPassword},
+            "config error: graph_cert_pfx_base64 is not in the vault\n"},
+        Row{"the wrong password", rp::Secrets{std::nullopt, std::nullopt, pfx_base64(), "Sentinel-Wrong-PFX-Password-71"}, ""});
+    CAPTURE(row.name);
+    Harness lab;
+    lab.load_secrets = [&] { return row.secrets; };
+
+    const Run result = lab.run(Args{"certificate"});
+
+    CHECK(result.exit_code == rp::exit_code::config);
+    CHECK(result.out.empty());
+    if (!row.err.empty()) {
+        CHECK(result.err == row.err);
+    }
+    CHECK_THAT(result.err, StartsWith("config error: "));
+    CHECK(result.err.find("Sentinel-Wrong") == std::string::npos);
+    CHECK(lab.make_graph_http_calls == 0);
+}
+
+TEST_CASE("rpworker graph certificate prints the vault certificate's public half alone",
+          "[graph_command]")
+{
+    Harness lab;
+    const bool given = GENERATE(false, true);
+    CAPTURE(given);
+    const std::string vault = utf8(lab.dir.path() / "given-vault.bin");
+
+    const Run result = given ? lab.run(Args{"certificate", "--vault", vault}) : lab.run(Args{"certificate"});
+
+    REQUIRE(result.exit_code == rp::exit_code::ok);
+    const std::string expected =
+        rp::graph::load_client_certificate(pfx_base64(), kPfxPassword, kNow).sha1_thumbprint();
+    // stdout is a PEM file as it is: one certificate block and nothing else.
+    CHECK_THAT(result.out, StartsWith("-----BEGIN CERTIFICATE-----\n"));
+    CHECK_THAT(result.out, EndsWith("-----END CERTIFICATE-----\n"));
+    CHECK(result.out.find("-----BEGIN", 1) == std::string::npos);
+    CHECK(pem_thumbprint(result.out) == expected);
+    CHECK(result.out.find("PRIVATE") == std::string::npos);
+    // The thumbprint and the end date go to stderr, after the block.
+    CHECK_THAT(result.err, StartsWith("thumbprint " + expected + " (SHA-1), expires "));
+    CHECK_THAT(result.err, EndsWith("Z\n"));
+    CHECK(result.err.find(kPfxPassword) == std::string::npos);
+    CHECK(result.out.find(kPfxPassword) == std::string::npos);
+    // The vault is read; nothing is sent anywhere.
+    CHECK(lab.load_secrets_calls == 1);
+    CHECK(lab.default_vault_calls == (given ? 0 : 1));
+    if (given) {
+        CHECK(utf8(lab.vault_read) == vault);
+    }
+    CHECK(lab.make_graph_http_calls == 0);
+    CHECK(lab.graph_http.requests().empty());
+    CHECK(lab.default_path_calls == 0);
 }

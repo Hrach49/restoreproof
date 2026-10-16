@@ -1,0 +1,32 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/sites/restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689/permissions",
+  "status": 200,
+  "reply": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#sites('restoreprooflab.sharepoint.com%2Cfe08085d-eb70-42e8-95a6-470189bd98eb%2C4ecaf399-cc0e-4d95-b3fe-cd091a09e689')/permissions",
+    "value": [
+      {
+        "id": "aTowaS50fG1zLnNwLmV4dHw3MzdkYTVlZi1iYWYyLTQxOTgtYjAwOS1lMTYwZDhjYTc3YzlAYmNkNmJkMWEtZWE0Mi00ODlkLWFhMjgtMmMxOWE0NGFkMTQ2",
+        "grantedToIdentitiesV2": [
+          {
+            "application": {
+              "id": "737da5ef-baf2-4198-b009-e160d8ca77c9",
+              "displayName": "RestoreProof Worker"
+            }
+          }
+        ],
+        "grantedToIdentities": [
+          {
+            "application": {
+              "id": "737da5ef-baf2-4198-b009-e160d8ca77c9",
+              "displayName": "RestoreProof Worker"
+            }
+          }
+        ],
+        "roles": [
+          "read"
+        ]
+      }
+    ]
+  }
+}

@@ -19,16 +19,16 @@
 namespace rp::test::graph_live {
 
 inline const std::string kLabTenantId = "bcd6bd1a-ea42-489d-aa28-2c19a44ad146";
-inline const std::string kLabWorkerClientId = "737da5ef-baf2-4198-b009-e160d8ca77c9";
+inline const std::string kLabWorkerClientId = "de8d4348-08a9-48ee-a04a-47c7189c5006";
 inline const std::string kLabMailbox = "restoretest@RestoreProofLab.onmicrosoft.com";
 inline const std::string kLabSiteId = "restoreprooflab.sharepoint.com,"
                                       "fe08085d-eb70-42e8-95a6-470189bd98eb,"
                                       "4ecaf399-cc0e-4d95-b3fe-cd091a09e689";
 inline const std::string kLabLibraryDriveId =
-    "b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6";
+    "b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5okL098pI5L8SauHogWnV_iW";
 inline const std::string kLabOneDriveDriveId =
     "b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3";
-inline const std::string kLabOneDriveFolderId = "01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH";
+inline const std::string kLabOneDriveFolderId = "01ZK75LGEIWSMV5NCPERHJYGWANJI7YUFB";
 
 // The variable's value, or `fallback` when it is unset or empty.
 inline std::string env_or(const char* name, const std::string& fallback)

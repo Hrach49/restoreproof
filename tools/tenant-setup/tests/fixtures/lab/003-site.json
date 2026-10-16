@@ -1,0 +1,11 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/sites/restoreprooflab.sharepoint.com:/sites/RestoreTest?$select=id,webUrl,displayName",
+  "status": 200,
+  "reply": {
+    "displayName": "RestoreTest",
+    "id": "restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+    "webUrl": "https://restoreprooflab.sharepoint.com/sites/RestoreTest",
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#sites(id,webUrl,displayName)/$entity"
+  }
+}

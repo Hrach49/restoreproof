@@ -46,10 +46,10 @@ and the Cleaner never deletes one (`docs/decisions.md`, 2026-09-25).
 | SharePoint site URL | `https://restoreprooflab.sharepoint.com/sites/RestoreTest` |
 | SharePoint site ID | `restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689` |
 | RestoreTarget library, URL | `https://restoreprooflab.sharepoint.com/sites/RestoreTest/RestoreTarget` |
-| RestoreTarget library, list ID | `ffec069d-65e4-4c3a-9da2-ac086cf9dafa` |
-| RestoreTarget library, drive ID | `b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6` |
+| RestoreTarget library, list ID | `29dfd30b-9223-49fc-ab87-a205a757f896` |
+| RestoreTarget library, drive ID | `b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5okL098pI5L8SauHogWnV_iW` |
 | alice's OneDrive, drive ID | `b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3` |
-| alice's OneDrive `RestoreTarget` folder, item ID | `01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH` |
+| alice's OneDrive `RestoreTarget` folder, item ID | `01ZK75LGEIWSMV5NCPERHJYGWANJI7YUFB` |
 | alice's OneDrive as a site: host, path | `restoreprooflab-my.sharepoint.com`, `/personal/alice_restoreprooflab_onmicrosoft_com` (not a target; the Worker app sees only its metadata, and in it only the `RestoreTarget` folder) |
 
 Both `RestoreTarget`s were created on 2026-09-25 (L1.4): the library by hand in the site (New >
@@ -136,19 +136,25 @@ The Worker's own app registration: it reads back what Veeam restored and, since 
 metadata of alice's OneDrive site and root folder, nothing else. What is granted, why, and how
 it is checked:
 `docs/security/graph-permissions.md`. Made on 2026-09-27 with `lab/entra/new-worker-app.ps1`
-(steps in `lab/README.md`), which is safe to re-run. `lab/tests/test_catalog.py` checks the
+(steps in `lab/README.md`), which is safe to re-run. **Re-made on 2026-10-16** by the client
+tenant setup script (`tools/tenant-setup/Initialize-RestoreProofTenant.ps1`, W7.0's live
+Done-when, `docs/api/veeam-lab/w7.0-done-when.txt`) after `w70-teardown.ps1` removed the app, its
+grants, its Exchange objects and the two empty RestoreTarget targets: the client ID, the service
+principal, the RestoreTarget library's list and drive IDs and the `/RestoreTarget` folder's item ID
+below are the new ones; recordings, fixtures and evidence made before that date hold the old ones
+(client `737da5ef-…`, list `ffec069d-…`, folder `01ZK75LGDGB6…`). The certificate is the same. `lab/tests/test_catalog.py` checks the
 client ID matches `WORKER_CLIENT_ID` in `lab/seeder/tenant.py`.
 
 | | |
 |---|---|
-| RestoreProof Worker, application (client) ID | `737da5ef-baf2-4198-b009-e160d8ca77c9` |
-| Service principal object ID | `f5a56ba3-1b8f-4d4c-8a0a-b2b579b7bd5f` |
+| RestoreProof Worker, application (client) ID | `de8d4348-08a9-48ee-a04a-47c7189c5006` |
+| Service principal object ID | `cdefbf49-c21e-4ce6-93a7-85e5e0fc0a2d` |
 | Sign-in audience | Single tenant (`AzureADMyOrg`) |
 | Credential | Certificate (no client secret): self-signed RSA 2048, `CN=RestoreProof Worker (lab)`, SHA-1 thumbprint `B56D2BD39945BAB1484A53F6C78C059A369EDBB3`, created 2026-09-27, expires 2027-09-27. Private key only in `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`; its password only in Credential Manager (`RestoreProof Lab - Worker Graph app PFX`) |
 | Graph application permissions (admin consent) | `Sites.Selected`, `Files.SelectedOperations.Selected`, `Lists.SelectedOperations.Selected` (W3.4, 2026-10-02); nothing else |
 | SharePoint grants | `read` on the RestoreTest site; `write` on the RestoreTarget list only (W3.4); `write` on alice's OneDrive `RestoreTarget` folder (raised from `read` in W3.4) |
 | Exchange Online | Role assignment `RestoreProof Worker - Application Mail.ReadWrite - restoretest` (role `Application Mail.ReadWrite`, replacing `Application Mail.Read` in W3.4), management scope `RestoreProof Worker - restoretest mailbox` (`PrimarySmtpAddress -eq 'restoretest@RestoreProofLab.onmicrosoft.com'`) |
-| Live check | `python -m seeder check-worker-app`: 16/16 on 2026-09-27 (`docs/security/l1.5-worker-app-check.txt`); 22/22 on 2026-10-02 after W3.4 (`docs/security/w3.4-worker-app-check.txt`), with `lab/entra/check-worker-grants.ps1` "canary grants: ok" (`docs/security/w3.4-worker-grants-check.txt`) |
+| Live check | `python -m seeder check-worker-app`: 16/16 on 2026-09-27 (`docs/security/l1.5-worker-app-check.txt`); 22/22 on 2026-10-02 after W3.4 (`docs/security/w3.4-worker-app-check.txt`), with `lab/entra/check-worker-grants.ps1` "canary grants: ok" (`docs/security/w3.4-worker-grants-check.txt`); 22/22 on 2026-10-16 on the app W7.0's setup script made (`docs/security/w7.0-worker-app-check.txt`) |
 
 Setting it up changed the tenant in two other ways:
 

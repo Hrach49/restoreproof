@@ -23,7 +23,7 @@ const std::string kUsage =
     "rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | "
     "rpworker vault grant <account> [--vault <file>] | "
     "rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | "
-    "rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | "
+    "rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph certificate [--vault <file>] | "
     "rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | "
     "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
     "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "

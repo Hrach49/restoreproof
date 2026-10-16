@@ -1,0 +1,23 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/organization?$select=id,displayName,verifiedDomains",
+  "status": 200,
+  "reply": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#organization(id,displayName,verifiedDomains)",
+    "value": [
+      {
+        "displayName": "RestoreProof Lab",
+        "id": "bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+        "verifiedDomains": [
+          {
+            "isDefault": true,
+            "type": "Managed",
+            "name": "RestoreProofLab.onmicrosoft.com",
+            "capabilities": "Email, OfficeCommunicationsOnline",
+            "isInitial": true
+          }
+        ]
+      }
+    ]
+  }
+}

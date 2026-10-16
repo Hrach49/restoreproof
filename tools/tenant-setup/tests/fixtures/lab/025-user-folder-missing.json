@@ -1,0 +1,6 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/root:/RestoreProof-no-such-folder?$select=id,name",
+  "status": 404,
+  "reply": null
+}

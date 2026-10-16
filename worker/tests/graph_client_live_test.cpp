@@ -38,7 +38,7 @@ namespace {
 
 // The lab (lab/tenant.md).
 const std::string kLabTenantId = "bcd6bd1a-ea42-489d-aa28-2c19a44ad146";
-const std::string kLabWorkerClientId = "737da5ef-baf2-4198-b009-e160d8ca77c9";
+const std::string kLabWorkerClientId = "de8d4348-08a9-48ee-a04a-47c7189c5006";
 const std::string kLabMailbox = "restoretest@RestoreProofLab.onmicrosoft.com";
 const std::string kLabDeniedMailbox = "alice@RestoreProofLab.onmicrosoft.com";
 const std::string kLabDeniedSite = "restoreprooflab.sharepoint.com";

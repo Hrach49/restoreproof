@@ -1,0 +1,37 @@
+python -m seeder check-worker-app, 2026-10-16, on the Worker app the W7.0 setup script made (its live Done-when, docs/api/veeam-lab/w7.0-done-when.txt); run by the owner from lab\, signed in as alice for the canary folder step. Output as printed:
+
+RestoreProof Worker app check (L1.5, W3.4): app-only Microsoft Graph; writes only in the restore targets; canary write refusal is checked by lab/entra/check-worker-grants.ps1
+tenant ID    bcd6bd1a-ea42-489d-aa28-2c19a44ad146
+client ID    de8d4348-08a9-48ee-a04a-47c7189c5006
+certificate  SHA-1 thumbprint B56D2BD39945BAB1484A53F6C78C059A369EDBB3, expires 2027-09-27
+token roles, Microsoft Graph      Files.SelectedOperations.Selected, Lists.SelectedOperations.Selected, Sites.Selected  ok
+token roles, Exchange Online      (none)  ok
+token roles, SharePoint           (none)  ok
+==> Sign in as alice@RestoreProofLab.onmicrosoft.com  (confirm her RestoreTest canary folder exists)
+    A browser window opens; choose or type alice@RestoreProofLab.onmicrosoft.com.
+canary folder, read as alice      RestoreTest, 10 items  ok
+
+result       expect     got  probe                                                           request
+ok              200     200  restoretest's mailbox: list messages                            GET /users/restoretest@RestoreProofLab.onmicrosoft.com/messages
+ok              200     200  RestoreTest site: the site                                      GET /sites/restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689
+ok              200     200  RestoreTarget library: the drive                                GET /drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5okL098pI5L8SauHogWnV_iW
+ok              200     200  RestoreTarget library: files in its root                        GET /drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5okL098pI5L8SauHogWnV_iW/root/children
+ok              200     200  alice's OneDrive: RestoreTarget folder                          GET /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGEIWSMV5NCPERHJYGWANJI7YUFB
+ok              200     200  alice's OneDrive: files in RestoreTarget                        GET /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGEIWSMV5NCPERHJYGWANJI7YUFB/children
+ok              200     200  alice's OneDrive: the site (metadata)                           GET /sites/restoreprooflab-my.sharepoint.com:/personal/alice_restoreprooflab_onmicrosoft_com
+ok              200     200  alice's OneDrive: root folder (metadata)                        GET /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/root
+ok              200     200  alice's OneDrive: files in her root (only RestoreTarget)        GET /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/root/children
+ok              403     403  alice's mailbox: list messages                                  GET /users/alice@RestoreProofLab.onmicrosoft.com/messages
+ok              403     403  tenant root site: the site                                      GET /sites/restoreprooflab.sharepoint.com
+ok              403     403  tenant root site: its libraries (/drives)                       GET /sites/restoreprooflab.sharepoint.com/drives
+ok              403     403  OneDrive host root site: the site                               GET /sites/restoreprooflab-my.sharepoint.com
+ok              403     403  directory: list users                                           GET /users
+ok              404     404  alice's OneDrive: RestoreTest canary folder                     GET /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGF7FPAIWTU5MFGIMX6YUFEV7ZC4
+ok              404     404  alice's OneDrive: files in the RestoreTest canary folder        GET /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGF7FPAIWTU5MFGIMX6YUFEV7ZC4/children
+ok              201     201  RestoreTarget library: create a file                            PUT /drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5okL098pI5L8SauHogWnV_iW/items/root:/rp-probe-22ce98b3-58cc-4c91-be3c-e16db61794b7.txt:/content
+ok              204     204  RestoreTarget library: delete it                                DELETE /drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5okL098pI5L8SauHogWnV_iW/items/01BLWRTHL4WPGHXBXXTVH3S65FM3VLS4U6
+ok              201     201  alice's OneDrive: RestoreTarget folder: create a file           PUT /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGEIWSMV5NCPERHJYGWANJI7YUFB:/rp-probe-b439f01c-3bc1-4e32-af14-f262ec9bd6e9.txt:/content
+ok              204     204  alice's OneDrive: RestoreTarget folder: delete it               DELETE /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGCMOH5MVT4Y7BFKNPRP2ZHMSM5J
+ok              201     201  restoretest's mailbox: create a draft                           POST /users/restoretest@RestoreProofLab.onmicrosoft.com/messages
+ok              204     204  restoretest's mailbox: permanently delete it                    POST /users/restoretest@RestoreProofLab.onmicrosoft.com/messages/AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAADTrcXAAA/permanentDelete
+22/22 probes as expected

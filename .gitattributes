@@ -17,3 +17,5 @@ shared/testdata/**/*.wire binary
 shared/tsa/*.pem text eol=lf
 docs/api/openapi-v1.json text eol=lf
 cloud/tests/registration-keys.json text eol=lf
+# W7.0: the tenant setup's copy of the profile schema, held byte-equal to shared/schemas/client-profile.v1.json
+tools/tenant-setup/client-profile.v1.json text eol=lf

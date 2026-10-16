@@ -55,6 +55,7 @@ DEFAULT_TREES = [
     "lab/canary",
     "lab/seed-manifest.json",
     "lab/tenant.md",
+    "tools/tenant-setup/tests/fixtures",
 ]
 SKIPPED_FOLDERS = frozenset({".venv", "__pycache__", "build", ".git"})
 

@@ -1,0 +1,10 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/users/alice@RestoreProofLab.onmicrosoft.com?$select=id,userPrincipalName",
+  "status": 200,
+  "reply": {
+    "id": "b8712372-d84b-4c0c-8d78-5ab08331da42",
+    "userPrincipalName": "alice@RestoreProofLab.onmicrosoft.com",
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users(id,userPrincipalName)/$entity"
+  }
+}

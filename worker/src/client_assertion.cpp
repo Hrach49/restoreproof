@@ -27,6 +27,9 @@
 #include <ctime>
 #include <format>
 #include <optional>
+#include <span>
+#include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -69,6 +72,27 @@ Clock::time_point ClientCertificate::not_before() const noexcept
 Clock::time_point ClientCertificate::not_after() const noexcept
 {
     return impl_->not_after;
+}
+
+std::string ClientCertificate::certificate_pem() const
+{
+    // The DER of the certificate alone (no key is in an X509), Base64 in lines
+    // of 64 as RFC 7468 writes it.
+    unsigned char* der = nullptr;
+    const int size = i2d_X509(impl_->cert.get(), &der);
+    if (size <= 0) {
+        throw std::runtime_error("the certificate can't be encoded");
+    }
+    const std::string base64 =
+        base64_encode(std::span<const unsigned char>{der, static_cast<std::size_t>(size)});
+    OPENSSL_free(der);
+    std::string pem = "-----BEGIN CERTIFICATE-----\n";
+    for (std::size_t at = 0; at < base64.size(); at += 64) {
+        pem += base64.substr(at, 64);
+        pem += '\n';
+    }
+    pem += "-----END CERTIFICATE-----\n";
+    return pem;
 }
 
 const ClientCertificate::Impl& ClientCertificate::impl() const noexcept

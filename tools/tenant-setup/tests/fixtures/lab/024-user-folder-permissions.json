@@ -1,0 +1,82 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH/permissions",
+  "status": 200,
+  "reply": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#drives('b%21wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3')/items('01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH')/permissions",
+    "value": [
+      {
+        "grantedToV2": {
+          "siteUser": {
+            "displayName": "Alice Test",
+            "id": "3",
+            "loginName": "i:0#.f|membership|alice@restoreprooflab.onmicrosoft.com",
+            "email": "alice@RestoreProofLab.onmicrosoft.com"
+          },
+          "user": {
+            "displayName": "Alice Test",
+            "id": "b8712372-d84b-4c0c-8d78-5ab08331da42",
+            "@odata.type": "#microsoft.graph.sharePointIdentity",
+            "email": "alice@RestoreProofLab.onmicrosoft.com"
+          }
+        },
+        "id": "aTowIy5mfG1lbWJlcnNoaXB8YWxpY2VAcmVzdG9yZXByb29mbGFiLm9ubWljcm9zb2Z0LmNvbQ",
+        "grantedTo": {
+          "user": {
+            "displayName": "Alice Test",
+            "id": "b8712372-d84b-4c0c-8d78-5ab08331da42",
+            "email": "alice@RestoreProofLab.onmicrosoft.com"
+          }
+        },
+        "shareId": "aTowIy5mfG1lbWJlcnNoaXB8YWxpY2VAcmVzdG9yZXByb29mbGFiLm9ubWljcm9zb2Z0LmNvbQ",
+        "roles": [
+          "owner"
+        ]
+      },
+      {
+        "grantedToV2": {
+          "siteUser": {
+            "displayName": "Admin",
+            "id": "5",
+            "loginName": "i:0#.f|membership|admin@RestoreProofLab.onmicrosoft.com",
+            "email": "admin@RestoreProofLab.onmicrosoft.com"
+          },
+          "user": {
+            "displayName": "Admin",
+            "id": "533138fa-6982-4fd2-a8b1-593d3f655d32",
+            "@odata.type": "#microsoft.graph.sharePointIdentity",
+            "email": "admin@RestoreProofLab.onmicrosoft.com"
+          }
+        },
+        "id": "aTowIy5mfG1lbWJlcnNoaXB8YWRtaW5AUmVzdG9yZVByb29mTGFiLm9ubWljcm9zb2Z0LmNvbQ",
+        "grantedTo": {
+          "user": {
+            "displayName": "Admin",
+            "id": "533138fa-6982-4fd2-a8b1-593d3f655d32",
+            "email": "admin@RestoreProofLab.onmicrosoft.com"
+          }
+        },
+        "shareId": "aTowIy5mfG1lbWJlcnNoaXB8YWRtaW5AUmVzdG9yZVByb29mTGFiLm9ubWljcm9zb2Z0LmNvbQ",
+        "roles": [
+          "owner"
+        ]
+      },
+      {
+        "grantedToV2": {
+          "application": {
+            "id": "737da5ef-baf2-4198-b009-e160d8ca77c9"
+          }
+        },
+        "id": "aTowaS50fG1zLnNwLmV4dHw3MzdkYTVlZi1iYWYyLTQxOTgtYjAwOS1lMTYwZDhjYTc3YzlAYmNkNmJkMWEtZWE0Mi00ODlkLWFhMjgtMmMxOWE0NGFkMTQ2",
+        "grantedTo": {
+          "application": {
+            "id": "737da5ef-baf2-4198-b009-e160d8ca77c9"
+          }
+        },
+        "roles": [
+          "write"
+        ]
+      }
+    ]
+  }
+}

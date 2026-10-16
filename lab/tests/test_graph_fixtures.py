@@ -1131,6 +1131,19 @@ def test_no_output_line_holds_a_secret(pfx, tmp_path, key_and_cert, other_key):
 
 
 STAND_IN = "hand-written: stand-in"
+# The committed fixtures were recorded before W7.0's live Done-when re-made the lab's Worker app
+# and RestoreTarget targets on 2026-10-16 (lab/tenant.md): their request lines name the targets'
+# IDs of then. A re-recording names today's, so the plan is compared with the IDs it was made with.
+RECORDED_TARGET_IDS = {
+    tenant.RESTORE_TARGET_DRIVE_ID: "b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6",
+    tenant.ONEDRIVE_TARGET_FOLDER_ID: "01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH",
+}
+
+
+def as_recorded(request: str) -> str:
+    for today, then in RECORDED_TARGET_IDS.items():
+        request = request.replace(today, then)
+    return request
 
 
 @pytest.mark.parametrize("state", STATES)
@@ -1156,7 +1169,7 @@ def test_the_plan_matches_the_committed_fixtures(state, entry):
     if rec["source"].startswith(STAND_IN):
         pytest.skip(f"{entry.file_name}: stand-in until the {state} state is recorded")
     assert rec["status"] == entry.expected, entry.file_name
-    assert rec["request"] == entry.request, entry.file_name
+    assert rec["request"] == as_recorded(entry.request), entry.file_name
     assert rec["source"].split(": ", 1)[1] == entry.what, entry.file_name
 
 

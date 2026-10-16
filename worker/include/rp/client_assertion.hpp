@@ -51,6 +51,10 @@ public:
     // The certificate's validity, to the second.
     std::chrono::system_clock::time_point not_before() const noexcept;
     std::chrono::system_clock::time_point not_after() const noexcept;
+    // The certificate alone as PEM, one "CERTIFICATE" block ending in a
+    // newline, never the key (W7.0: `rpworker graph certificate`, the public
+    // half a client's app registration gets).
+    std::string certificate_pem() const;
 
     // For rpcore's own use (the assertion signer).
     const Impl& impl() const noexcept;

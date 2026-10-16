@@ -308,9 +308,12 @@ TEST_CASE("a job whose run is already queued, sent or has a run folder is skippe
           "[service_loop]")
 {
     LoopLab lab;
-    lab.jobs = jobs_text({job_text("job-q"), job_text("job-s"), job_text("job-f")});
+    lab.jobs = jobs_text(
+        {job_text("job-q"), job_text("job-s"), job_text("job-x"), job_text("job-f")});
     lab.queued.insert("job-q");
     lab.sent.insert("job-s");
+    // In failed\ with no done mark (the W5.1 code review's finding 12).
+    lab.failed.insert("job-x");
     lab.folders.insert("job-f");
     lab.on_flush = [] { return rp::FlushReport{}; };
 
@@ -318,6 +321,7 @@ TEST_CASE("a job whose run is already queued, sent or has a run folder is skippe
 
     CHECK(lab.lines == Lines{kStarted, "info skipped job-q: already queued",
                              "info skipped job-s: already sent",
+                             "info skipped job-x: already failed",
                              "info skipped job-f: a run folder is already there"});
     CHECK(lab.runs.empty());
     CHECK(lab.writes.empty());
@@ -1996,6 +2000,80 @@ TEST_CASE("cloud: a kept document six hours old, or of no age, is dropped and th
     CHECK(lab.count_call("poll jobs") == 1);
 }
 
+TEST_CASE("cloud: a kept document whose age is below zero is dropped and the Cloud asked",
+          "[service_loop][w51]")
+{
+    // A clock stepped back (the W5.1 code review's finding 14).
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.kept = jobs_text({job_text("job-5")});
+    lab.kept_age = -std::chrono::minutes{1};
+
+    lab.run();
+
+    CHECK(lab.runs.empty());
+    CHECK(lab.count_call("drop jobs") == 1);
+    CHECK(lab.count_call("poll jobs") == 1);
+}
+
+TEST_CASE("cloud: a job that ended before its run line holds the kept document no longer; it is "
+          "tried again beside the Cloud's next answer",
+          "[service_loop][w51]")
+{
+    // The W5.1 code review's finding 2: a job of client A that can't start
+    // kept every other client's jobs at the Cloud for six hours.
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.polls = {LoopLab::cloud_jobs(jobs_text({job_text("job-a"), job_text("job-b")})),
+                 LoopLab::cloud_jobs(jobs_text({job_text("job-c")}))};
+    lab.on_run = [&lab](const rp::Job& job, const rp::JobCallbacks& callbacks) {
+        if (job.run_id == "job-a") {
+            JobRun run;
+            run.exit_code = 4;
+            return run;
+        }
+        return queued_run(lab, job, callbacks);
+    };
+
+    lab.run(3);
+
+    CHECK(lab.runs == Lines{"job-a", "job-b", "job-c", "job-a", "job-a"});
+    CHECK(lab.count_call("poll jobs") == 3);
+    CHECK(lab.count("warning run job-a: ended before its run line; nothing was done") == 1);
+}
+
+TEST_CASE("cloud: a job that ended before its run line is tried again until it runs or six hours "
+          "have passed",
+          "[service_loop][w51]")
+{
+    LoopLab lab;
+    on_the_cloud(lab);
+    lab.polls = {LoopLab::cloud_jobs(jobs_text({job_text("job-a")})),
+                 LoopLab::cloud_jobs(R"({"format":"restoreproof.jobs.v1","jobs":[]})")};
+    bool starts = false;
+    lab.on_run = [&](const rp::Job& job, const rp::JobCallbacks& callbacks) {
+        if (!starts) {
+            return JobRun{};
+        }
+        return queued_run(lab, job, callbacks);
+    };
+    const bool later = GENERATE(false, true);
+    lab.on_wait = [&](int wait) {
+        if (wait == 1) {
+            if (later) {
+                lab.t += std::chrono::hours{6};
+            } else {
+                starts = true;
+            }
+        }
+    };
+
+    lab.run(3);
+
+    // Run, then settled; or six hours later dropped untried.
+    CHECK(lab.runs == (later ? Lines{"job-a"} : Lines{"job-a", "job-a"}));
+}
+
 TEST_CASE("cloud: a kept document that doesn't read is said, dropped, and the Cloud asked",
           "[service_loop][w51]")
 {
@@ -2144,6 +2222,25 @@ TEST_CASE("cloud: a 401 of an upload enters the same state", "[service_loop][w51
     CHECK(lab.count_call("flush") == 1);
     // The jobs file is the Worker's own: still read.
     CHECK(lab.count_call("read jobs") == 2);
+}
+
+TEST_CASE("cloud: a run the Cloud refused for good is the loop's last error", "[service_loop][w51]")
+{
+    // The W5.1 code review's finding 8: the "failed" line was only logged.
+    LoopLab lab;
+    lab.token = std::optional<std::string>{"tok"};
+    lab.on_flush = [] {
+        rp::FlushReport report;
+        report.out = {"failed run-1: upload_http_409"};
+        report.err = {"outbox error: run-1: refused by the Cloud (upload_http_409); moved to failed"};
+        report.failed = 1;
+        return std::optional<rp::FlushReport>{report};
+    };
+
+    lab.run();
+
+    CHECK(lab.last_error == "upload_http_409");
+    CHECK(lab.count("info failed run-1: upload_http_409") == 1);
 }
 
 TEST_CASE("cloud: an upload's answer that isn't the Cloud's is said once until a run is sent",

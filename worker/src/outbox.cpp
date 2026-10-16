@@ -710,13 +710,15 @@ FlushReport Outbox::flush(IUploader& uploader, std::chrono::system_clock::time_p
             continue;
         }
         ++report.queued;
-        if (report.token_refused) {
-            // The Cloud refused the token: nothing more is sent with it.
-            continue;
-        }
+        // A move left by an earlier pass is a rename, sent nowhere: made
+        // even after a 401 (the W5.1 code review's finding 13).
         if (manifest.last_error && is_refused_for_good(*manifest.last_error) &&
             !manifest.next_attempt_at) {
             move_to_failed(*manifest.last_error, "moved " + id + " to failed");
+            continue;
+        }
+        if (report.token_refused) {
+            // The Cloud refused the token: nothing more is sent with it.
             continue;
         }
         const bool token_waits =

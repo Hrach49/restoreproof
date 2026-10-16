@@ -24,23 +24,6 @@ namespace {
 
 constexpr std::string_view kRegister = "register";
 
-// Wipes every value of the Secrets it holds when it goes.
-struct WipedSecrets {
-    Secrets secrets;
-    WipedSecrets() = default;
-    WipedSecrets(const WipedSecrets&) = delete;
-    WipedSecrets& operator=(const WipedSecrets&) = delete;
-    ~WipedSecrets()
-    {
-        for (const std::string_view name : kSecretNames) {
-            std::optional<std::string>* field = secret_field(secrets, name);
-            if (*field) {
-                secure_wipe(**field);
-            }
-        }
-    }
-};
-
 // Wipes the string it names when it goes.
 struct Wiped {
     std::string& text;

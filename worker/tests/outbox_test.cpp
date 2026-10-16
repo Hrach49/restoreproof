@@ -1483,6 +1483,32 @@ TEST_CASE("outbox flush: a refused run whose move fails stays queued; the next f
     CHECK(std::filesystem::exists(box.refused(kId) / "result.json"));
 }
 
+TEST_CASE("outbox flush: after a 401 a move to failed\ left by an earlier pass is still made",
+          "[outbox][flush][w51]")
+{
+    // The W5.1 code review's finding 13: the move is a rename, sent nowhere.
+    Box box;
+    const path folder = box.queue_run("run-0002", 1);
+    box.files.move_folder = [](const path&, const path&) { return 5ul; };
+    FakeUploader uploader;
+    uploader.answers = {failed("upload_http_409")};
+    static_cast<void>(box.outbox().flush(uploader, at(10)));
+    REQUIRE(box.manifest_of(folder).last_error == "upload_http_409");
+
+    box.files.move_folder = nullptr;
+    box.queue_run("run-0001", 0);
+    uploader.answers = {failed("upload_http_401")};
+    const rp::FlushReport report = box.outbox().flush(uploader, at(100));
+
+    CHECK(uploader.runs == Lines{"run-0002", "run-0001"});
+    CHECK(report.out == Lines{"kept run-0001: upload_http_401; attempt 1, next at " + text_at(160),
+                              "moved run-0002 to failed"});
+    CHECK(report.token_refused);
+    CHECK(report.queued == 1);
+    CHECK(report.failed == 1);
+    CHECK(std::filesystem::exists(box.refused("run-0002") / "result.json"));
+}
+
 TEST_CASE("outbox flush: a 401 is kept by the schedule and stops the pass: no other run is sent "
           "with that token",
           "[outbox][flush][w51]")

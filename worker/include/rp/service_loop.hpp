@@ -293,7 +293,8 @@ private:
     void run_jobs();
     void take_job(const JobEntry& entry, const JobsDocument& document);
     bool skip_job(const std::string& run_id);
-    void run_job(const Job& job);
+    void run_job(const JobEntry& entry);
+    void prune_not_started(const JobsDocument& document);
     JobCallbacks callbacks();
 
     ServiceLoopEnv env_;
@@ -334,6 +335,14 @@ private:
     std::set<std::size_t> no_run_id_said_;
     std::set<std::string> skipped_said_;
     std::set<std::pair<std::string, int>> not_started_said_;
+    // The jobs that ended before their run line in this process, by run ID,
+    // with when that first happened: tried again at every poll beside the
+    // document (prune_not_started says until when).
+    struct NotStarted {
+        JobEntry entry;
+        Steady first_at;
+    };
+    std::map<std::string, NotStarted> not_started_;
     // The flush's lines of runs that are never sent or couldn't be read, as
     // the last pass named them.
     std::set<std::string> flush_said_;

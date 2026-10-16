@@ -37,6 +37,7 @@ constexpr std::string_view kChanged = "changed";
 constexpr std::string_view kUntrusted = "untrusted";
 constexpr std::string_view kCleanOk = "ok";
 constexpr std::string_view kKept = "kept ";
+constexpr std::string_view kFailedRun = "failed ";
 constexpr std::string_view kWaiting = "waiting ";
 // How the outbox's own lines for a run that is never sent, and for one it
 // couldn't read at this pass, end.
@@ -69,16 +70,25 @@ PipelineReport report_of(const JobRun& run)
     return report;
 }
 
-// A flush's "kept <run>: <word>[; attempt ...]" line's word; empty for any
-// other line.
+// A flush's "kept <run>: <word>[; attempt ...]" or "failed <run>: <word>"
+// line's word; empty for any other line.
 std::string kept_word(std::string_view line)
 {
     const std::size_t colon = line.find(": ");
-    if (!line.starts_with(kKept) || colon == std::string_view::npos) {
+    if (!(line.starts_with(kKept) || line.starts_with(kFailedRun)) ||
+        colon == std::string_view::npos) {
         return {};
     }
     const std::string_view rest = line.substr(colon + 2);
     return std::string{rest.substr(0, rest.find(';'))};
+}
+
+// Whether a job of the document has this run ID.
+bool names(const JobsDocument& document, const std::string& run_id)
+{
+    return std::ranges::any_of(document.jobs, [&run_id](const JobEntry& entry) {
+        return entry.state != JobState::no_run_id && entry.job.run_id == run_id;
+    });
 }
 
 } // namespace
@@ -697,10 +707,14 @@ bool ServiceLoop::settled(const std::string& run_id) const
            env_.run_done(run_id);
 }
 
+// A job that ended before its run line in this process holds the kept
+// document no longer: it is tried again from not_started_, beside the
+// Cloud's next answer (the W5.1 code review's finding 2).
 bool ServiceLoop::has_unsettled(const JobsDocument& document) const
 {
     return std::ranges::any_of(document.jobs, [this](const JobEntry& entry) {
-        return entry.state != JobState::no_run_id && !settled(entry.job.run_id);
+        return entry.state != JobState::no_run_id && !settled(entry.job.run_id) &&
+               !not_started_.contains(entry.job.run_id);
     });
 }
 
@@ -710,7 +724,9 @@ JobsDocument ServiceLoop::cloud_jobs()
 {
     JobsDocument kept = env_.read_jobs(env_.kept_jobs_file);
     const std::optional<std::chrono::system_clock::duration> age = env_.kept_jobs_age();
-    if (kept.state == JobsState::read && age && *age < kKeptJobsFor && has_unsettled(kept)) {
+    // An age below zero is a clock stepped back: the Cloud is asked.
+    if (kept.state == JobsState::read && age && *age >= std::chrono::system_clock::duration::zero() &&
+        *age < kKeptJobsFor && has_unsettled(kept)) {
         jobs_fault_.reset();
         return kept;
     }
@@ -782,10 +798,8 @@ void ServiceLoop::forget_jobs(const JobsDocument& document)
         jobs_sha_ = document.sha256;
         no_run_id_said_.clear();
     }
-    const auto named = [&document](const std::string& run_id) {
-        return std::ranges::any_of(document.jobs, [&run_id](const JobEntry& entry) {
-            return entry.state != JobState::no_run_id && entry.job.run_id == run_id;
-        });
+    const auto named = [this, &document](const std::string& run_id) {
+        return not_started_.contains(run_id) || names(document, run_id);
     };
     std::erase_if(skipped_said_, [&named](const std::string& run_id) { return !named(run_id); });
     std::erase_if(not_started_said_,
@@ -798,6 +812,7 @@ void ServiceLoop::run_jobs()
 {
     JobsDocument document;
     step([this, &document] { document = read_jobs(); });
+    step([this, &document] { prune_not_started(document); });
     forget_jobs(document);
     for (const JobEntry& entry : document.jobs) {
         if (stopped() || record_) {
@@ -806,6 +821,33 @@ void ServiceLoop::run_jobs()
         step([this, &entry, &document] { take_job(entry, document); });
         step([this] { send_heartbeat(); });
     }
+    // Then the jobs that ended before their run line and that this document
+    // doesn't name, oldest first; copied, since a run of one changes the map.
+    std::vector<JobEntry> again;
+    for (const auto& [run_id, held] : not_started_) {
+        if (!names(document, run_id)) {
+            again.push_back(held.entry);
+        }
+    }
+    for (const JobEntry& entry : again) {
+        if (stopped() || record_) {
+            return;
+        }
+        step([this, &entry, &document] { take_job(entry, document); });
+        step([this] { send_heartbeat(); });
+    }
+}
+
+// A job that ended before its run line is tried again until it is settled,
+// the document names it again (and runs it), or kKeptJobsFor has passed
+// since it first did: by then the Cloud has requeued or expired it.
+void ServiceLoop::prune_not_started(const JobsDocument& document)
+{
+    const Steady now = env_.now();
+    std::erase_if(not_started_, [&](const auto& held) {
+        return names(document, held.first) || settled(held.first) ||
+               now - held.second.first_at >= kKeptJobsFor;
+    });
 }
 
 // Point 4, first fit.
@@ -848,7 +890,7 @@ void ServiceLoop::take_job(const JobEntry& entry, const JobsDocument& document)
         }
         return;
     }
-    run_job(job);
+    run_job(entry);
 }
 
 // J2: the run is already there.
@@ -860,6 +902,8 @@ bool ServiceLoop::skip_job(const std::string& run_id)
         why = "already queued";
     } else if (holds == OutboxHolds::sent) {
         why = "already sent";
+    } else if (holds == OutboxHolds::failed) {
+        why = "already failed";
     } else if (env_.run_folder_exists(run_id)) {
         why = "a run folder is already there";
     } else if (env_.run_done(run_id)) {
@@ -875,8 +919,9 @@ bool ServiceLoop::skip_job(const std::string& run_id)
 }
 
 // J4 (point 5).
-void ServiceLoop::run_job(const Job& job)
+void ServiceLoop::run_job(const JobEntry& entry)
 {
+    const Job& job = entry.job;
     const std::string& id = job.run_id;
     // A valid job has its profile (the reader's rule); the record carries it.
     if (!job.client || !take_record(new_run_record(id, job.client_id, *job.client, env_.wall_now()))) {
@@ -893,6 +938,11 @@ void ServiceLoop::run_job(const Job& job)
         trouble(service_error::kJobNotStarted);
         if (not_started_said_.emplace(id, run.exit_code).second) {
             env_.logger->warn("run {}: ended before its run line; nothing was done", id);
+        }
+        // A jobs file is read again at every poll and is its own retry; the
+        // Cloud's answer names a job once.
+        if (!env_.jobs_file) {
+            not_started_.try_emplace(id, NotStarted{entry, env_.now()});
         }
         settle_record(false);
         return;

@@ -25,11 +25,13 @@
 #include <rp/cli.hpp>
 #include <rp/client_command.hpp>
 #include <rp/client_profile.hpp>
+#include <rp/cloud_command.hpp>
 #include <rp/connector.hpp>
 #include <rp/graph_command.hpp>
 #include <rp/outbox_command.hpp>
 #include <rp/service_log.hpp>
 #include <rp/service_recovery.hpp>
+#include <rp/signer.hpp>
 #include <rp/test_command.hpp>
 #include <rp/vault.hpp>
 #include <rp/vault_command.hpp>
@@ -813,4 +815,106 @@ TEST_CASE("secret audit J8: a job of the Cloud's poll, kept, run, sent", "[secre
     REQUIRE(has(log, "sent audit-j8"));
     audit.finish();
     CHECK(audit.outputs.has_output("temp/state/jobs.json"));
+}
+
+// --- W5.1: the registration, the one path that receives a new API token ---------------
+
+TEST_CASE("secret audit M: cloud register --record, a 201 stored; service start's first start; a "
+          "409 and a vault that can't be written after the 201",
+          "[secret_audit]")
+{
+    // The W5.1 code review's finding 9: the issued token was searched for
+    // and never produced.
+    AuditLab lab;
+    const std::filesystem::path vault_path = lab.dir.path() / "vault.bin";
+    const auto fresh_vault = [&] {
+        rp::Secrets held = audit::secrets();
+        held.cloud_api_token.reset();
+        rp::write_vault(vault_path, held);
+    };
+    const std::optional<rp::SigningKey> key = rp::SigningKey::from_base64(audit::signing_key_base64());
+    REQUIRE(key);
+    const nlohmann::json answer{{"worker_id", "65fddc39-0792-4178-8361-49d53450b29e"},
+                                {"key_id", key->key_id()},
+                                {"api_token", std::string{audit::kIssuedApiToken}}};
+    rp::test::FakeHttpClient cloud;
+    const std::string url = "https://cloud.example.invalid/v1/workers/register";
+    cloud.on(rp::HttpMethod::post, url,
+             {rp::test::cloud_answer(201, answer.dump()), rp::test::cloud_answer(201, answer.dump()),
+              rp::test::cloud_answer(409, R"({"detail":"key_id: already registered"})"),
+              rp::test::cloud_answer(201, answer.dump())});
+    rp::CloudCommandEnv env;
+    env.make_cloud_http = [&](const rp::Config&) -> std::unique_ptr<rp::IHttpClient> {
+        return std::make_unique<rp::test::ForwardingHttpClient>(cloud);
+    };
+    env.default_state_dir = [&] { return lab.dir.path() / "state"; };
+    env.host_name = [] { return std::optional<std::string>{"AUDIT-HOST"}; };
+    const std::string config = utf8(lab.config_path);
+    const std::string vault = utf8(vault_path);
+    const std::string record = utf8(lab.dir.path() / "rec-cloud");
+    const auto cli = [&](const Args& args, const rp::CloudCommandEnv& with) {
+        std::ostringstream out;
+        std::ostringstream err;
+        const int code = rp::run_cloud_command(args, out, err, with);
+        return Run{code, out.str(), err.str()};
+    };
+
+    fresh_vault();
+    const Run registered =
+        cli({"register", "--config", config, "--vault", vault, "--record", record}, env);
+    REQUIRE(registered.exit_code == rp::exit_code::ok);
+    REQUIRE_THAT(registered.out, ContainsSubstring("registered worker "));
+    REQUIRE_THAT(registered.out, ContainsSubstring("recorded 1 exchange(s)"));
+    REQUIRE(rp::read_vault(vault_path).cloud_api_token == std::string{audit::kIssuedApiToken});
+    lab.collect("cloud register --record", registered);
+
+    fresh_vault();
+    std::ostringstream first_out;
+    std::ostringstream first_err;
+    const int first = rp::first_start(lab.config_path, vault_path, first_out, first_err, env);
+    REQUIRE(first == rp::exit_code::ok);
+    lab.collect("first start", Run{first, first_out.str(), first_err.str()});
+
+    fresh_vault();
+    const Run refused = cli({"register", "--config", config, "--vault", vault}, env);
+    REQUIRE(refused.exit_code == rp::exit_code::service);
+    lab.collect("cloud register 409", refused);
+
+    // The vault is written back unchanged before the request (point 2), and
+    // fails on the write after the 201.
+    rp::CloudCommandEnv unwritable = env;
+    int writes = 0;
+    unwritable.write_secrets = [&writes](const std::filesystem::path& file, const rp::Secrets& next) {
+        if (++writes == 2) {
+            throw rp::VaultError(utf8(file) + ": the vault file couldn't be written");
+        }
+        rp::write_vault(file, next);
+    };
+    const Run unstored = cli({"register", "--config", config, "--vault", vault}, unwritable);
+    REQUIRE(unstored.exit_code == rp::exit_code::config);
+    REQUIRE_THAT(unstored.err, ContainsSubstring("the API token couldn't be stored"));
+    lab.collect("cloud register, the vault unwritable", unstored);
+
+    // A registration's body carries the install token, the one secret the
+    // Cloud is sent there: it is checked and taken out before the search.
+    std::size_t n = 0;
+    for (const rp::HttpRequest& request : cloud.requests()) {
+        const std::string prefix = "cloud request " + std::to_string(++n);
+        lab.outputs.add(prefix + " url", request.url);
+        for (const auto& [name, value] : request.headers) {
+            lab.outputs.add(prefix + " header " + name, value);
+        }
+        std::string body = request.body;
+        const std::size_t at = body.find(audit::kInstallToken);
+        REQUIRE(at != std::string::npos);
+        body.erase(at, audit::kInstallToken.size());
+        CHECK(body.find(audit::kInstallToken) == std::string::npos);
+        lab.outputs.add(prefix + " body", body);
+    }
+    CHECK(n == 4);
+
+    // The vault itself is DPAPI's blob; the rest of the temp folder (state    // worker.json, the recording) is searched by finish().
+    lab.finish();
+    CHECK(lab.outputs.has_output("temp/state/worker.json"));
+    CHECK(lab.outputs.has_output("temp/rec-cloud/"));
 }

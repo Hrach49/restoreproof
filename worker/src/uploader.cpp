@@ -1,5 +1,6 @@
 #include <rp/uploader.hpp>
 
+#include <rp/cert_export.hpp>
 #include <rp/cloud_api.hpp>
 
 #include "command_config.hpp"
@@ -39,6 +40,11 @@ std::string cloud_endpoint(std::string cloud_url, std::string_view path)
 CloudUploader::CloudUploader(IHttpClient& http, std::string cloud_url, std::string token)
     : http_(http), url_(cloud_endpoint(std::move(cloud_url), kResultsPath)), token_(std::move(token))
 {
+}
+
+CloudUploader::~CloudUploader()
+{
+    secure_wipe(token_);
 }
 
 UploadAnswer CloudUploader::upload(const std::string&, const std::vector<UploadPart>& parts)

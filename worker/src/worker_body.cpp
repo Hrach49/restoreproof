@@ -521,6 +521,10 @@ struct Body {
     }
 
     // Its age by its last write; nullopt when it isn't there or can't be told.
+    // Both times are the file clock's: clock_cast to system_clock goes
+    // through utc_clock, which in MSVC loads icu.dll's time-zone data and
+    // throws where Windows has none (Server 2016 and 2019; the W5.1 code
+    // review's finding 1).
     std::optional<std::chrono::system_clock::duration> kept_jobs_age() const
     {
         std::error_code ec;
@@ -529,7 +533,8 @@ struct Body {
         if (ec) {
             return std::nullopt;
         }
-        return wall_now() - std::chrono::clock_cast<std::chrono::system_clock>(written);
+        return std::chrono::duration_cast<std::chrono::system_clock::duration>(
+            std::filesystem::file_time_type::clock::now() - written);
     }
 
     // state\worker.json's worker_id, when it reads.

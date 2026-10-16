@@ -41,6 +41,10 @@ public:
     // `http` must outlive the uploader. `cloud_url` is Config::cloud_url; a
     // '/' at its end is dropped. `token` is the vault's cloud_api_token.
     CloudUploader(IHttpClient& http, std::string cloud_url, std::string token);
+    CloudUploader(const CloudUploader&) = delete;
+    CloudUploader& operator=(const CloudUploader&) = delete;
+    // Wipes its copy of the token (rp::secure_wipe).
+    ~CloudUploader() override;
 
     // POST <cloud_url>/v1/results with `Authorization: Bearer <token>` and one
     // multipart part per `parts`, in their order, each with its name, file

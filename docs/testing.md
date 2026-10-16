@@ -359,7 +359,7 @@ the targets must be empty first; then the test; `rpworker graph list`; then C5.7
 harness (`docs/api/cloud-lab/c5.7-harness/c57-live.ps1`, with the W6.3 title and evidence place)
 on a job the Cloud dispatches with no `canary_cursor`, so the service runs a run without canaries
 whose files are `backup_content`, both verifiers say `verified` on the sent folder and the bundle
-posted by hand with the API token (the Worker sends none until W5.1) is 202 twice; then the shape
+posted by hand with the API token (the service's own flush goes to the W4.8 stub, under a stub token the harness puts into the vault and takes out again) is 202 twice; then the shape
 check and the live cleanup test in its `finally`. The evidence goes into `docs/api/veeam-lab/`
 (`w6.3-*`) only when every step exited 0, the shape holds and no file holds a secret-shaped
 value. Since W6.3 the kept bundle the Cloud's by-hand harnesses upload must be one in the new
@@ -984,8 +984,11 @@ This writes into the lab tenant and deletes there, as every run does. Before the
 - **An elevated PowerShell 7**, no restore session of the Veeam account still `Working`, no
   other RestoreProof run, the vault filled with all five secrets (`rpworker vault test`), the
   signing key among them: every run of the service signs.
-- **The stub Cloud** on `https://localhost:8443` with its own certificate, as for "The outbox
-  by hand".
+- **The stub Cloud** on `https://localhost:8444` with its own certificate, as for "The outbox
+  by hand" (8443 is Caddy's since W5.1). Since W5.1 the stub answers with `X-RestoreProof-API: 1`
+  and the service sends nothing without `cloud_api_token` in the vault: `Start-W48Stub` puts a
+  random token of the run's own there (refusing a vault that already holds one, a registered
+  Worker's) and `Stop-W48Stub` takes it out (the W5.1 code review's finding 6).
 - **A config copy** in a work folder of its own outside the repository (`<work>` below, which
   also holds the stub's CA file and the jobs file): the lab's config with `jobs_file` (an
   absolute path, `<work>\jobs.json`; the file needn't exist yet), `cloud_url` and

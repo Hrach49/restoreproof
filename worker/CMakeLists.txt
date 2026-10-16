@@ -387,6 +387,7 @@ set(RP_VAULT_USER ${RP_EXE_VAULTS}/user.bin)       # veeam_username
 set(RP_VAULT_TWO ${RP_EXE_VAULTS}/two.bin)         # veeam_username, veeam_password
 set(RP_VAULT_FULL ${RP_EXE_VAULTS}/full.bin)       # those, graph_cert_pfx_base64, signing_key_base64
 set(RP_VAULT_EMPTY ${RP_EXE_VAULTS}/empty.bin)     # nothing
+set(RP_VAULT_TOKEN ${RP_EXE_VAULTS}/token.bin)     # cloud_api_token
 set(RP_VAULT_MISSING ${RP_EXE_VAULTS}/no-such-vault.bin)
 function(rp_add_vault_setup name vault secret)
     cmake_parse_arguments(PARSE_ARGV 3 T "" "AFTER" "")
@@ -410,6 +411,7 @@ rp_add_vault_setup("rpworker vault set stores graph_cert_pfx_base64 (full)" ${RP
 rp_add_vault_setup("rpworker vault set stores signing_key_base64 (full)" ${RP_VAULT_FULL} signing_key_base64
     AFTER "rpworker vault set stores graph_cert_pfx_base64 (full)")
 rp_add_vault_setup("rpworker vault set stores veeam_username (empty)" ${RP_VAULT_EMPTY} veeam_username)
+rp_add_vault_setup("rpworker vault set stores cloud_api_token (token)" ${RP_VAULT_TOKEN} cloud_api_token)
 rp_add_exe_test("rpworker vault remove takes veeam_username out (empty)"
     ARGS vault remove veeam_username --vault ${RP_VAULT_EMPTY}
     EXIT_CODE 0 STDOUT "removed veeam_username from ${RP_VAULT_EMPTY}" STDERR "")
@@ -707,6 +709,15 @@ rp_add_exe_test("rpworker outbox flush without an API token sends nothing"
     --vault ${RP_VAULT_USER}
     EXIT_CODE 1 STDOUT ""
     STDERR "outbox error: cloud_api_token is not in the vault; nothing was sent (rpworker cloud register)")
+# With a token and nothing queued, the flush asks no one (main's test before
+# W5.1, which read no vault).
+rp_add_exe_test("rpworker outbox flush with nothing queued"
+    ARGS outbox flush --config ${RP_OUTBOX_EXE}/config.json --outbox ${RP_OUTBOX_EXE}/empty-root
+    --vault ${RP_VAULT_TOKEN}
+    EXIT_CODE 0 STDOUT "0 queued, 0 sent, 0 failed" STDERR "")
+set_tests_properties("rpworker outbox flush without an API token sends nothing"
+    "rpworker outbox flush with nothing queued"
+    PROPERTIES FIXTURES_REQUIRED exe-vault)
 
 # `rpworker service` (W4.7). No test here names install, uninstall, start or
 # stop: with valid arguments they would act on this machine's real service.

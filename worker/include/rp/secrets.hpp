@@ -59,6 +59,19 @@ std::optional<std::string>* secret_field(Secrets& secrets, std::string_view name
 const std::optional<std::string>* secret_field(const Secrets& secrets,
                                                std::string_view name) noexcept;
 
+// Wipes every value (rp::secure_wipe) of the Secrets it holds when it goes.
+struct WipedSecrets {
+    Secrets secrets;
+    WipedSecrets() = default;
+    WipedSecrets(const WipedSecrets&) = delete;
+    WipedSecrets& operator=(const WipedSecrets&) = delete;
+    ~WipedSecrets();
+};
+
+// Wipes and empties every value of `secrets` but the one called `keep`
+// (empty: none kept).
+void wipe_secrets(Secrets& secrets, std::string_view keep = {}) noexcept;
+
 // "<name> is not in the vault": what every command says for a secret it needs
 // and the vault doesn't hold. ConfigError's key() is the name.
 std::string not_in_vault(std::string_view name);

@@ -1790,7 +1790,16 @@ TEST_CASE("worker body: state\\jobs.json is kept, aged, read by the jobs reader 
     CHECK(env.read_jobs(kept).state == rp::JobsState::read);
     const std::optional<std::chrono::system_clock::duration> age = env.kept_jobs_age();
     REQUIRE(age);
+    // The real file clock, whatever the lab's wall clock says (the W5.1 code
+    // review's finding 14: a negative age passed the old check).
+    CHECK(*age >= std::chrono::system_clock::duration::zero());
     CHECK(*age < std::chrono::hours{1});
+    std::filesystem::last_write_time(kept, std::filesystem::file_time_type::clock::now() -
+                                               std::chrono::hours{7});
+    const std::optional<std::chrono::system_clock::duration> old = env.kept_jobs_age();
+    REQUIRE(old);
+    CHECK(*old >= std::chrono::hours{7});
+    CHECK(*old < std::chrono::hours{8});
     // Written over.
     REQUIRE(env.keep_jobs(R"({"format":"restoreproof.jobs.v1","jobs":[ ]})"));
 

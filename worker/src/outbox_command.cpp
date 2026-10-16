@@ -47,7 +47,10 @@ int run_flush(const CommandOptions& options, std::ostream& out, std::ostream& er
     std::filesystem::path root;
     std::unique_ptr<RunLock> lock;
     std::shared_ptr<FixtureRecorder> recorder;
-    Secrets secrets;
+    // Every value wiped when the command ends (the W5.1 code review's
+    // finding 11).
+    WipedSecrets held;
+    Secrets& secrets = held.secrets;
     // One return after the handler (see signer.cpp).
     std::optional<std::string> problem;
     try {
@@ -56,10 +59,8 @@ int run_flush(const CommandOptions& options, std::ostream& out, std::ostream& er
         const std::filesystem::path vault = command_vault_path(
             options.value("--vault"), env.default_vault_path ? env.default_vault_path : default_vault_path);
         secrets = env.load_secrets ? env.load_secrets(vault) : read_vault(vault);
-        // The one name read; the others go now.
-        Secrets token_only;
-        token_only.cloud_api_token = std::move(secrets.cloud_api_token);
-        secrets = std::move(token_only);
+        // The one name read; the others are wiped now.
+        wipe_secrets(secrets, "cloud_api_token");
         if (secrets.cloud_api_token && !secrets.cloud_api_token->empty()) {
             lock = take_outbox_flush_lock(env.take_flush_lock);
         }
@@ -90,7 +91,6 @@ int run_flush(const CommandOptions& options, std::ostream& out, std::ostream& er
         throw std::logic_error("no HTTP client for the Cloud");
     }
     CloudUploader uploader(*http, config.cloud_url, *secrets.cloud_api_token);
-    secure_wipe(*secrets.cloud_api_token);
     Outbox outbox({root, env.files, nullptr});
     // An operator's flush: a run a 401 kept is tried at once.
     const FlushReport report = outbox.flush(

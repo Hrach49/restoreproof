@@ -1,5 +1,6 @@
 #include <rp/secrets.hpp>
 
+#include <rp/cert_export.hpp>
 #include <rp/config.hpp>
 
 #include <string>
@@ -47,6 +48,22 @@ const std::optional<std::string>* secret_field(const Secrets& secrets,
                                                std::string_view name) noexcept
 {
     return field_of<const Secrets, const std::optional<std::string>>(secrets, name);
+}
+
+void wipe_secrets(Secrets& secrets, std::string_view keep) noexcept
+{
+    for (const std::string_view name : kSecretNames) {
+        std::optional<std::string>* field = secret_field(secrets, name);
+        if (name != keep && *field) {
+            secure_wipe(**field);
+            field->reset();
+        }
+    }
+}
+
+WipedSecrets::~WipedSecrets()
+{
+    wipe_secrets(secrets);
 }
 
 std::string not_in_vault(std::string_view name)

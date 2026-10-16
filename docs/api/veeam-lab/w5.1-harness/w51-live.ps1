@@ -68,6 +68,13 @@ $t += "Windows, PowerShell $($PSVersionTable.PSVersion), Docker Desktop, the Com
 $ok = $false
 $installed = $false
 $installToken = $null
+# The vault's two Cloud tokens are this run's to remove only once the run has
+# seen that neither was there before it (the W5.1 code review's finding 5: a
+# registered Worker's token, shown once by the Cloud, was removed by a run
+# that refused to start).
+$vaultOurs = $false
+$since = [DateTime]::UtcNow
+$after = ''
 try {
     # 1
     $t += "`n== 1. the restore targets before =="
@@ -76,6 +83,8 @@ try {
     if ($before -notmatch '(?m)^0 item\(s\) in the three restore targets') { throw 'the restore targets are not empty (or graph list failed); nothing is cleaned' }
     $vaultList = Invoke-W48 @('vault', 'list')
     if ($vaultList -match '(?m)^cloud_api_token\r?$') { throw 'the vault already holds cloud_api_token: remove it first (rpworker vault remove cloud_api_token)' }
+    if ($vaultList -match '(?m)^cloud_install_token\r?$') { throw 'the vault already holds cloud_install_token: remove it first (rpworker vault remove cloud_install_token)' }
+    $vaultOurs = $true
 
     # 2
     $t += "`n== 2. the stack, re-migrated; Caddy's root =="
@@ -200,21 +209,26 @@ try {
         try { icacls $Failed /remove:g $script:W48Account /Q | Out-Null } catch { }
         $t += "-- the service`n$(Remove-W48Service)"
     }
-    foreach ($name in 'cloud_api_token', 'cloud_install_token') { $t += (Invoke-W48 @('vault', 'remove', $name)) -split "`n" | Where-Object { $_ -match '^(command|exit code|removed|vault)' } }
+    if ($vaultOurs) {
+        foreach ($name in 'cloud_api_token', 'cloud_install_token') { $t += (Invoke-W48 @('vault', 'remove', $name)) -split "`n" | Where-Object { $_ -match '^(command|exit code|removed|vault)' } }
+    } else {
+        $t += 'the vault left as it was: this run put no token there'
+    }
     New-Item -ItemType Directory -Force $Kept | Out-Null
     foreach ($folder in @(Get-ChildItem (Join-Path $script:W48Root 'sent') -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^[0-9a-f-]{36}$' -and $_.LastWriteTimeUtc -ge $since.AddMinutes(-1) })) {
         Move-Item $folder.FullName (Join-Path $Kept $folder.Name) -Force
         $t += "sent folder kept: $(Join-Path $Kept $folder.Name)"
     }
     $t += Remove-W48Harness
-    $t += "-- the restore targets after`n$(Get-W48Targets)"
+    $after = Get-W48Targets
+    $t += "-- the restore targets after`n$after"
     $text = ($t -join "`n")
     $runFile = Join-Path $RunDir 'w5.1-done-when.txt'
     [IO.File]::WriteAllText($runFile, $text.Replace("`r`n", "`n") + "`n", [Text.UTF8Encoding]::new($false))
     "run text: $runFile"
 }
 if (-not $ok) { Write-Error 'the Done-when did not hold; nothing copied into the repository'; exit 1 }
-if ($t -join "`n" -notmatch '(?m)^0 item\(s\) in the three restore targets[\s\S]*\z') { Write-Warning 'the targets after: see the text' }
+if ($after -notmatch '(?m)^0 item\(s\) in the three restore targets') { Write-Warning 'the targets after: see the text' }
 if (-not $NoCopy) {
     $saved = Save-W48Evidence 'w5.1-done-when.txt' ($t -join "`n")
     $saved

@@ -44,7 +44,9 @@ $script:W48Vault = Join-Path $script:W48Root 'vault.bin'
 $W48Config = Join-Path $script:W48Dir 'config.json'
 $W48Jobs = Join-Path $script:W48Dir 'jobs.json'
 $W48PublicKey = Join-Path $script:W48Dir 'worker-signing.pub.pem'
-$W48Port = 8443
+# Not 8443: since W5.1 that is Caddy's, in front of the Compose stack (the W5.1 code review's
+# finding 6).
+$W48Port = 8444
 
 # The values the lab's vault was filled from, read for scrubbing the evidence only; never printed.
 function Get-W48Secrets {
@@ -94,7 +96,39 @@ function Initialize-W48Harness {
     "config copy: $W48Config (cloud_url https://localhost:$W48Port, cloud_ca_file and veeam_ca_file copies beside it, jobs_file $W48Jobs, poll_interval_s 30, heartbeat_interval_s 60); seed-manifest.json copied beside it"
 }
 
+# Since W5.1 the service sends no upload and no heartbeat without cloud_api_token in the vault:
+# the stub's run puts a token of its own there, 32 random bytes in base64url on stdin (never a
+# file, a command line or a log), and Stop-W48Stub removes it. A vault that already holds one
+# (a registered Worker's, shown once by the Cloud) is refused, never overwritten or removed.
+function Set-W48StubToken {
+    $marker = Join-Path $script:W48Temp 'stub-token.set'
+    if (Test-Path $marker) { return 'the stub token is in the vault' }
+    if ((Invoke-W48 @('vault', 'list')) -match '(?m)^cloud_api_token\r?$') {
+        throw 'the vault already holds cloud_api_token: a stub run would send it to the stub; remove it first (rpworker vault remove cloud_api_token)'
+    }
+    $bytes = [byte[]]::new(32)
+    [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $token = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+    $set = $token | & $script:Worker vault set cloud_api_token 2>&1
+    $code = $LASTEXITCODE
+    $token = $null
+    if ($code -ne 0) { throw "rpworker vault set cloud_api_token: exit $code" }
+    Set-Content $marker 'set'
+    'a stub token of this run put into the vault (cloud_api_token)'
+}
+
+function Remove-W48StubToken {
+    $marker = Join-Path $script:W48Temp 'stub-token.set'
+    if (-not (Test-Path $marker)) { return 'no stub token of this run in the vault' }
+    $removed = Invoke-W48 @('vault', 'remove', 'cloud_api_token')
+    Remove-Item $marker
+    if ($removed -notmatch '(?m)^exit code: 0') { return "the stub token couldn't be removed from the vault: $removed" }
+    'the stub token removed from the vault'
+}
+
 function Start-W48Stub {
+    New-Item -ItemType Directory -Force $script:W48Temp | Out-Null
+    $tokenLine = Set-W48StubToken
     $log = Join-Path $script:W48Temp 'stub.log'
     $arguments = @((Join-Path $PSScriptRoot 'stub-cloud.py'), '--cert', (Join-Path $script:W48Dir 'stub-cert.pem'),
         '--key', (Join-Path $script:W48Temp 'stub-key.pem'), '--port', "$W48Port")
@@ -105,7 +139,7 @@ function Start-W48Stub {
         if ((Test-Path $log) -and (Get-Content $log -Raw)) { break }
         Start-Sleep -Milliseconds 100
     }
-    "stub started (pid $($stub.Id))"
+    "$tokenLine`nstub started (pid $($stub.Id))"
 }
 
 function Get-W48StubLog([string]$Match = '.') {
@@ -118,6 +152,7 @@ function Stop-W48Stub {
         Stop-Process -Id ([int](Get-Content $pidFile)) -Force -ErrorAction SilentlyContinue
         Remove-Item $pidFile
     }
+    Remove-W48StubToken | Out-Null
     'stub killed'
 }
 
@@ -336,8 +371,9 @@ function Remove-W48Service {
     $text -join "`n"
 }
 function Remove-W48Harness {
-    if (Get-CimInstance Win32_Service -Filter "Name='$script:W48Service'") { throw "the service $script:W48Service is still installed: revoke, stop, then uninstall" }
+    # The stub and its token go first, whatever else refuses.
     Stop-W48Stub | Out-Null
+    if (Get-CimInstance Win32_Service -Filter "Name='$script:W48Service'") { throw "the service $script:W48Service is still installed: revoke, stop, then uninstall" }
     Remove-Item -Recurse -Force $script:W48Dir, $script:W48Logs, $script:W48State, $script:W48Temp -ErrorAction SilentlyContinue
     "config copy removed: $(-not (Test-Path $script:W48Dir)); state removed: $(-not (Test-Path $script:W48State)); logs removed: $(-not (Test-Path $script:W48Logs))"
 }

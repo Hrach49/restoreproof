@@ -141,3 +141,24 @@ TEST_CASE("secret_values leaves room for what its caller adds, so no value moves
     CHECK(values.data() == first);
     CHECK(values.front().data() == first_bytes);
 }
+
+TEST_CASE("wipe_secrets empties every value but the one kept (W5.1 code review, finding 11)",
+          "[secrets]")
+{
+    rp::Secrets secrets;
+    for (const std::string_view name : rp::kSecretNames) {
+        *rp::secret_field(secrets, name) = std::string{"value of "} + std::string{name};
+    }
+    const std::string kept = GENERATE(std::string{}, std::string{"cloud_api_token"});
+
+    rp::wipe_secrets(secrets, kept);
+
+    for (const std::string_view name : rp::kSecretNames) {
+        CAPTURE(name);
+        if (name == kept) {
+            CHECK(*rp::secret_field(secrets, name) == "value of " + std::string{name});
+        } else {
+            CHECK_FALSE(*rp::secret_field(secrets, name));
+        }
+    }
+}

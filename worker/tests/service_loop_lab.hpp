@@ -128,6 +128,7 @@ struct LoopLab {
 
     std::set<std::string, std::less<>> queued;
     std::set<std::string, std::less<>> sent;
+    std::set<std::string, std::less<>> failed;
     std::set<std::string, std::less<>> folders; // under the runs root
     // The runs marked as run (under the state folder), and whether a mark
     // can be written.
@@ -365,9 +366,10 @@ struct LoopLab {
             return jobs ? parse_jobs(*jobs) : JobsDocument{};
         };
         env.outbox_holds = [this](std::string_view run_id) {
-            return queued.contains(run_id) ? OutboxHolds::queued
-                   : sent.contains(run_id) ? OutboxHolds::sent
-                                           : OutboxHolds::none;
+            return queued.contains(run_id)   ? OutboxHolds::queued
+                   : sent.contains(run_id)   ? OutboxHolds::sent
+                   : failed.contains(run_id) ? OutboxHolds::failed
+                                             : OutboxHolds::none;
         };
         env.run_folder_exists = [this](std::string_view run_id) {
             return folders.contains(run_id);

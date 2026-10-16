@@ -1537,8 +1537,10 @@ rpworker outbox list [--outbox <root>]
 
 Uploads the queued runs and shows the queue (W4.6; `docs/verification.md`, "The outbox").
 `<root>` defaults to `%ProgramData%\RestoreProof` (so `outbox\`, `sent\` and, since W5.1,
-`failed\` under it). `flush` reads one name of the vault, `cloud_api_token`, which every upload
-carries as `Authorization: Bearer` (W5.1); without it: `outbox error: cloud_api_token is not in
+`failed\` under it). `flush` uses one name of the vault, `cloud_api_token`, which every upload
+carries as `Authorization: Bearer` (W5.1); the vault is decrypted whole, so every other value is
+wiped from memory at once, and the token (the command's copy and the uploader's) when the
+command ends; without it: `outbox error: cloud_api_token is not in
 the vault; nothing was sent (rpworker cloud register)`, exit 1, nothing tried. `list` reads no
 vault.
 
@@ -2070,9 +2072,16 @@ timeout, at most 1 MiB of the answer read. The Cloud hands a run out once (its p
 the jobs file's own reader and rules ("The jobs file": J1 to J4, the same lines with that
 path). At each poll the kept document is read first: while it names a job that isn't settled
 (no run folder, nothing under `outbox\`, `sent\` or `failed\`, no done mark) and it is less than
-six hours old, its jobs run and the Cloud isn't asked; otherwise it is removed and the Cloud is
-asked. A service restarted mid-document runs the rest of it; a job that ended before its run
-line is tried again at each poll until it runs or the six hours end.
+six hours old by the file clock (an age below zero, a clock stepped back, is no age), its jobs
+run and the Cloud isn't asked; otherwise it is removed and the Cloud is asked. A service
+restarted mid-document runs the rest of it. **A job that ended before its run line** (no restore
+point yet, an unknown organisation, Veeam not answering) holds the document no longer once it
+has been tried in this process: the Cloud is asked at the next poll and its jobs run first, then
+each such job is tried again, at every poll, until it runs, a document names it again, or six
+hours have passed since it first ended so (by then the Cloud has requeued or expired it); kept
+in memory, so a restart tries it once from the kept document (the W5.1 code review's finding 2:
+one client's job that couldn't start kept every other client's runs at the Cloud for six
+hours). With `jobs_file` the file is read at every poll and is its own retry.
 
 **The token**, read from the vault at each poll, each heartbeat and at the start:
 
@@ -2567,7 +2576,7 @@ disagree on the body.
 | `veeam_look_failed` | the hold's look at Veeam's sessions, or an end of one, failed |
 | `veeam_sessions_working` | the hold waits for sessions that are still `Working` |
 | `recovery_clean_incomplete` | the clean after a hold wasn't completed |
-| `upload_unreachable`, `upload_timeout`, `upload_internal`, `upload_not_cloud`, `upload_http_<status>` | the flush's word for an upload that failed (`kept <run_id>: <word>; ...`) |
+| `upload_unreachable`, `upload_timeout`, `upload_internal`, `upload_not_cloud`, `upload_http_<status>` | the flush's word for an upload that failed (`kept <run_id>: <word>; ...`), or for a run the Cloud refused for good (`failed <run_id>: upload_http_<status>`) |
 | `not_registered` | W5.1: the vault holds no API token |
 | `token_refused` | W5.1: the Cloud refused the API token (401) |
 

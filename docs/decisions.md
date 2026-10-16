@@ -7,6 +7,25 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-16 — W7.0 (#189) code review: findings 1 to 8 of fifteen fixed, 9 to 15 open (proposed)
+
+The review (`/code-review xhigh`) of the branch `w7.0-tenant-setup` found fifteen. The owner asked for 1 to 8 to be fixed.
+
+**Fixed.**
+
+1. *A mail role assignment matched by name alone.* `Test-MailAssignment` now also requires the assignee (`RoleAssigneeName`, the service principal's object ID, as the lab recorded it) to be the app's service principal now. `Get-ExchangePlan` reads a pointer whose `ObjectId` is not that service principal as a deleted one's: it removes the assignments made to it first (`Select-AppAssignments` takes the old ID), then the pointer (`exchange.pointer-remove`, `Remove-ServicePrincipal`, added to `-CommandName`), then makes both again. `Test-ExchangeState` takes the pointer first and names a missing or stale one. Held by plan rows, check rows, the recorded lab answers read for another service principal, and two whole-script runs (the app made again; its service principal alone made again), each followed by a run with `changes: 0`.
+2. *`-OneDriveUser` the restoretest mailbox.* The check skips a mailbox whose primary address is `-MailboxAddress` with a note, so a run on the lab's shape passes.
+3. *The check stopped on an Exchange read.* Without a pointer the check tests no mailbox and lists the problem; each `Test-ServicePrincipalAuthorization` and each recipient read that fails is a `problem:` line (`Failed` in the authorization row).
+4. *`-Worker` hid the Worker's reason.* rpworker's stderr is kept apart from the PEM and printed in the refusal, which no longer sends the admin to `New-WorkerGraphCertificate.ps1` for every failure and says never to `-Replace` a certificate the Worker has.
+5. *No retry after the app was made.* The service principal's two reads and the three SharePoint grant POSTs go through `Invoke-WithRetry` (400 or 404, six attempts, ten seconds apart). The fake's `failures` takes `{status, times}`.
+6. *Exchange in another organisation.* After `Connect-ExchangeOnline`, `Get-ConnectionInformation`'s `TenantID` is held to `-TenantId` before any Exchange read; the connect is inside the `try`, so a failed or cancelled sign-in still disconnects Graph (finding 10's case, fixed with it).
+7. *Every Get-Recipient failure read as none.* `Read-Recipients` takes `-ErrorAction Stop`; only Exchange's not-found (`Get-ExchangeLookupFailure`) is no recipient, "matches multiple entries" stops the run (`names more than one recipient`), anything else is thrown in the setup and a problem in the check. The fake throws Exchange's own words.
+8. *`-Replace` left a mismatched pair.* The script refuses `-Replace` while the Worker's service (`-ServiceName`, default `RestoreProof`) is not stopped, and a failed password set says what the vault now holds (the new PFX with the old password, or without one).
+
+**Open.** 9 (two apps of the name read as none too), 10's rest (none: fixed with 6), 11 (`certificate_pem()`'s DER buffer and OpenSSL errors), 12 (the usage line in `docs/worker-config.md`), 13 (the whole role assignment table read twice), 14 (the check's copy of `MailboxKinds`), 15 (the module's function names that Exchange's cmdlets can shadow).
+
+**Gates.** `uv run pytest` in `tools/tenant-setup/tests` with the built Worker, on the finished code: 359 passed (330 before the review). The live Done-when was not run again: `Remove-ServicePrincipal`, `Get-ConnectionInformation`'s `TenantID` and Exchange's not-found and ambiguous texts are from the module's documentation and Exchange's known messages, not recorded on the lab tenant.
+
 ## 2026-10-16 — W7.0 (#189) build notes: built as the entry says, on the branch `w7.0-tenant-setup`; the hand-written failure answers built as states in code, not files; the Exchange customisation asked before the first write of the run; the one test that needs the built Worker marked and deselected in CI, never skipped; the lab tenant recorded and the rules held to its answers; the live Done-when held on the fourth run, 2026-10-16 (proposed)
 
 Nothing here reopens a point of the entry.

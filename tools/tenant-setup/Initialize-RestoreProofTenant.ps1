@@ -118,8 +118,17 @@ if ($WorkerCertificateFile) {
 else {
     $vaultArgs = @()
     if ($VaultPath) { $vaultArgs = @('--vault', $VaultPath) }
-    $pem = (& $Worker graph certificate @vaultArgs 2>$null) -join "`n"
-    if ($LASTEXITCODE -ne 0) { throw "rpworker graph certificate failed (exit $LASTEXITCODE): make the certificate first (New-WorkerGraphCertificate.ps1)" }
+    # stdout is the PEM; stderr is rpworker's own line (its thumbprint, or why it failed), repeated
+    # on a failure: an unelevated shell, an expired certificate and an empty vault each say so.
+    $answer = @(& $Worker graph certificate @vaultArgs 2>&1)
+    $code = $LASTEXITCODE
+    $said = @($answer | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_" })
+    $pem = @($answer | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_" }) -join "`n"
+    if ($code -ne 0) {
+        throw ("rpworker graph certificate failed (exit $code): $($said -join ' '). Nothing was read or changed. " +
+            'A vault that holds no Graph certificate yet takes one from New-WorkerGraphCertificate.ps1; never -Replace ' +
+            "one this Worker has: every client's app holds it.")
+    }
 }
 $certificate = Read-WorkerCertificate $pem ([datetime]::UtcNow)
 if ($certificate.Problem) { throw "The Worker's certificate $($certificate.Problem)" }
@@ -210,13 +219,22 @@ $account = "$($context.Account)"
 # shadowed the setup module's on the first live run); only these come in.
 $ExchangeCommands = @(
     'Get-Recipient', 'New-Mailbox', 'Get-OrganizationConfig', 'Enable-OrganizationCustomization',
-    'Get-ServicePrincipal', 'New-ServicePrincipal', 'Get-ManagementScope', 'New-ManagementScope', 'Set-ManagementScope',
+    'Get-ServicePrincipal', 'New-ServicePrincipal', 'Remove-ServicePrincipal', 'Get-ManagementScope', 'New-ManagementScope', 'Set-ManagementScope',
     'Get-ManagementRoleAssignment', 'New-ManagementRoleAssignment', 'Remove-ManagementRoleAssignment',
     'Test-ServicePrincipalAuthorization'
 )
-Connect-ExchangeOnline -UserPrincipalName $account -ShowBanner:$false -DisableWAM -CommandName $ExchangeCommands -ErrorAction Stop
 
+# Inside the try, so a failed or cancelled Exchange sign-in still ends the Graph session.
 try {
+    Connect-ExchangeOnline -UserPrincipalName $account -ShowBanner:$false -DisableWAM -CommandName $ExchangeCommands -ErrorAction Stop
+    # Exchange connects to the account's own organisation, which for a partner's or a guest's
+    # account is not the client's: held to the tenant like the Graph session, before any read.
+    $exchangeTenant = "$((@(Get-ConnectionInformation) | Select-Object -Last 1).TenantID)"
+    if ($exchangeTenant -ne $TenantId) {
+        throw ("Exchange Online signed in to tenant '$exchangeTenant', not $TenantId. Run it again with an account of " +
+            "the client's tenant (a partner's or a guest's account reaches its own organisation's Exchange). Nothing was changed.")
+    }
+
     # ---- the tenant ----------------------------------------------------------------------------
     $organization = (Get-GraphList (Invoke-Graph GET 'organization?$select=id,displayName,verifiedDomains') | Select-Object -First 1)
     if ("$(Get-Field $organization 'id')" -ne $TenantId) { throw "Graph's organization is '$(Get-Field $organization 'id')', not $TenantId" }
@@ -238,7 +256,18 @@ try {
     $graphSpId = "$(Get-Field $graphSp 'id')"
 
     # ---- the readers -------------------------------------------------------------------------
-    function Read-Recipients { @(Get-Recipient -Identity $MailboxAddress -ErrorAction SilentlyContinue | Where-Object { $_ }) }
+    # The recipients an address names: none only for Exchange's "couldn't be found"; an address
+    # that names several, or any other failure, stops the caller (never read as "no recipient").
+    function Read-Recipients([string]$Identity = $MailboxAddress) {
+        try { @(Get-Recipient -Identity $Identity -ErrorAction Stop | Where-Object { $_ }) }
+        catch {
+            switch (Get-ExchangeLookupFailure "$_") {
+                'not-found' { return }
+                'ambiguous' { throw "$Identity names more than one recipient: nothing was changed" }
+            }
+            throw
+        }
+    }
     function Read-Site { Invoke-Graph GET "sites/$(Get-SitePath $SiteUrl)?`$select=id,webUrl,displayName" }
     function Read-Lists([string]$SiteId) { Get-GraphAll "sites/$SiteId/lists?`$select=id,displayName,webUrl,list" }
     function Read-Drive {
@@ -331,8 +360,9 @@ try {
         else { Ok "the service principal $(Get-Field $sp 'id')" }
         $spId = "$(Get-Field $sp 'id')"
 
-        $assignments = if ($spId) { @(Get-GraphAll "servicePrincipals/$spId/appRoleAssignments") } else { @() }
-        $delegated = if ($spId) { @(Get-GraphAll "servicePrincipals/$spId/oauth2PermissionGrants") } else { @() }
+        # A service principal made a moment ago may not be on the replica that answers: 404 for a while.
+        $assignments = if ($spId) { @(Invoke-WithRetry -What 'the service principal' -Action { Get-GraphAll "servicePrincipals/$spId/appRoleAssignments" }) } else { @() }
+        $delegated = if ($spId) { @(Invoke-WithRetry -What 'the service principal' -Action { Get-GraphAll "servicePrincipals/$spId/oauth2PermissionGrants" }) } else { @() }
         $plan = @(Get-ConsentPlan $assignments $delegated $graphSpId $roleIds)
         foreach ($change in $plan) {
             switch ($change.Action) {
@@ -354,7 +384,8 @@ try {
         $plan = @(Get-GrantPlan (Read-SitePermissions $siteId) $appId 'read' 'site')
         foreach ($change in $plan) {
             switch ($change.Action) {
-                'site.grant' { Invoke-Change $change { Invoke-Graph POST "sites/$siteId/permissions" @{ roles = @('read'); grantedToIdentities = @(@{ application = @{ id = $appId; displayName = $AppName } }) } | Out-Null } }
+                # Each grant names the app, which SharePoint may not see yet when it was made this run.
+                'site.grant' { Invoke-Change $change { Invoke-WithRetry -What 'the app' -Action { Invoke-Graph POST "sites/$siteId/permissions" @{ roles = @('read'); grantedToIdentities = @(@{ application = @{ id = $appId; displayName = $AppName } }) } | Out-Null } } }
                 'site.set' { Invoke-Change $change { Invoke-Graph PATCH "sites/$siteId/permissions/$($change.Data.Id)" @{ roles = @('read') } | Out-Null } }
                 'site.remove' { Invoke-Change $change { Invoke-Graph DELETE "sites/$siteId/permissions/$($change.Data.Id)" | Out-Null } }
             }
@@ -371,7 +402,7 @@ try {
                 $why = Test-RestoreTargetList (Invoke-Graph GET "sites/$siteId/lists/${listId}?`$select=id,displayName,webUrl,list") $listId
                 if ($why) { throw "the list about to be made writable ${why}: no write grant was made" }
                 switch ($change.Action) {
-                    'list.grant' { Invoke-Graph POST "sites/$siteId/lists/$listId/permissions" @{ roles = @('write'); grantedToV2 = @{ application = @{ id = $appId } } } | Out-Null }
+                    'list.grant' { Invoke-WithRetry -What 'the app' -Action { Invoke-Graph POST "sites/$siteId/lists/$listId/permissions" @{ roles = @('write'); grantedToV2 = @{ application = @{ id = $appId } } } | Out-Null } }
                     'list.set' { Invoke-Graph PATCH "sites/$siteId/lists/$listId/permissions/$($change.Data.Id)" @{ roles = @('write') } | Out-Null }
                     'list.remove' { Invoke-Graph DELETE "sites/$siteId/lists/$listId/permissions/$($change.Data.Id)" | Out-Null }
                 }
@@ -389,7 +420,7 @@ try {
                 $why = Test-RestoreTargetFolder (Invoke-Graph GET "drives/$driveId/items/${folderId}?`$select=id,name,folder,file,parentReference") $driveId $folderId
                 if ($why) { throw "the folder about to be made writable ${why}: no write grant was made" }
                 switch ($change.Action) {
-                    'folder.grant' { Invoke-Graph POST "drives/$driveId/items/$folderId/permissions" @{ roles = @('write'); grantedToV2 = @{ application = @{ id = $appId } } } | Out-Null }
+                    'folder.grant' { Invoke-WithRetry -What 'the app' -Action { Invoke-Graph POST "drives/$driveId/items/$folderId/permissions" @{ roles = @('write'); grantedToV2 = @{ application = @{ id = $appId } } } | Out-Null } }
                     'folder.set' { Invoke-Graph PATCH "drives/$driveId/items/$folderId/permissions/$($change.Data.Id)" @{ roles = @('write') } | Out-Null }
                     'folder.remove' { Invoke-Graph DELETE "drives/$driveId/items/$folderId/permissions/$($change.Data.Id)" | Out-Null }
                 }
@@ -404,6 +435,7 @@ try {
         $plan = @(Get-ExchangePlan $pointer $scope (Read-Assignments) $dehydrated ([bool]$AllowOrganizationCustomization) $spId $appId $MailboxAddress)
         foreach ($change in $plan) {
             switch ($change.Action) {
+                'exchange.pointer-remove' { Invoke-Change $change { Remove-ServicePrincipal -Identity $change.Data.Identity -Confirm:$false -ErrorAction Stop | Out-Null } }
                 'exchange.pointer' { Invoke-Change $change { Invoke-ExchangeWithRetry { New-ServicePrincipal -AppId $appId -ObjectId $spId -DisplayName $AppName -ErrorAction Stop | Out-Null } } }
                 'exchange.customize' { Invoke-Change $change { Enable-OrganizationCustomization -ErrorAction Stop | Out-Null } }
                 'exchange.scope' {
@@ -496,19 +528,36 @@ try {
         foreach ($n in $result.Notes) { $notes.Add("$($location[0]): $n") }
     }
 
-    $recipients = @(Read-Recipients)
-    if ($recipients.Count -ne 1 -or (Test-MailRecipient $recipients[0] $MailboxAddress)) { $problems.Add("$MailboxAddress is not one user or shared mailbox") }
+    # Every Exchange read below that fails is a problem, never the end of the check.
+    $recipients = @()
+    try {
+        $recipients = @(Read-Recipients)
+        if ($recipients.Count -ne 1 -or (Test-MailRecipient $recipients[0] $MailboxAddress)) { $problems.Add("$MailboxAddress is not one user or shared mailbox") }
+    }
+    catch { $problems.Add("$MailboxAddress can't be read in Exchange: $($_.Exception.Message)") }
     $scope = Get-ManagementScope -Identity $MailScopeName -ErrorAction SilentlyContinue
+    $pointer = if ($appId) { Get-ServicePrincipal -Identity $appId -ErrorAction SilentlyContinue } else { $null }
+    # Exchange's answer for one mailbox, or why it gave none.
+    function Read-Authorization([string]$Mailbox, [bool]$Expected) {
+        try { @{ Mailbox = $Mailbox; Expected = $Expected; Answers = @(Test-ServicePrincipalAuthorization -Identity $appId -Resource $Mailbox -ErrorAction Stop) } }
+        catch { @{ Mailbox = $Mailbox; Failed = $_.Exception.Message } }
+    }
     $authorizations = @()
-    if ($appId) {
-        $authorizations += @{ Mailbox = $MailboxAddress; Expected = $true; Answers = @(Test-ServicePrincipalAuthorization -Identity $appId -Resource $MailboxAddress -ErrorAction Stop) }
+    # Without a pointer Exchange can answer nothing for the app: Test-ExchangeState names that.
+    if ($pointer) {
+        $authorizations += Read-Authorization $MailboxAddress $true
         foreach ($other in @($account, $OneDriveUser) | Select-Object -Unique) {
-            $found = @(Get-Recipient -Identity $other -ErrorAction SilentlyContinue | Where-Object { $_ -and @('UserMailbox', 'SharedMailbox') -contains "$($_.RecipientTypeDetails)" })
+            try { $found = @(Read-Recipients $other | Where-Object { @('UserMailbox', 'SharedMailbox') -contains "$($_.RecipientTypeDetails)" }) }
+            catch { $problems.Add("$other can't be read in Exchange: $($_.Exception.Message)"); continue }
             if ($found.Count -eq 0) { $notes.Add("$other has no mailbox to test the scope against"); continue }
-            $authorizations += @{ Mailbox = $other; Expected = $false; Answers = @(Test-ServicePrincipalAuthorization -Identity $appId -Resource $other -ErrorAction Stop) }
+            # The OneDrive user may be the restoretest mailbox's own user: in scope by design.
+            if (@($found | Where-Object { "$($_.PrimarySmtpAddress)" -ieq $MailboxAddress }).Count -gt 0) {
+                $notes.Add("$other is the $MailboxAddress mailbox itself"); continue
+            }
+            $authorizations += Read-Authorization $other $false
         }
     }
-    foreach ($p in Test-ExchangeState $scope (Read-Assignments) $spId $appId $MailboxAddress $authorizations) { $problems.Add($p) }
+    foreach ($p in Test-ExchangeState $pointer $scope (Read-Assignments) $spId $appId $MailboxAddress $authorizations) { $problems.Add($p) }
 
     foreach ($n in $notes) { Say "note: $n" }
     foreach ($p in $problems) { Say "problem: $p" }

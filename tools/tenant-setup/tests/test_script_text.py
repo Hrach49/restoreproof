@@ -12,7 +12,7 @@ from pwsh import CERT_SCRIPT, MODULE, SCRIPT, ps_string, run_json
 FILES = [SCRIPT, MODULE, CERT_SCRIPT]
 EXCHANGE = {
     "Connect-ExchangeOnline", "Disconnect-ExchangeOnline", "Get-Recipient", "New-Mailbox", "Get-OrganizationConfig",
-    "Enable-OrganizationCustomization", "Get-ServicePrincipal", "New-ServicePrincipal", "Get-ManagementScope",
+    "Enable-OrganizationCustomization", "Get-ServicePrincipal", "New-ServicePrincipal", "Remove-ServicePrincipal", "Get-ManagementScope",
     "New-ManagementScope", "Set-ManagementScope", "Get-ManagementRoleAssignment", "New-ManagementRoleAssignment",
     "Remove-ManagementRoleAssignment", "Test-ServicePrincipalAuthorization",
 }

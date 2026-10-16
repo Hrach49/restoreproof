@@ -22,6 +22,7 @@ LAB = FIXTURES / "lab"
 TENANT = "bcd6bd1a-ea42-489d-aa28-2c19a44ad146"
 APP_ID = "737da5ef-baf2-4198-b009-e160d8ca77c9"
 SP_ID = "f5a56ba3-1b8f-4d4c-8a0a-b2b579b7bd5f"
+OTHER_SP = "0b0b0b0b-1111-4222-8333-444444444444"
 SITE_ID = "restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689"
 LIST_ID = "ffec069d-65e4-4c3a-9da2-ac086cf9dafa"
 DRIVE_ID = "b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3"
@@ -239,14 +240,17 @@ def exchange():
     dehydrated = rows(39)[0]["IsDehydrated"]
     plan = (f"Get-ExchangePlan {ps(rows(40)[0])} {ps(rows(41)[0])} {ps(rows(42))} "
             f"(ConvertFrom-ExchangeBool {ps(dehydrated)} 'IsDehydrated') $false '{SP_ID}' '{APP_ID}' '{MAILBOX}'")
-    state = f"Test-ExchangeState {ps(rows(41)[0])} {ps(rows(42))} '{SP_ID}' '{APP_ID}' '{MAILBOX}'"
+    state = f"Test-ExchangeState {ps(rows(40)[0])} {ps(rows(41)[0])} {ps(rows(42))} '{SP_ID}' '{APP_ID}' '{MAILBOX}'"
     return evaluate([
         f"ConvertFrom-ExchangeBool {ps(dehydrated)} 'IsDehydrated'",
         plan,
         f"{state} {authorizations()}",
         f"{state} {authorizations(admin='True')}",
         f"{state} {authorizations(mailbox='False')}",
-        f"Test-ExchangeState {ps(rows(41)[0])} @() '{SP_ID}' '{APP_ID}' '{MAILBOX}' {authorizations()}",
+        f"Test-ExchangeState {ps(rows(40)[0])} {ps(rows(41)[0])} @() '{SP_ID}' '{APP_ID}' '{MAILBOX}' {authorizations()}",
+        # The recorded assignment and pointer, read for a service principal made again since.
+        f"Test-ExchangeState {ps(rows(40)[0])} {ps(rows(41)[0])} {ps(rows(42))} '{OTHER_SP}' '{APP_ID}' '{MAILBOX}' {authorizations()}",
+        f"(Get-ExchangePlan {ps(rows(40)[0])} {ps(rows(41)[0])} {ps(rows(42))} $false $false '{OTHER_SP}' '{APP_ID}' '{MAILBOX}').Action",
     ])
 
 
@@ -257,8 +261,17 @@ def test_the_lab_exchange_needs_nothing(exchange):
     assert plan is None and state is None
 
 
+def test_a_real_assignment_of_another_service_principal_is_not_the_apps(exchange):
+    """Exchange names the assignee by the service principal's object ID, as recorded: an
+    assignment of RestoreProof's name to another object is a deleted one's (review finding 1)."""
+    *_, stale_state, stale_plan = exchange
+    assert any("pointer for the app names f5a56ba3-" in p for p in stale_state)
+    assert any(p.startswith("the app has 1 Exchange role assignment(s)") for p in stale_state)
+    assert stale_plan == ["exchange.assignment-remove", "exchange.pointer-remove", "exchange.pointer", "exchange.assignment"]
+
+
 def test_exchange_faults_on_real_answers_are_caught(exchange):
-    *_, admin, mailbox, no_assignment = exchange
+    *_, admin, mailbox, no_assignment, _, _ = exchange
     assert admin == "Exchange says the app may reach admin (Application Mail.ReadWrite); only the restoretest mailbox is allowed"
     assert mailbox == "Exchange says the app may not reach mailbox (Application Mail.ReadWrite not in scope)"
     assert no_assignment.startswith("the app has 0 Exchange role assignment(s)")

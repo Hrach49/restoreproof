@@ -290,6 +290,8 @@ ADDRESS = "restoretest@contoso.onmicrosoft.com"
 FILTER = f"PrimarySmtpAddress -eq '{ADDRESS}'"
 SCOPE = {"Name": "RestoreProof Worker - restoretest mailbox", "RecipientFilter": FILTER}
 POINTER = {"AppId": APP_ID, "ObjectId": SP_ID}
+OLD_SP = "eeeeeeee-1111-2222-3333-444444444444"
+OLD_POINTER = {"AppId": APP_ID, "ObjectId": OLD_SP}
 
 
 def assignment(name="RestoreProof Worker - Application Mail.ReadWrite - restoretest", role="Application Mail.ReadWrite",
@@ -308,7 +310,30 @@ EXCHANGE_ROWS = [
     ("nothing yet", None, None, [], False, False, ["exchange.pointer", "exchange.scope", "exchange.assignment"]),
     ("another app's assignment", POINTER, SCOPE, [assignment(), assignment("y", assignee=OTHER_APP)], False, False, []),
     ("as it must be, dehydrated says nothing", POINTER, SCOPE, [assignment()], True, False, []),
+    # The app was made again: its new pointer is missing, the old app's assignment keeps the name.
+    ("the name, a deleted app's assignee", None, SCOPE, [assignment(assignee=OLD_SP)], False, False,
+     ["exchange.assignment-remove", "exchange.pointer", "exchange.assignment"]),
+    # Its service principal alone was made again: the pointer and its assignments name the old one.
+    ("a pointer to a deleted service principal", OLD_POINTER, SCOPE, [assignment(assignee=OLD_SP), assignment("z", "Application Mail.Read", assignee=OLD_SP)], False, False,
+     ["exchange.assignment-remove", "exchange.assignment-remove", "exchange.pointer-remove", "exchange.pointer", "exchange.assignment"]),
 ]
+
+
+def test_a_stale_pointer_goes_after_its_assignments_and_by_its_own_id():
+    plan = evaluate([
+        f"Get-ExchangePlan {ps(OLD_POINTER)} {ps(SCOPE)} {ps([assignment(assignee=OLD_SP)])} $false $false {ps(SP_ID)} {ps(APP_ID)} {ps(ADDRESS)} | ForEach-Object {{ \"$($_.Action)|$(if ($_.Data) {{ $_.Data.Identity }})\" }}"
+    ])[0]
+    assert plan[:2] == ["exchange.assignment-remove|RestoreProof Worker - Application Mail.ReadWrite - restoretest", f"exchange.pointer-remove|{OLD_SP}"]
+
+
+def test_an_exchange_lookup_failure_is_read_by_its_words():
+    rows = [
+        "|Microsoft.Exchange.Configuration.Tasks.ManagementObjectNotFoundException|The operation couldn't be performed because object 'x@contoso.com' couldn't be found on 'AM0PR01A001.PROD.OUTLOOK.COM'.",
+        "|Microsoft.Exchange.Configuration.Tasks.ManagementObjectAmbiguousException|The operation couldn't be performed because 'x@contoso.com' matches multiple entries.",
+        "The request was throttled. Try again in 30 seconds.",
+        "",
+    ]
+    assert evaluate([f"Get-ExchangeLookupFailure {ps(text)}" for text in rows]) == ["not-found", "ambiguous", "", ""]
 
 
 @pytest.fixture(scope="module")
@@ -385,8 +410,21 @@ def authorization(mailbox, expected, *in_scope_roles):
 def test_the_exchange_state():
     good_auth = [authorization(ADDRESS, True, "Application Mail.ReadWrite"), authorization("admin@contoso.onmicrosoft.com", False)]
 
-    def row(scope, assignments, auth):
-        return f"Test-ExchangeState {ps(scope)} {ps(assignments)} {ps(SP_ID)} {ps(APP_ID)} {ps(ADDRESS)} {ps(auth)}"
+    def row(scope, assignments, auth, pointer=POINTER):
+        return f"Test-ExchangeState {ps(pointer)} {ps(scope)} {ps(assignments)} {ps(SP_ID)} {ps(APP_ID)} {ps(ADDRESS)} {ps(auth)}"
+
+    later = [
+        row(SCOPE, [assignment()], [], pointer=None),
+        row(SCOPE, [assignment(assignee=OLD_SP)], good_auth, pointer=OLD_POINTER),
+        row(SCOPE, [assignment(assignee=OLD_SP)], good_auth),
+        row(SCOPE, [assignment()], [good_auth[0], {"Mailbox": "admin@contoso.onmicrosoft.com", "Failed": "throttled"}]),
+    ]
+    no_pointer, stale_pointer, stale_assignee, failed = [problems(v) for v in evaluate(later)]
+    assert no_pointer == ["Exchange has no service principal pointer for the app"]
+    assert any(f"names {OLD_SP}, not the app's service principal" in p for p in stale_pointer)
+    assert any("1 Exchange role assignment(s)" in p for p in stale_pointer)
+    assert len(stale_assignee) == 1 and f"assigned to '{SP_ID}'" in stale_assignee[0]
+    assert failed == ["Exchange can't say whether the app may reach admin@contoso.onmicrosoft.com: throttled"]
 
     rows = [
         row(SCOPE, [assignment()], [authorization(ADDRESS, True), good_auth[1]]),

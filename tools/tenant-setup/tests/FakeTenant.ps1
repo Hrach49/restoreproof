@@ -85,6 +85,11 @@ function global:Connect-ExchangeOnline {
     if (-not $CommandName) {
         function global:Get-MailboxPlan { param([Parameter(Position = 0)]$Identity) throw 'Exchange''s Get-MailboxPlan, not the setup module''s' }
     }
+    if (Get-FakeField $global:FakeState 'exchangeConnectFails') { throw 'fake: the Exchange sign-in was cancelled' }
+}
+# The organisation Exchange connected to: `exchangeTenant`, else the Graph session's.
+function global:Get-ConnectionInformation {
+    [pscustomobject]@{ TenantID = (Get-FakeField $global:FakeState 'exchangeTenant') ?? $global:FakeState.signedInTenant; State = 'Connected' }
 }
 # Waits are logged, never slept.
 function global:Start-Sleep { param([int]$Seconds) $global:FakeLog.Add(@{ call = 'sleep'; seconds = $Seconds }) }
@@ -142,10 +147,14 @@ function global:Invoke-MgGraphRequest {
     $path, $query = $relative.Split('?', 2)
     $data = if ($Body) { $Body | ConvertFrom-Json -AsHashtable } else { $null }
     $global:FakeLog.Add(@{ call = 'graph'; method = $Method; path = $relative; body = $data })
+    # A failure is a status (every time) or { status; times } (that many times, then the route).
     $failures = (Get-FakeField $global:FakeState 'failures') ?? @{}
     foreach ($rule in @($failures.Keys)) {
         $m, $pattern = $rule.Split(' ', 2)
-        if ($m -eq $Method -and $path -match $pattern) { Throw-FakeHttp ([int]$global:FakeState.failures[$rule]) 'forced' }
+        if ($m -ne $Method -or $path -notmatch $pattern) { continue }
+        $failure = $failures[$rule]
+        if ($failure -isnot [System.Collections.IDictionary]) { Throw-FakeHttp ([int]$failure) 'forced' }
+        if ([int]$failure.times -gt 0) { $failure.times = [int]$failure.times - 1; Throw-FakeHttp ([int]$failure.status) 'forced' }
     }
     $s = $global:FakeState
     switch -Regex ($path) {
@@ -320,7 +329,14 @@ function global:Get-FakeExchange { $global:FakeState.exchange }
 function global:Get-Recipient {
     param([string]$Identity, $ErrorAction)
     Add-FakeExchangeLog 'Get-Recipient' @{ Identity = $Identity }
-    @((Get-FakeExchange).recipients | Where-Object { $_.PrimarySmtpAddress -ieq $Identity -or @($_.EmailAddresses) -icontains "smtp:$Identity" } | ForEach-Object { Copy-Fake $_ })
+    # Exchange's own words, as the REST cmdlets throw them: none found, several found, or a forced
+    # failure (`recipientErrors`: { address: text }).
+    $forced = Get-FakeField (Get-FakeField (Get-FakeExchange) 'recipientErrors') $Identity
+    if ($forced) { throw $forced }
+    $found = @((Get-FakeExchange).recipients | Where-Object { $_.PrimarySmtpAddress -ieq $Identity -or @($_.EmailAddresses) -icontains "smtp:$Identity" } | ForEach-Object { Copy-Fake $_ })
+    if ($found.Count -eq 0) { throw "|Microsoft.Exchange.Configuration.Tasks.ManagementObjectNotFoundException|The operation couldn't be performed because object '$Identity' couldn't be found on 'FAKEPR01A001.PROD.OUTLOOK.COM'." }
+    if ($found.Count -gt 1) { throw "|Microsoft.Exchange.Configuration.Tasks.ManagementObjectAmbiguousException|The operation couldn't be performed because '$Identity' matches multiple entries." }
+    $found
 }
 function global:New-Mailbox {
     param([switch]$Shared, [string]$Name, [string]$DisplayName, [string]$Alias, [string]$PrimarySmtpAddress, $ErrorAction)
@@ -347,6 +363,13 @@ function global:New-ServicePrincipal {
         throw "||Error: AADServicePrincipalNotFound. No ServicePrincipal with Object Id '$ObjectId' for Client Application Id '$AppId' is registered in this tenant. Exchange Service Principals"
     }
     $x.pointers = @($x.pointers) + @(@{ AppId = $AppId; ObjectId = $ObjectId; DisplayName = $DisplayName })
+}
+function global:Remove-ServicePrincipal {
+    param([string]$Identity, [switch]$Confirm, $ErrorAction)
+    Add-FakeExchangeLog 'Remove-ServicePrincipal' @{ Identity = $Identity }
+    $x = Get-FakeExchange
+    if (@($x.assignments | Where-Object { $_.RoleAssigneeName -eq $Identity }).Count -gt 0) { throw 'fake: the pointer still has role assignments' }
+    $x.pointers = @($x.pointers | Where-Object { $_.ObjectId -ne $Identity })
 }
 function global:Get-ManagementScope {
     param([string]$Identity, $ErrorAction)

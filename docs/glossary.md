@@ -153,6 +153,16 @@ whether the item is really there and matches is decided by reading it back throu
 started, instead of sending it again. Exactly one match is adopted; none or several gives no
 verdict (`error`), and the POST is not resent (`docs/decisions.md` 2026-09-28, W2.4).
 
+**Tenant setup script.** `tools/tenant-setup/Initialize-RestoreProofTenant.ps1` (W7.0): what a
+client's Global Administrator runs once to prepare the tenant. It finds or makes the three
+restore targets and the "RestoreProof Worker" app with exactly its grants, checks them read-only,
+and prints the client's profile. A second run changes nothing (`changes: 0`). `docs/tenant-setup.md`.
+
+**The Worker's Graph certificate.** The one certificate a Worker signs in to Microsoft Graph with,
+in every client's tenant: its key only in the vault (`graph_cert_pfx_base64`,
+`graph_cert_password`), its public half on each client's app registration (`rpworker graph
+certificate`). Made once per Worker by `tools/tenant-setup/New-WorkerGraphCertificate.ps1`.
+
 ## Verification levels
 
 How deeply a backup has been verified. RestoreProof's own ladder, used in reports so the

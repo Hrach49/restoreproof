@@ -6,7 +6,7 @@ param([switch]$SaveEvidence)
 
 $SiteUrl = 'https://restoreprooflab.sharepoint.com/sites/RestoreTest'
 $CanaryListId = '7eb0f08a-f57b-418c-8ca6-f2ab81297666'   # RestoreTest library (the canary SOURCE), lab/tenant.md
-$TargetListId = 'ffec069d-65e4-4c3a-9da2-ac086cf9dafa'   # RestoreTarget library (the restore target)
+$TargetListId = '29dfd30b-9223-49fc-ab87-a205a757f896'   # RestoreTarget library (the restore target)
 
 function Show-Results($r) {
     $b = Get-Body $r

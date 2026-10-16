@@ -56,9 +56,18 @@ struct GraphCommandEnv {
 GraphCommandEnv default_graph_command_env();
 
 // `rpworker graph ...`. `args` is what follows "graph" on the command line, in
-// UTF-8; the only subcommand is `list`, followed by `--hash`, `--config
-// <path>`, `--vault <file>` and `--record <dir>` in any order, each at most
-// once.
+// UTF-8: `list`, followed by `--hash`, `--config <path>`, `--vault <file>` and
+// `--record <dir>` in any order, each at most once; or `certificate [--vault
+// <file>]`.
+//
+// `certificate` (W7.0, docs/decisions.md 2026-10-16 point 4): opens the vault's
+// Graph certificate as the sign-in does (graph::certificate_from_secrets, the
+// same refusals as `list`'s "config error: ..." lines, exit 1) and prints its
+// public half alone on `out`, one PEM "CERTIFICATE" block, then
+// "thumbprint <SHA-1> (SHA-1), expires <YYYY-MM-DDTHH:MM:SSZ>" on `err`; exit 0.
+// No config is read and nothing is sent. The PFX, its password and the key
+// never reach either stream. What a client tenant's app registration gets
+// (tools/tenant-setup).
 //
 // Signs in to Graph as the Worker app (graph_tenant_id, graph_client_id, and
 // the certificate from the vault's graph_cert_pfx_base64 and

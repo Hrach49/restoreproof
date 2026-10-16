@@ -66,6 +66,10 @@ nothing and prints no secret but the one token it exists to print.
 
 ## The sequence
 
+Before it, the client's tenant is prepared once by `tools/tenant-setup/Initialize-RestoreProofTenant.ps1`
+(W7.0; `docs/tenant-setup.md`): the three restore targets, the "RestoreProof Worker" app with exactly its
+grants, the check, and the profile file step 4 takes.
+
 1. **The MSP.**
 
    ```
@@ -117,6 +121,7 @@ nothing and prints no secret but the one token it exists to print.
    the same `restoreproof.client-profile.v1` document `rpworker client check --profile-file`
    reads (`docs/worker-config.md`): the Veeam organisation's name, the tenant, the Worker app's
    id, the `restoretest` mailbox and the four restore-target ids; IDs only, no secret. The
+   tenant setup script prints it (`-ProfileFile`, `docs/tenant-setup.md`). The
    repo holds it to the schema and its `graph_tenant_id` to the client's tenant; a client twice
    on one Worker is refused.
 

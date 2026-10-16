@@ -1,0 +1,17 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "Get-Recipient -Identity alice@RestoreProofLab.onmicrosoft.com",
+  "status": 200,
+  "reply": {
+    "Name": "b8712372-d84b-4c0c-8d78-5ab08331da42",
+    "Alias": "alice",
+    "RecipientType": "UserMailbox",
+    "RecipientTypeDetails": "UserMailbox",
+    "PrimarySmtpAddress": "alice@RestoreProofLab.onmicrosoft.com",
+    "EmailAddresses": [
+      "SPO:SPO_6d600fc0-65f8-4811-ad18-096ec5b7e834@SPO_bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+      "SIP:alice@restoreprooflab.onmicrosoft.com",
+      "SMTP:alice@RestoreProofLab.onmicrosoft.com"
+    ]
+  }
+}

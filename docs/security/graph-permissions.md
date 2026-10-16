@@ -349,6 +349,39 @@ A sentinel test greps every output for the PFX password, the token and the priva
   The Worker then gets 404 on the old ID (SharePoint's mask; a 403 where Graph says so),
   which it reports as `error`, not `fail` (`docs/verification.md`). Run the script again after updating the ID.
 
+## A client's tenant (W7.0)
+
+`tools/tenant-setup/Initialize-RestoreProofTenant.ps1` (`docs/tenant-setup.md`; `docs/decisions.md`
+2026-10-16, "W7.0 (#189)") makes the four grants of the table above in a client's tenant, with
+the client's own site, user and `restoretest` mailbox in place of the lab's, and nothing else:
+
+- **The same grants.** `Sites.Selected` read on the site that holds the RestoreTarget library;
+  `Lists.SelectedOperations.Selected` write on that library; `Files.SelectedOperations.Selected`
+  write on `/RestoreTarget` directly under the root of the chosen user's OneDrive; `Application
+  Mail.ReadWrite` in a management scope holding the `restoretest` mailbox alone. Before each write
+  grant the script reads the list or folder again by its ID and refuses unless it is named
+  RestoreTarget (the lab script's two checks, as pure functions tested on fake answers).
+- **What it removes from its own app:** every other application consent (on Graph or another API),
+  every delegated grant, every client secret, any certificate but the Worker's, any other Exchange
+  role assignment of the app. It never removes another application's grant (it prints it as a
+  note), and it never removes a grant of its own app elsewhere on the site or the OneDrive: its
+  check finds that and stops (exit 1), for a person to look at.
+- **The check** reads the grants back as `check-worker-grants.ps1` does (its four rules, without
+  the canaries a client tenant doesn't have): the site `site-read`, the list and the folder
+  `target-write`, every other list of the site `inherited-read-only`, the user's OneDrive root and
+  site `none`; and Exchange's `Test-ServicePrincipalAuthorization`, in scope for `restoretest`
+  and not for the admin's or the user's mailbox. The token's roles are the Worker's side, for
+  `rpworker doctor` (W7.2): the script never holds the key.
+- **The certificate is the Worker's one Graph certificate**, the same for all its clients' apps:
+  the vault holds one (`graph_cert_pfx_base64`, `graph_cert_password`). It is made once per
+  Worker by `tools/tenant-setup/New-WorkerGraphCertificate.ps1` (RSA 2048, SHA-256, two years, in
+  memory, the PFX under AES-256-CBC and SHA-256 piped into `rpworker vault set`), and a tenant only
+  ever gets its public half (`rpworker graph certificate`). One key reaches every client's tenant
+  through its own app's grants: it lives in the vault beside every other secret of the Worker.
+  Renewing it means running the setup script again in every client's tenant (open).
+- **`restoretest`** is made as a shared mailbox when the tenant has none (no licence). Whether
+  Veeam restores into a shared mailbox is shown only on a tenant that had none (the lab's is a
+  licensed user).
 ## Open items
 
 1. **Write access for cleanup (W3.4). Closed on 2026-10-02:** `check-worker-app` 22/22 (list `write` allows a `DELETE`, folder `write` allows deleting a child, `permanentDelete` takes the ImmutableId) and `check-worker-grants.ps1` "canary grants: ok", both saved. Decided in
@@ -373,9 +406,9 @@ A sentinel test greps every output for the PFX password, the token and the priva
    temporary PFX deleted at once, the PFX not stored. A dedicated app is still open, for a spike
    before W4.5. Against a narrow one: Veeam's SharePoint restore demanded
    `Group.ReadWrite.All` (application) on the app (L1.4, `docs/manual-restore-reference.md`).
-3. **Customer tenants.** Onboarding an MSP's client repeats these steps per tenant: the
-   `restoretest` scope, the site grant, the OneDrive folder grant and the site collection
-   admin requirement. How the product guides or automates that is for the onboarding tasks.
+3. **Customer tenants. Closed by W7.0 (2026-10-16):** `tools/tenant-setup/Initialize-RestoreProofTenant.ps1`
+   makes the same four grants in a client's tenant (below, "A client's tenant"); the site
+   collection admin requirement stays a step the admin does by hand (`docs/tenant-setup.md`, step 1).
 4. **Certificate expiry.** The lab certificate expires one year after it was made (date in
    `lab/tenant.md`). To renew it, delete the PFX and run the script again: it makes a new
    certificate and replaces the old one on the app. Stage 1 has no renewal alert yet; the

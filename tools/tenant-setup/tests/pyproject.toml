@@ -1,0 +1,23 @@
+[project]
+name = "restoreproof-tenant-setup-tests"
+version = "0.0.0"
+description = "Tests of tools/tenant-setup (W7.0): the client tenant setup script, run through pwsh"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    # the PFX New-WorkerGraphCertificate.ps1 builds is opened as the Worker would
+    "cryptography>=42",
+    # the printed profile against shared/schemas/client-profile.v1.json
+    "jsonschema>=4.23",
+    "pytest>=8",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+pythonpath = ["."]
+markers = ["worker: needs the built Worker, worker/build/dev/rpworker.exe (CI deselects it with -m \"not worker\")"]

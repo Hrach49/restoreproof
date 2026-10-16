@@ -1,0 +1,15 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/servicePrincipals?$filter=appId eq '737da5ef-baf2-4198-b009-e160d8ca77c9'&$select=id,appId,displayName",
+  "status": 200,
+  "reply": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#servicePrincipals(id,appId,displayName)",
+    "value": [
+      {
+        "displayName": "RestoreProof Worker",
+        "id": "f5a56ba3-1b8f-4d4c-8a0a-b2b579b7bd5f",
+        "appId": "737da5ef-baf2-4198-b009-e160d8ca77c9"
+      }
+    ]
+  }
+}

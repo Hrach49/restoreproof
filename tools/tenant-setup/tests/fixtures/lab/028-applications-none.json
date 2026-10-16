@@ -1,0 +1,9 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/applications?$filter=displayName eq 'RestoreProof no such app'&$select=id,appId",
+  "status": 200,
+  "reply": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#applications(id,appId)",
+    "value": []
+  }
+}

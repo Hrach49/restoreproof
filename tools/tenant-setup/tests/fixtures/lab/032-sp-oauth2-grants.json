@@ -1,0 +1,9 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/servicePrincipals/f5a56ba3-1b8f-4d4c-8a0a-b2b579b7bd5f/oauth2PermissionGrants",
+  "status": 200,
+  "reply": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#oauth2PermissionGrants",
+    "value": []
+  }
+}

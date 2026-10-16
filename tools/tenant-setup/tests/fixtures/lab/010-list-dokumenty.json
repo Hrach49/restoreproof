@@ -1,0 +1,17 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/sites/restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689/lists/7ce76907-31fb-45fe-ad8f-960264f0313b?$select=id,displayName,webUrl,list",
+  "status": 200,
+  "reply": {
+    "list": {
+      "hidden": false,
+      "template": "documentLibrary",
+      "contentTypesEnabled": false
+    },
+    "id": "7ce76907-31fb-45fe-ad8f-960264f0313b",
+    "webUrl": "https://restoreprooflab.sharepoint.com/sites/RestoreTest/Shared%20Documents",
+    "displayName": "Dokumenty",
+    "@odata.etag": "\"7ce76907-31fb-45fe-ad8f-960264f0313b,16\"",
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#sites('restoreprooflab.sharepoint.com%2Cfe08085d-eb70-42e8-95a6-470189bd98eb%2C4ecaf399-cc0e-4d95-b3fe-cd091a09e689')/lists(id,displayName,webUrl,list)/$entity"
+  }
+}

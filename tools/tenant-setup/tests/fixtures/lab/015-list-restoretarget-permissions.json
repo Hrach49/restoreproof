@@ -1,0 +1,126 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/sites/restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689/lists/ffec069d-65e4-4c3a-9da2-ac086cf9dafa/permissions",
+  "status": 200,
+  "reply": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#sites('restoreprooflab.sharepoint.com%2Cfe08085d-eb70-42e8-95a6-470189bd98eb%2C4ecaf399-cc0e-4d95-b3fe-cd091a09e689')/lists('ffec069d-65e4-4c3a-9da2-ac086cf9dafa')/permissions",
+    "value": [
+      {
+        "grantedToV2": {
+          "siteGroup": {
+            "displayName": "Właściciele witryny RestoreTest",
+            "id": "3",
+            "loginName": "Właściciele witryny RestoreTest"
+          },
+          "sharePointGroup": {
+            "id": "ZmUwODA4NWQtZWI3MC00MmU4LTk1YTYtNDcwMTg5YmQ5OGViXzM",
+            "title": "Właściciele witryny RestoreTest",
+            "principalId": "3"
+          }
+        },
+        "id": "V8WCYcWbY2ljaWVsZSB3aXRyeW55IFJlc3RvcmVUZXN0",
+        "grantedTo": {
+          "user": {
+            "displayName": "Właściciele witryny RestoreTest"
+          }
+        },
+        "shareId": "V8WCYcWbY2ljaWVsZSB3aXRyeW55IFJlc3RvcmVUZXN0",
+        "roles": [
+          "owner"
+        ]
+      },
+      {
+        "grantedToV2": {
+          "siteGroup": {
+            "displayName": "Odwiedzający witrynę RestoreTest",
+            "id": "4",
+            "loginName": "Odwiedzający witrynę RestoreTest"
+          },
+          "sharePointGroup": {
+            "id": "ZmUwODA4NWQtZWI3MC00MmU4LTk1YTYtNDcwMTg5YmQ5OGViXzQ",
+            "title": "Odwiedzający witrynę RestoreTest",
+            "principalId": "4"
+          }
+        },
+        "id": "T2R3aWVkemFqxIVjeSB3aXRyeW7EmSBSZXN0b3JlVGVzdA",
+        "grantedTo": {
+          "user": {
+            "displayName": "Odwiedzający witrynę RestoreTest"
+          }
+        },
+        "shareId": "T2R3aWVkemFqxIVjeSB3aXRyeW7EmSBSZXN0b3JlVGVzdA",
+        "roles": [
+          "read"
+        ]
+      },
+      {
+        "grantedToV2": {
+          "siteGroup": {
+            "displayName": "Członkowie witryny RestoreTest",
+            "id": "5",
+            "loginName": "Członkowie witryny RestoreTest"
+          },
+          "sharePointGroup": {
+            "id": "ZmUwODA4NWQtZWI3MC00MmU4LTk1YTYtNDcwMTg5YmQ5OGViXzU",
+            "title": "Członkowie witryny RestoreTest",
+            "principalId": "5"
+          }
+        },
+        "id": "Q3rFgm9ua293aWUgd2l0cnlueSBSZXN0b3JlVGVzdA",
+        "grantedTo": {
+          "user": {
+            "displayName": "Członkowie witryny RestoreTest"
+          }
+        },
+        "shareId": "Q3rFgm9ua293aWUgd2l0cnlueSBSZXN0b3JlVGVzdA",
+        "roles": [
+          "write"
+        ]
+      },
+      {
+        "grantedToV2": {
+          "siteUser": {
+            "displayName": "Admin",
+            "id": "7",
+            "loginName": "i:0#.f|membership|admin@RestoreProofLab.onmicrosoft.com",
+            "email": "admin@RestoreProofLab.onmicrosoft.com"
+          },
+          "user": {
+            "displayName": "Admin",
+            "id": "533138fa-6982-4fd2-a8b1-593d3f655d32",
+            "@odata.type": "#microsoft.graph.sharePointIdentity",
+            "email": "admin@RestoreProofLab.onmicrosoft.com"
+          }
+        },
+        "id": "aTowIy5mfG1lbWJlcnNoaXB8YWRtaW5AUmVzdG9yZVByb29mTGFiLm9ubWljcm9zb2Z0LmNvbQ",
+        "grantedTo": {
+          "user": {
+            "displayName": "Admin",
+            "id": "533138fa-6982-4fd2-a8b1-593d3f655d32",
+            "email": "admin@RestoreProofLab.onmicrosoft.com"
+          }
+        },
+        "shareId": "aTowIy5mfG1lbWJlcnNoaXB8YWRtaW5AUmVzdG9yZVByb29mTGFiLm9ubWljcm9zb2Z0LmNvbQ",
+        "roles": [
+          "owner"
+        ]
+      },
+      {
+        "grantedToV2": {
+          "application": {
+            "id": "737da5ef-baf2-4198-b009-e160d8ca77c9"
+          }
+        },
+        "id": "aTowaS50fG1zLnNwLmV4dHw3MzdkYTVlZi1iYWYyLTQxOTgtYjAwOS1lMTYwZDhjYTc3YzlAYmNkNmJkMWEtZWE0Mi00ODlkLWFhMjgtMmMxOWE0NGFkMTQ2",
+        "grantedTo": {
+          "application": {
+            "id": "737da5ef-baf2-4198-b009-e160d8ca77c9"
+          }
+        },
+        "roles": [
+          "write"
+        ]
+      }
+    ]
+  }
+}

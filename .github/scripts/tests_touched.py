@@ -8,8 +8,11 @@ same side:
     worker/src/, worker/include/, worker/app/  need a change to test code under worker/tests/
     cloud/app/, cloud/manage.py                need a change to test code under cloud/tests/
     shared/tools/                              needs a change to test code under cloud/tests/
+    tools/tenant-setup/ (but its tests/)       needs a change to test code under tools/tenant-setup/tests/
 
-Test code means C++ files under worker/tests/ and .py files under cloud/tests/.
+Test code means C++ files under worker/tests/, .py files under cloud/tests/, and .py and
+.ps1 files under tools/tenant-setup/tests/ (W7.0: the client tenant setup script, docs/decisions.md
+2026-10-16). A side's own test folder is never its source.
 Fixtures, docs and tests/e2e/scenarios.md don't count, and neither does a
 deleted test: removing a test is not writing one. C5.11 (docs/decisions.md
 2026-10-12, point 6) added the onboarding CLI, outside cloud/app/, and the
@@ -41,6 +44,7 @@ SIDES = (
     Side(("worker/src/", "worker/include/", "worker/app/"), "worker/tests/", (".cpp", ".hpp", ".h")),
     Side(("cloud/app/", "cloud/manage.py"), "cloud/tests/", (".py",)),
     Side(("shared/tools/",), "cloud/tests/", (".py",)),
+    Side(("tools/tenant-setup/",), "tools/tenant-setup/tests/", (".py", ".ps1")),
 )
 
 # Single-path statuses from `git diff --name-status --no-renames`.
@@ -60,6 +64,8 @@ def _is_test_code(side: Side, path: str) -> bool:
 
 
 def _is_source(side: Side, path: str) -> bool:
+    if path.startswith(side.test_dir):
+        return False
     return any(
         path.startswith(source) if source.endswith("/") else path == source for source in side.source_dirs
     )

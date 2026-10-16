@@ -1,0 +1,43 @@
+{
+  "source": "recorded read-only from the lab tenant on 2026-10-16 by tests/record/Record-TenantAnswers.ps1",
+  "request": "GET /v1.0/servicePrincipals/f5a56ba3-1b8f-4d4c-8a0a-b2b579b7bd5f/appRoleAssignments",
+  "status": 200,
+  "reply": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#appRoleAssignments",
+    "value": [
+      {
+        "id": "o2ul9Y8bTE2KCrK1ebe9XzlKBA4jHrhAs2MBZ90OrfY",
+        "principalType": "ServicePrincipal",
+        "resourceDisplayName": "Microsoft Graph",
+        "appRoleId": "883ea226-0bf2-4a8f-9f9d-92c9162a727d",
+        "principalDisplayName": "RestoreProof Worker",
+        "createdDateTime": "2026-10-04T19:35:52.5972136Z",
+        "deletedDateTime": null,
+        "resourceId": "fbceed89-7683-44eb-b600-be7d9857f6b2",
+        "principalId": "f5a56ba3-1b8f-4d4c-8a0a-b2b579b7bd5f"
+      },
+      {
+        "id": "o2ul9Y8bTE2KCrK1ebe9X5SRlhUduhtKs9T8NrqjJgM",
+        "principalType": "ServicePrincipal",
+        "resourceDisplayName": "Microsoft Graph",
+        "appRoleId": "bd61925e-3bf4-4d62-bc0b-06b06c96d95c",
+        "principalDisplayName": "RestoreProof Worker",
+        "createdDateTime": "2026-09-27T15:11:07.0956326Z",
+        "deletedDateTime": null,
+        "resourceId": "fbceed89-7683-44eb-b600-be7d9857f6b2",
+        "principalId": "f5a56ba3-1b8f-4d4c-8a0a-b2b579b7bd5f"
+      },
+      {
+        "id": "o2ul9Y8bTE2KCrK1ebe9X6KyXccoSKBOluSFgLRUC34",
+        "principalType": "ServicePrincipal",
+        "resourceDisplayName": "Microsoft Graph",
+        "appRoleId": "23c5a9bd-d900-4ecf-be26-a0689755d9e5",
+        "principalDisplayName": "RestoreProof Worker",
+        "createdDateTime": "2026-10-04T19:35:52.7052143Z",
+        "deletedDateTime": null,
+        "resourceId": "fbceed89-7683-44eb-b600-be7d9857f6b2",
+        "principalId": "f5a56ba3-1b8f-4d4c-8a0a-b2b579b7bd5f"
+      }
+    ]
+  }
+}

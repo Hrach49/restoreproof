@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(restoreproof_worker VERSION 0.0.0 LANGUAGES CXX)
+project(restoreproof_worker VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -345,7 +345,7 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph certificate [--vault <file>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] [--record <dir>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>]")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph certificate [--vault <file>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] [--record <dir>] | rpworker signer public-key [--vault <file>] | rpworker signer new-key [--vault <file>] [--replace] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
     ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"
@@ -635,7 +635,24 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/signer-exe-test/empty-run)
 rp_add_exe_test("rpworker signer without a subcommand prints usage"
     ARGS signer EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker signer rejects an unknown subcommand"
-    ARGS signer new-key EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+    ARGS signer rotate EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+# W7.1: new-key takes --vault <file> and --replace and nothing else; it stops at
+# a vault it can't use or one that already holds a key, so no key is ever made
+# by an exe test (a made key is random: the Catch2 tests hold the happy path
+# on an injected seed).
+rp_add_exe_test("rpworker signer new-key --vault needs a file"
+    ARGS signer new-key --vault EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker signer new-key refuses a word it doesn't know"
+    ARGS signer new-key --force EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker signer new-key reports a vault that isn't there"
+    ARGS signer new-key --vault ${RP_VAULT_MISSING}
+    EXIT_CODE 1 STDOUT "" STDERR "config error: ${RP_VAULT_MISSING}: vault file not found")
+rp_add_exe_test("rpworker signer new-key refuses a vault that holds a key"
+    ARGS signer new-key --vault ${RP_VAULT_FULL}
+    EXIT_CODE 1 STDOUT ""
+    STDERR "signer error: the vault already holds signing_key_base64; this Worker has its key (rpworker signer public-key prints it); --replace makes a new one, after which the Cloud must be told (manage.py revoke-worker, a new install token)")
+set_tests_properties("rpworker signer new-key refuses a vault that holds a key"
+    PROPERTIES FIXTURES_REQUIRED exe-vault)
 rp_add_exe_test("rpworker signer verify needs a folder and a key file"
     ARGS signer verify ${CMAKE_CURRENT_BINARY_DIR}/signer-exe-test/empty-run
     EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")

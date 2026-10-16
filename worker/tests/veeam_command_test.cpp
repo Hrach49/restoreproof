@@ -76,6 +76,10 @@ const std::string kNewestPoint =
     "c2f0f2e7-177f-48ac-992b-93a50cf702e371ac3d9c-eb29-42b6-a391-ae81fcc4681c";
 const std::string kOldestPoint =
     "c2f0f2e7-177f-48ac-992b-93a50cf702e32fb3c7e0-ff6e-4949-8b2d-ae32ecf9e9a7";
+// The lab organisation's app certificate (both apps share it), as every row
+// prints it (W7.1).
+const std::string kThumbprint = "AC3220B58A2B4C438DA13816C2DD1E25D1F783A7";
+const std::string kThumbprintCell = kThumbprint + "  ";
 
 // The lab's REST certificate (tests/fixtures/veeam/README.md) and its SHA-256.
 const std::string kLabCertSha256 =
@@ -711,13 +715,14 @@ TEST_CASE("rpworker veeam list reports an unexpected failure without its message
 
 namespace {
 
-const std::string kHeader = "  ORGANIZATION                     BACKUP TIME                   EX  SP  "
-                            "OD  TM  LONG-TERM  RESTORE POINT ID\n";
-const std::string kNewestRow = "* RestoreProofLab.onmicrosoft.com  2026-09-25T19:37:15.2145203Z  "
-                               "x   x   x   -   no         " +
+const std::string kHeader = "  ORGANIZATION                     APP CERTIFICATE                           "
+                            "BACKUP TIME                   EX  SP  OD  TM  LONG-TERM  "
+                            "RESTORE POINT ID\n";
+const std::string kNewestRow = "* RestoreProofLab.onmicrosoft.com  " + kThumbprintCell +
+                               "2026-09-25T19:37:15.2145203Z  x   x   x   -   no         " +
                                kNewestPoint + "\n";
-const std::string kOldestRow = "* RestoreProofLab.onmicrosoft.com  2026-09-25T19:24:31.0936821Z  "
-                               "x   x   x   -   no         " +
+const std::string kOldestRow = "* RestoreProofLab.onmicrosoft.com  " + kThumbprintCell +
+                               "2026-09-25T19:24:31.0936821Z  x   x   x   -   no         " +
                                kOldestPoint + "\n";
 
 const std::string kMissingOrg = "veeam error: organisation RestoreProofLab.onmicrosoft.com "
@@ -779,11 +784,70 @@ TEST_CASE("rpworker veeam list shows each workload flag and long-term copies", "
 
     const Run result = lab.run_list();
     REQUIRE(result.exit_code == 0);
-    REQUIRE(result.out == kHeader + kNewestRow +
-                              "* RestoreProofLab.onmicrosoft.com  2026-09-25T19:24:31.0936821Z  "
-                              "-   -   -   x   yes        " +
+    REQUIRE(result.out == kHeader + kNewestRow + "* RestoreProofLab.onmicrosoft.com  " +
+                              kThumbprintCell +
+                              "2026-09-25T19:24:31.0936821Z  -   -   -   x   yes        " +
                               kOldestPoint + "\n\n" +
                               "1 organisation(s), 2 restore point(s); * = veeam_org_name\n");
+}
+
+// W7.1: the installer reads the thumbprints from this column (docs/decisions.md
+// 2026-10-16 point 6).
+TEST_CASE("rpworker veeam list prints each organisation's app certificate thumbprints once each, "
+          "or - when Veeam named none, and never a control character",
+          "[veeam_command]")
+{
+    json fixture = load_fixture_json("veeam", "organizations-200");
+    json& org = fixture["body"]["results"].at(0);
+    SECTION("two apps on one certificate: once")
+    {
+        Harness lab;
+        REQUIRE(lab.run_list().out == kHeader + kNewestRow + kOldestRow + "\n" +
+                                          "1 organisation(s), 2 restore point(s); * = veeam_org_name\n");
+    }
+    SECTION("two apps on two certificates: Exchange's, then SharePoint's")
+    {
+        org["sharePointOnlineSettings"]["applicationCertificateThumbprint"] =
+            "0123456789ABCDEF0123456789ABCDEF01234567";
+        Harness lab;
+        lab.http.on(HttpMethod::get, orgs_url(), {to_response(fixture)});
+        const Run result = lab.run_list();
+        REQUIRE(result.exit_code == 0);
+        REQUIRE_THAT(result.out, ContainsSubstring("* RestoreProofLab.onmicrosoft.com  " +
+                                                   kThumbprint +
+                                                   ",0123456789ABCDEF0123456789ABCDEF01234567  "
+                                                   "2026-09-25T19:37:15.2145203Z  "));
+    }
+    SECTION("no app at all: -")
+    {
+        org["exchangeOnlineSettings"] = nullptr;
+        org["sharePointOnlineSettings"] = nullptr;
+        Harness lab;
+        lab.http.on(HttpMethod::get, orgs_url(), {to_response(fixture)});
+        const Run result = lab.run_list();
+        REQUIRE(result.exit_code == 0);
+        REQUIRE_THAT(result.out, ContainsSubstring("  ORGANIZATION                     APP CERTIFICATE  "
+                                                   "BACKUP TIME                   EX"));
+        REQUIRE_THAT(result.out, ContainsSubstring("* RestoreProofLab.onmicrosoft.com  -                "
+                                                   "2026-09-25T19:37:15.2145203Z  x   x   x   -   no"));
+    }
+    SECTION("one app only")
+    {
+        org["sharePointOnlineSettings"] = nullptr;
+        Harness lab;
+        lab.http.on(HttpMethod::get, orgs_url(), {to_response(fixture)});
+        REQUIRE_THAT(lab.run_list().out, ContainsSubstring("* RestoreProofLab.onmicrosoft.com  " +
+                                                           kThumbprintCell + "2026-09-25T19:37"));
+    }
+    SECTION("a control character in a thumbprint from the server is a space")
+    {
+        org["exchangeOnlineSettings"]["applicationCertificateThumbprint"] = "AC32\n20B5";
+        org["sharePointOnlineSettings"]["applicationCertificateThumbprint"] = "AC32\n20B5";
+        Harness lab;
+        lab.http.on(HttpMethod::get, orgs_url(), {to_response(fixture)});
+        REQUIRE_THAT(lab.run_list().out, ContainsSubstring("* RestoreProofLab.onmicrosoft.com  AC32 20B5  "
+                                                           "      2026-09-25T19:37"));
+    }
 }
 
 TEST_CASE("rpworker veeam list prints an organisation with no restore points on one row",
@@ -795,9 +859,9 @@ TEST_CASE("rpworker veeam list prints an organisation with no restore points on 
     const Run result = lab.run_list();
     REQUIRE(result.err.empty());
     REQUIRE(result.out ==
-            "  ORGANIZATION                     BACKUP TIME          EX  SP  OD  TM  LONG-TERM  "
+            "  ORGANIZATION                     APP CERTIFICATE                           BACKUP TIME          EX  SP  OD  TM  LONG-TERM  "
             "RESTORE POINT ID\n"
-            "* RestoreProofLab.onmicrosoft.com  (no restore points)\n"
+            "* RestoreProofLab.onmicrosoft.com  " + kThumbprintCell + "(no restore points)\n"
             "\n"
             "1 organisation(s), 0 restore point(s); * = veeam_org_name\n");
     REQUIRE(result.exit_code == 0);
@@ -828,22 +892,20 @@ TEST_CASE("rpworker veeam list sorts organisations by name in any case, then ID,
     const Run result = lab.run_list();
     REQUIRE(result.err.empty());
     REQUIRE(result.out ==
-            "  ORGANIZATION                              BACKUP TIME                   EX  SP  OD  "
+            "  ORGANIZATION                              APP CERTIFICATE                           BACKUP TIME                   EX  SP  OD  "
             "TM  LONG-TERM  RESTORE POINT ID\n"
-            "  alpha.onmicrosoft.com                     (no restore points)\n"
-            "* RestoreProofLab.onmicrosoft.com           2026-09-25T19:37:15.2145203Z  x   x   x   "
-            "-   no         " +
-                kNewestPoint +
+            "  alpha.onmicrosoft.com                     " + kThumbprintCell + "(no restore points)\n"
+            "* RestoreProofLab.onmicrosoft.com           " + kThumbprintCell +
+                "2026-09-25T19:37:15.2145203Z  x   x   x   -   no         " + kNewestPoint +
                 "\n"
-                "* RestoreProofLab.onmicrosoft.com           2026-09-25T19:24:31.0936821Z  x   x   "
-                "x   -   no         " +
-                kOldestPoint +
+                "* RestoreProofLab.onmicrosoft.com           " + kThumbprintCell +
+                "2026-09-25T19:24:31.0936821Z  x   x   x   -   no         " + kOldestPoint +
                 "\n"
-                "  same.onmicrosoft.com                      (no restore points)\n"
-                "  Same.onmicrosoft.com                      (no restore points)\n"
+                "  same.onmicrosoft.com                      " + kThumbprintCell + "(no restore points)\n"
+                "  Same.onmicrosoft.com                      " + kThumbprintCell + "(no restore points)\n"
                 "  " +
-                zurich +
-                "  (no restore points)\n"
+                zurich + "  " + kThumbprintCell +
+                "(no restore points)\n"
                 "\n"
                 "5 organisation(s), 2 restore point(s); * = veeam_org_name\n");
     REQUIRE(result.exit_code == 0);
@@ -861,9 +923,9 @@ TEST_CASE("rpworker veeam list prints the table, then exits 4, when veeam_org_na
                 {load_fixture("veeam", "restore-points-empty-200")});
 
     const Run result = lab.run_list();
-    REQUIRE(result.out == "  ORGANIZATION  BACKUP TIME          EX  SP  OD  TM  LONG-TERM  "
+    REQUIRE(result.out == "  ORGANIZATION  APP CERTIFICATE                           BACKUP TIME          EX  SP  OD  TM  LONG-TERM  "
                           "RESTORE POINT ID\n"
-                          "  Evil Org      (no restore points)\n"
+                          "  Evil Org      " + kThumbprintCell + "(no restore points)\n"
                           "\n"
                           "1 organisation(s), 0 restore point(s); * = veeam_org_name\n");
     REQUIRE(result.err == kMissingOrg);

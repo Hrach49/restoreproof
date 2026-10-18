@@ -67,6 +67,7 @@ add_library(rpcore STATIC
     src/graph_targets.cpp
     src/heartbeat.cpp
     src/http_client.cpp
+    src/machine_reads.cpp
     src/job_rules.cpp
     src/name_key.cpp
     src/office_v1.cpp
@@ -176,8 +177,9 @@ target_compile_options(rpcore PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/we4062>)
 # and exports a PFX (crypt32) and makes its password (bcrypt). The tests'
 # network guard (Q2.1, http_client.cpp) opens the sockets it allows (ws2_32).
 # The vault (W4.5, vault.cpp) encrypts with DPAPI (crypt32) and sets the
-# file's ACL (advapi32).
-target_link_libraries(rpcore PRIVATE shell32 ole32 crypt32 bcrypt ws2_32 advapi32)
+# file's ACL (advapi32). Doctor (W7.2, machine_reads.cpp) asks Windows' access
+# check for the service's SID (authz) and opens a CNG key's name (ncrypt).
+target_link_libraries(rpcore PRIVATE shell32 ole32 crypt32 bcrypt ws2_32 advapi32 authz ncrypt)
 
 # rpworker: the Worker exe. main() lives in app/ and only hands argv to
 # rp::run_cli; all parsing is in rpcore, where rptests can reach it
@@ -232,6 +234,7 @@ add_executable(rptests
     tests/http_client_test.cpp
     tests/http_client_tls_test.cpp
     tests/live_seed_test.cpp
+    tests/machine_reads_test.cpp
     tests/name_key_test.cpp
     tests/office_v1_test.cpp
     tests/outbox_command_test.cpp

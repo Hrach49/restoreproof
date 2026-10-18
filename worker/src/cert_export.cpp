@@ -89,13 +89,7 @@ bool acquire_private_key(const CERT_CONTEXT* cert) noexcept
 void check_private_key(const CERT_CONTEXT* cert, const std::string& name)
 {
     if (!acquire_private_key(cert)) {
-        const DWORD code = GetLastError();
-        if (code == static_cast<DWORD>(CRYPT_E_NO_KEY_PROPERTY)) {
-            throw CertExportError(name + ": the certificate has no private key");
-        }
-        throw CertExportError(name + ": its private key can't be opened (error " +
-                              error_code(code) +
-                              "); run elevated or as LocalSystem, which a machine key needs");
+        throw CertExportError(cert_export_detail::private_key_refusal(name, GetLastError()));
     }
 }
 
@@ -251,6 +245,21 @@ std::array<BYTE, 20> parse_thumbprint(std::string_view thumbprint)
         out[i] = static_cast<BYTE>(high * 16 + low);
     }
     return out;
+}
+
+std::string private_key_refusal(std::string_view name, unsigned long code)
+{
+    const std::string who(name);
+    if (code == static_cast<unsigned long>(CRYPT_E_NO_KEY_PROPERTY)) {
+        return who + ": the certificate has no private key";
+    }
+    if (code == static_cast<unsigned long>(NTE_BAD_KEYSET)) {
+        return who + ": its private key can't be opened by this account (error " +
+               error_code(code) +
+               ": no read access to its key file, or no key file); rpworker doctor names the "
+               "line that grants it";
+    }
+    return who + ": its private key can't be opened (error " + error_code(code) + ")";
 }
 
 std::chrono::system_clock::time_point to_time_point(const FILETIME& time) noexcept

@@ -1730,8 +1730,11 @@ whose answer was lost, or a vault that couldn't take the token after it (`cloud 
 registered as worker <id>, but the API token couldn't be stored; revoke that Worker (manage.py
 revoke-worker) and register again with a new signing key and a new install token`, exit 1)
 spends the install token and leaves the Cloud holding this key, which it never takes twice: the
-way out is `manage.py revoke-worker`, a new signing key (`python -m seeder new-signing-key` into
-the vault) and a new install token. A `state\worker.json` that couldn't be written is
+way out is a new signing key (`rpworker signer new-key --replace`) and `cloud register` again,
+with the same install token when the Cloud refused the key with 409 (that refusal rolls back and
+leaves the token unused) or a new one when the first 201 spent it; `manage.py revoke-worker`
+then retires the Worker row the old key made. The installer does this itself on the 409 (W7.1's
+code review, finding 8). A `state\worker.json` that couldn't be written is
 `cloud register: registered as worker <id>; state\worker.json couldn't be written`, exit 1, the
 registration kept.
 

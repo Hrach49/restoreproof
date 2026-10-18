@@ -5,8 +5,10 @@ order, the ACLs read back, every secret on stdin alone; a second run with `chang
 -WhatIf writing nothing; a registered Worker asked no token."""
 
 import base64
+import ctypes
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -14,7 +16,7 @@ import pytest
 from fake_rpworker import KEY_ID, THUMBPRINT, WORKER_ID
 from install_lab import (ANSWERS, PASSWORD, SERVICE, TOKEN, USERNAME, InstallLab, acl_lines, assert_no_secret,
                          assert_no_secret_argument, current_user_sid, explicit_rules, lines, self_signed, sha1_hex)
-from pwsh import run_json, with_module
+from pwsh import ps_string, run, run_json, with_module
 
 SERVICE_SID = None
 
@@ -408,3 +410,174 @@ def test_a_stub_dll_in_the_package_is_copied_and_a_changed_one_is_refused_while_
     assert result.returncode != 0
     assert "differs from the package's while the service is installed from it; an upgrade in place is W7.3's" in result.stderr
     assert (lab.program / "rpworker.exe").read_bytes() != b"MZ a newer worker"
+
+
+# --- the W7.1 code review's fixes ------------------------------------------------------------
+
+ELEVATED = bool(ctypes.windll.shell32.IsUserAnAdmin())
+# Giving a folder to Users and reading a SACL need an elevated test run (CI's runner is).
+needs_elevation = pytest.mark.skipif(not ELEVATED, reason="sets another owner and reads a SACL: run the tests elevated")
+
+
+def owner_of(path: Path) -> str:
+    return run_json(f"(Get-Acl -LiteralPath {ps_string(path)}).GetOwner([Security.Principal.SecurityIdentifier]).Value")
+
+
+def test_a_first_install_passes_the_config_check_before_the_vault_is_made(tmp_path):
+    # Finding 1: `config check` ends on the missing vault's line before step 5 makes it.
+    lab = InstallLab(tmp_path)
+    result = lab.run()
+    assert result.returncode == 0, result.stderr
+    out = lines(result)
+    assert "ok: rpworker config check" in out
+    assert "vault set veeam_username" in lab.commands()
+
+
+@needs_elevation
+def test_a_root_a_local_user_owns_is_given_to_administrators(tmp_path):
+    # Finding 2: the owner keeps WRITE_DAC whatever the DACL says.
+    lab = InstallLab(tmp_path)
+    (lab.root / "runs").mkdir(parents=True)
+    for path in (lab.root, lab.root / "runs"):
+        subprocess.run(["icacls", str(path), "/setowner", "*S-1-5-32-545", "/Q"], check=True, capture_output=True)
+        assert owner_of(path) == "S-1-5-32-545"
+    result = lab.run()
+    assert result.returncode == 0, result.stderr
+    assert owner_of(lab.root) == "S-1-5-32-544" and owner_of(lab.root / "runs") == "S-1-5-32-544"
+    assert f"/setowner *S-1-5-32-544 /Q (owned by S-1-5-32-545)" in result.stdout
+    # The second run finds nothing to change in the folders.
+    assert not any(line.startswith("change: ACL of") for line in lines(lab.run(urls=False, answers=None)))
+
+
+@needs_elevation
+def test_a_config_a_local_user_owns_is_never_kept(tmp_path):
+    # Finding 2: a config.json planted before the install names where the secrets go.
+    lab = InstallLab(tmp_path)
+    lab.root.mkdir()
+    planted = lab.root / "config.json"
+    planted.write_text('{"cloud_url": "https://attacker.example.invalid", "veeam_url": "https://attacker.example.invalid:4443"}', encoding="utf-8")
+    subprocess.run(["icacls", str(planted), "/setowner", "*S-1-5-32-545", "/Q"], check=True, capture_output=True)
+    result = lab.run(urls=False)
+    assert result.returncode != 0
+    assert "is there and is owned by S-1-5-32-545, not by SYSTEM, Administrators or this account" in result.stderr
+    assert "-Replace" in result.stderr and "vault set" not in " ".join(lab.commands())
+    result = lab.run("-Replace")
+    assert result.returncode == 0, result.stderr
+    assert lab.config()["cloud_url"] == "https://cloud.example.invalid"
+    assert owner_of(planted) != "S-1-5-32-545"
+    assert explicit_rules(planted)["rules"] == [], "the new file has its folder's rules alone"
+
+
+@needs_elevation
+def test_the_audit_entries_of_a_key_file_are_kept(tmp_path):
+    # Finding 3: Set-Acl, elevated, wrote the SACL back without them.
+    lab = InstallLab(tmp_path)
+    audit = (
+        f"$p = {ps_string(lab.key_file)}\n"
+        "$acl = Get-Acl -LiteralPath $p -Audit\n"
+        "$acl.AddAuditRule([Security.AccessControl.FileSystemAuditRule]::new([Security.Principal.SecurityIdentifier]'S-1-1-0', 'Read', 'Success'))\n"
+        "Set-Acl -LiteralPath $p -AclObject $acl\n"
+    )
+    assert run(audit).returncode == 0
+    count = f"@((Get-Acl -LiteralPath {ps_string(lab.key_file)} -Audit).GetAuditRules($true, $false, [Security.Principal.SecurityIdentifier])).Count"
+    assert run_json(count) == 1
+    result = lab.run()
+    assert result.returncode == 0, result.stderr
+    assert service_sid() in acl_lines(lab.key_file)
+    assert run_json(count) == 1
+
+
+def test_half_a_graph_certificate_is_made_again(tmp_path):
+    # Finding 6: New-WorkerGraphCertificate.ps1 failed after the PFX was set.
+    lab = InstallLab(tmp_path, vault={"veeam_username": USERNAME, "veeam_password": PASSWORD, "cloud_install_token": TOKEN,
+                                      "signing_key_base64": "FAKE-SIGNING-KEY", "graph_cert_pfx_base64": "only-the-pfx"})
+    result = lab.run(answers=None)
+    assert result.returncode == 0, result.stderr
+    out = lines(result)
+    assert "note: the vault holds half the Graph certificate (one of graph_cert_pfx_base64 and graph_cert_password): it is made again" in out
+    assert any(line.startswith("change: New-WorkerGraphCertificate.ps1 (thumbprint ") for line in out)
+    assert "ok: the Graph certificate is in the vault" not in out
+    vault = lab.vault()
+    assert vault["graph_cert_pfx_base64"] != "only-the-pfx" and vault["graph_cert_password"]
+    assert "graph certificate" in lab.commands(), "the new PFX opened with its password"
+
+
+def test_a_wrong_veeam_password_is_corrected_by_running_again_with_replace(tmp_path):
+    # Finding 7: the second run asked nothing and stopped on the same line.
+    lab = InstallLab(tmp_path, flags=("fail-veeam-list",))
+    result = lab.run(answers={**ANSWERS, "veeam_password": "Sentinel-Wrong-Password-1"})
+    assert result.returncode != 0
+    assert "run the installer again with -Replace to give them again" in result.stderr
+    lab.unflag("fail-veeam-list")
+    before = len(lab.argv())
+    result = lab.run("-Replace", answers={"veeam_password": PASSWORD}, urls=True)
+    assert result.returncode == 0, result.stderr
+    sets = [a[2] for a in lab.argv()[before:] if a[:2] == ["vault", "set"]]
+    assert sets == ["veeam_username", "veeam_password"]
+    assert lab.vault()["veeam_password"] == PASSWORD
+    assert "signer new-key" not in " ".join(lab.commands()[before:]), "the key is kept"
+    assert lab.marker("service-started")
+
+
+def test_a_url_given_again_unlike_the_kept_config_stops_and_names_replace(tmp_path):
+    lab = InstallLab(tmp_path)
+    assert lab.run().returncode == 0
+    result = lab.run("-CloudUrl 'https://other.example.invalid'", urls=False, answers=None)
+    assert result.returncode != 0
+    assert "has cloud_url https://cloud.example.invalid, not https://other.example.invalid: give -Replace to write the new one." in result.stderr
+    assert lab.config()["cloud_url"] == "https://cloud.example.invalid"
+
+
+def test_replace_on_a_running_service_stops_it_so_the_start_takes_the_new_config(tmp_path):
+    lab = InstallLab(tmp_path)
+    assert lab.run().returncode == 0 and lab.marker("service-started")
+    lab.machine["installedService"] = {"pathName": f'"{lab.program / "rpworker.exe"}" service run', "state": "Running"}
+    lab.write_machine()
+    before = len(lab.argv())
+    result = lab.run("-Replace", "-VeeamUrl 'https://veeam2.example.invalid:4443'", "-CloudUrl 'https://cloud.example.invalid'",
+                     urls=False, answers={"veeam_password": PASSWORD})
+    assert result.returncode == 0, result.stderr
+    assert lab.config()["veeam_url"] == "https://veeam2.example.invalid:4443"
+    after = lab.commands()[before:]
+    assert after[-2:] == ["service stop", "service start"]
+    out = lines(result)
+    assert "change: rpworker service stop (stopped RestoreProof in 0.4 s), so the start takes the new config and account" in out
+    assert "change: rpworker service start (started RestoreProof)" in out
+
+
+def test_a_second_run_without_changes_does_not_stop_the_service(tmp_path):
+    lab = InstallLab(tmp_path)
+    assert lab.run().returncode == 0
+    lab.machine["installedService"] = {"pathName": f'"{lab.program / "rpworker.exe"}" service run', "state": "Running"}
+    lab.write_machine()
+    lab.run(urls=False, answers=None)
+    assert "service stop" not in lab.commands()
+
+
+def test_a_registration_whose_answer_was_lost_makes_a_new_key_and_registers(tmp_path):
+    # Finding 8: the Cloud holds this key (a 201 that never arrived): 409 on every token.
+    lab = InstallLab(tmp_path, flags=("cloud-holds-key",))
+    result = lab.run()
+    assert result.returncode == 0, result.stderr
+    commands = lab.commands()
+    i = commands.index("cloud register --name fake-host-worker")
+    assert commands[i:i + 3] == ["cloud register --name fake-host-worker", "signer new-key --replace", "cloud register --name fake-host-worker"]
+    assert "cloud_api_token" in lab.vault() and "cloud_install_token" not in lab.vault()
+    assert lab.vault()["signing_key_base64"] != (lab.fake / "cloud-held-key.txt").read_text(encoding="utf-8")
+    out = lines(result)
+    assert any(line.startswith(f"change: rpworker signer new-key --replace (key {KEY_ID}): the Cloud already held this Worker's old key") and
+               "revoke it (manage.py revoke-worker)" in line for line in out)
+    assert f"worker {WORKER_ID} key {KEY_ID}" in out
+    assert_no_secret(result.stdout + result.stderr)
+
+
+def test_a_worker_registered_with_another_cloud_stops_and_says_how_to_move(tmp_path):
+    lab = InstallLab(tmp_path)
+    assert lab.run().returncode == 0
+    (lab.root / "state" / "worker.json").write_text(
+        json.dumps({"worker_id": WORKER_ID, "key_id": KEY_ID, "cloud_url": "https://cloud.example.invalid"}), encoding="utf-8")
+    result = lab.run("-Replace", "-CloudUrl 'https://other.example.invalid'", "-VeeamUrl 'https://veeam.example.invalid:4443'",
+                     urls=False, answers={"veeam_password": PASSWORD})
+    assert result.returncode != 0
+    assert ("this Worker is registered with https://cloud.example.invalid" in result.stderr and
+            "rpworker vault remove cloud_api_token" in result.stderr)

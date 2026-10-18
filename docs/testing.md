@@ -1670,12 +1670,21 @@ uv run pytest -m "not worker"    # CI's selection (.github/workflows/worker-inst
   nothing; a registered Worker asked no token; a root with the inherited ACL and hand-made run
   folders tightened with the folders untouched. The test's own account keeps full control of
   the temporary root through `-AlsoFullControl` (a non-administrator would lock itself out).
+  The W7.1 code review added: a first install passing `config check` before the vault is made
+  (the fake's check ends on the missing vault's line, as the real one does); half a Graph
+  certificate made again; a wrong Veeam password corrected by `-Replace`; a URL given unlike the
+  kept config's refused; a running service stopped before its start after `-Replace`; a 409 on
+  registration answered by a new key and a second `cloud register`; a Worker registered with
+  another Cloud stopped. Three need an elevated test run and skip without one (CI's Windows
+  runner is elevated): a root and a folder owned by `Users` given to Administrators, a
+  `config.json` owned by `Users` never kept, a key file's audit entry kept.
 - `test_script_text.py`: the text: strict, 7.4, `SupportsShouldProcess`, a secret to the Worker
   on stdin alone, nothing undone, the fake machine exporting what the real one does, the rules
   module reading nothing of the machine.
 - `test_worker_real.py` (marked `worker`): the built `rpworker.exe` on a vault of the test's
   own: `signer new-key` into it, refused the second time, `public-key` printing the same half;
-  `vault grant` by the SID of a service that doesn't exist.
+  `vault grant` by the SID of a service that doesn't exist; `config check` before the vault is made, as
+  `Test-ConfigCheck` reads it.
 
 Nothing under `%ProgramData%`, `%ProgramFiles%` or the Service Control Manager is touched. The
 package: `pwsh -File worker\tools\package.ps1` from a VS 2022 Developer PowerShell builds the

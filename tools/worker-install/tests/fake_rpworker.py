@@ -8,7 +8,10 @@ it (one line, the newline dropped), and every other command's effect is a marker
 that folder change the answers: `missing-vault` makes `vault list` answer as for a vault that
 isn't there yet, `fail-<command words joined by ->` makes that command fail with one line and
 the Worker's exit code, `register-401` makes `cloud register` answer as for a refused token,
-`register-503` as for a Cloud that wasn't reached."""
+`register-503` as for a Cloud that wasn't reached, `cloud-holds-key` as for a Cloud that took
+this Worker's key in a registration whose answer was lost (409 for that key, the key it held
+kept in cloud-held-key.txt, 201 for any other). `config check` answers as the real one does
+before the vault is made: the settings, then the vault's line and exit 1."""
 
 import base64
 import datetime
@@ -72,7 +75,12 @@ def main() -> int:
         if fails("config", "check") or not str(document.get("cloud_url", "")).startswith("https://"):
             print("config error: cloud_url: must be an https:// URL", file=sys.stderr)
             return 1
-        print(f"config {args[3]}: ok")
+        print(f"config file: {args[3]}")
+        print(f"cloud_url: {document['cloud_url']}")
+        if (folder / "missing-vault").exists() and not vault:
+            print("config error: C:\\ProgramData\\RestoreProof\\vault.bin: vault file not found", file=sys.stderr)
+            return 1
+        print("secrets (vault C:\\ProgramData\\RestoreProof\\vault.bin; values are never shown):")
         return 0
     if args == ["vault", "list"]:
         if (folder / "missing-vault").exists() and not vault:
@@ -150,6 +158,13 @@ def main() -> int:
         print('installed RestoreProof: "C:\\Program Files\\RestoreProof\\rpworker.exe" service run')
         print("account NT SERVICE\\RestoreProof, automatic start, restart after 60 s up to 3 times; not started: run rpworker service start")
         return 0
+    if args == ["service", "stop"]:
+        if (folder / "service-started").exists():
+            (folder / "service-started").unlink()
+            print("stopped RestoreProof in 0.4 s")
+        else:
+            print("RestoreProof is already stopped")
+        return 0
     if args == ["service", "start"]:
         if fails("service", "start"):
             print("service error: the service RestoreProof stopped while starting (the config couldn't be loaded); see C:\\ProgramData\\RestoreProof\\logs\\worker.log", file=sys.stderr)
@@ -173,6 +188,13 @@ def main() -> int:
         if (folder / "register-503").exists():
             print("cloud register: the Cloud couldn't be reached (http_503); run it again", file=sys.stderr)
             return 3
+        if (folder / "cloud-holds-key").exists():
+            held = folder / "cloud-held-key.txt"
+            if not held.exists():
+                held.write_text(vault.get("signing_key_base64", ""), encoding="utf-8")
+            if held.read_text(encoding="utf-8") == vault.get("signing_key_base64", ""):
+                print("cloud register: this Worker's key is already registered", file=sys.stderr)
+                return 4
         (folder / "registered-name.txt").write_text(args[3] if len(args) == 4 else "", encoding="utf-8")
         vault["cloud_api_token"] = "FAKE-API-TOKEN-" + os.urandom(8).hex()
         del vault["cloud_install_token"]

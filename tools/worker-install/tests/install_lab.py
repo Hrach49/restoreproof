@@ -158,11 +158,12 @@ class InstallLab:
         if whatif:
             params.append("-WhatIf")
         params += list(extra)
-        # A failure's own line and where it came from (the script's stack), so a test shows both.
+        # A failure's own line, whole (pwsh's error view wraps and colours a long one), and where
+        # it came from (the script's stack), so a test shows both.
         command = (
             f"$env:RP_FAKE_DIR = {ps_string(self.fake)}\n"
             f"try {{ & {ps_string(SCRIPT)} {' '.join(params)} }}\n"
-            "catch { [Console]::Error.WriteLine($_.ScriptStackTrace); throw }\n"
+            "catch { [Console]::Error.WriteLine($_.Exception.Message); [Console]::Error.WriteLine($_.ScriptStackTrace); throw }\n"
         )
         return run(command, timeout=timeout)
 

@@ -46,7 +46,11 @@
     The SHA-1 thumbprint of Veeam's REST certificate, to confirm a certificate this machine
     doesn't hold without a question.
 .PARAMETER Replace
-    Rewrite a config.json that is there and fails `rpworker config check`.
+    Write config.json again from the answers and ask the Veeam account and its password again,
+    though they are there: the way to correct a URL or a password that step 8 or 10 found
+    wrong, and to replace a config.json that fails `rpworker config check` or that someone
+    other than SYSTEM, Administrators or this account owns. The signing key, the Graph
+    certificate and the registration are kept.
 
 .EXAMPLE
     pwsh -NoProfile -File Install-RestoreProofWorker.ps1
@@ -101,6 +105,11 @@ $CertificateScript = @((Join-Path $PSScriptRoot 'New-WorkerGraphCertificate.ps1'
 $Interactive = -not [Console]::IsInputRedirected -and [Environment]::UserInteractive -and -not ([Environment]::GetCommandLineArgs() -contains '-NonInteractive')
 $SecretNames = @('veeam_password', 'cloud_install_token')
 
+# Who may own the data folder and a config.json kept there: SYSTEM, Administrators and the
+# account running this (an owner may always rewrite the DACL, so anyone else's folder or file is
+# theirs whatever its rules say).
+$TrustedOwners = @('S-1-5-18', 'S-1-5-32-544', [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+
 $script:Changes = 0
 $started = [DateTime]::UtcNow
 $lastAnswerAt = $started
@@ -152,24 +161,50 @@ function Ask-YesNo([string]$Question) {
     $answer -match '^[Yy]'
 }
 
-# The DACL set through .NET (Set-Acl) by SID: icacls refuses a service SID the machine can't
-# map yet (error 1332 before `service install`). The icacls line it amounts to is the record.
+# A path's owner and DACL, read and written through .NET (FileSystemAclExtensions) by SID:
+# icacls refuses a service SID the machine can't map yet (error 1332 before `service install`),
+# and the ACL cmdlets, run elevated, write the SACL back too and drop its audit entries. .NET writes
+# only the sections that were changed. The icacls line it amounts to is the record.
+function Get-PathAcl([string]$Path) {
+    $sections = [Security.AccessControl.AccessControlSections]'Access, Owner'
+    if (Test-Path -LiteralPath $Path -PathType Container) { [IO.FileSystemAclExtensions]::GetAccessControl([IO.DirectoryInfo]::new($Path), $sections) }
+    else { [IO.FileSystemAclExtensions]::GetAccessControl([IO.FileInfo]::new($Path), $sections) }
+}
+
+function Set-PathAcl([string]$Path, $Acl) {
+    if (Test-Path -LiteralPath $Path -PathType Container) { [IO.FileSystemAclExtensions]::SetAccessControl([IO.DirectoryInfo]::new($Path), $Acl) }
+    else { [IO.FileSystemAclExtensions]::SetAccessControl([IO.FileInfo]::new($Path), $Acl) }
+}
+
 function Set-FolderAcl([string]$Path, $Wanted) {
-    $acl = Get-Acl -LiteralPath $Path
-    $difference = Get-AclDifference -Acl $acl -Wanted $Wanted
+    $acl = Get-PathAcl $Path
+    $difference = Get-AclDifference -Acl $acl -Wanted $Wanted -TrustedOwners $TrustedOwners
     if ($difference.Ok) { Say "ok: ACL of $Path"; return }
-    $arguments = Get-IcaclsArguments -Path $Path -Wanted $Wanted -Difference $difference
-    $line = "icacls $($arguments -join ' ')"
+    $records = @()
+    if ($difference.OwnerWrong) { $records += "icacls $Path /setowner *S-1-5-32-544 /Q (owned by $(if ($difference.Owner) { $difference.Owner } else { 'nobody' }))" }
+    $arguments = @(Get-IcaclsArguments -Path $Path -Wanted $Wanted -Difference $difference)
+    if ($arguments.Count -gt 0) { $records += "icacls $($arguments -join ' ')" }
+    $line = $records -join '; '
     if (-not $PSCmdlet.ShouldProcess($Path, $line)) { Would $line; return }
     $updated = Update-AclObject -Acl $acl -Wanted $Wanted -Difference $difference
-    Set-Acl -LiteralPath $Path -AclObject $updated
-    $after = Get-AclDifference -Acl (Get-Acl -LiteralPath $Path) -Wanted $Wanted
-    if (-not $after.Ok) { Stop-Install "the ACL of $Path is not what was set (missing $($after.Missing.Count), extra $($after.Extra.Count))." }
+    Set-PathAcl $Path $updated
+    $after = Get-AclDifference -Acl (Get-PathAcl $Path) -Wanted $Wanted -TrustedOwners $TrustedOwners
+    if (-not $after.Ok) { Stop-Install "the ACL of $Path is not what was set (missing $($after.Missing.Count), extra $($after.Extra.Count), owner $($after.Owner))." }
     Changed "ACL of $Path (as $line)"
 }
 
+# A file the installer writes, made new beside its place and moved over it: the new file has
+# its folder's inherited rules and this account as its owner, whatever the old one had.
+function Write-NewFile([string]$Path, [byte[]]$Bytes) {
+    $temporary = "$Path.new-$([Guid]::NewGuid().ToString('N'))"
+    [IO.File]::WriteAllBytes($temporary, $Bytes)
+    [IO.File]::Move($temporary, $Path, $true)
+}
+
+function Get-Utf8Bytes([string]$Text) { [Text.UTF8Encoding]::new($false).GetBytes($Text) }
+
 function Test-KeyFileRead([string]$Path, [string]$Sid) {
-    $rules = @((Get-Acl -LiteralPath $Path).GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]))
+    $rules = @((Get-PathAcl $Path).GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]))
     $read = [Security.AccessControl.FileSystemRights]::Read
     @($rules | Where-Object {
         $_.IdentityReference.Value -eq $Sid -and $_.AccessControlType -eq 'Allow' -and (($_.FileSystemRights -band $read) -eq $read)
@@ -233,15 +268,36 @@ try {
     }
 
     # -- 4. config.json -------------------------------------------------------------------
+    # `config check` before the vault is made (step 5) ends on the vault's line: Test-ConfigCheck
+    # takes that as the config's pass.
     $configKept = $false
-    if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
-        $check = if (Test-Path -LiteralPath $Worker -PathType Leaf) { Invoke-Worker @('config', 'check', '--config', $ConfigPath) } else { $null }
-        if ($null -ne $check -and $check.Code -ne 0 -and -not $Replace) {
-            Stop-Install "$ConfigPath is there and fails rpworker config check ($(Get-FirstLine ($check.Err + $check.Out))); fix it, or give -Replace to write a new one."
+    $configWritten = $false
+    $configCloudUrl = ''
+    $configExists = Test-Path -LiteralPath $ConfigPath -PathType Leaf
+    $checkOk = $true
+    $checkLine = ''
+    $untrusted = ''
+    $kept = $null
+    if ($configExists) {
+        if (Test-Path -LiteralPath $Worker -PathType Leaf) {
+            $check = Invoke-Worker @('config', 'check', '--config', $ConfigPath)
+            $checkOk = Test-ConfigCheck -Code $check.Code -Out $check.Out -Err $check.Err
+            $checkLine = Get-FirstLine ($check.Err + $check.Out)
         }
-        if ($null -eq $check -or $check.Code -eq 0) { $configKept = $true; Say "ok: $ConfigPath (kept; its values are not asked again)" }
+        $fileAcl = Get-PathAcl $ConfigPath
+        $explicit = @($fileAcl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value })
+        $untrusted = Test-TrustedFile -Owner "$($fileAcl.GetOwner([Security.Principal.SecurityIdentifier]))" -ExplicitSids $explicit -TrustedOwners $TrustedOwners
+        try { $kept = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json } catch { $kept = $null }
     }
-    if (-not $configKept) {
+    $keptValue = { param($name) if ($null -ne $kept -and $kept.PSObject.Properties[$name]) { [string]$kept.$name } else { '' } }
+    $configPlan = Get-ConfigPlan -Exists $configExists -CheckOk $checkOk -Untrusted "$untrusted" -Replace $Replace.IsPresent `
+        -KeptCloudUrl (& $keptValue 'cloud_url') -KeptVeeamUrl (& $keptValue 'veeam_url') -CloudUrl $CloudUrl -VeeamUrl $VeeamUrl -CheckLine $checkLine
+    if ($configPlan.Action -eq 'stop') { Stop-Install "$ConfigPath $($configPlan.Why)" }
+    if ($configPlan.Action -eq 'keep') {
+        $configKept = $true
+        $configCloudUrl = & $keptValue 'cloud_url'
+        Say "ok: $ConfigPath (kept; its values are not asked again)"
+    } else {
         $CloudUrl = Read-Answer 'CloudUrl' 'Cloud URL (https://...)' $CloudUrl $false
         if (-not $VeeamUrl -and $veeamHere) { $VeeamUrl = 'https://localhost:4443'; Say "ok: Veeam is on this machine: veeam_url $VeeamUrl" }
         $VeeamUrl = Read-Answer 'VeeamUrl' 'Veeam REST URL (https://<server>:4443)' $VeeamUrl $false
@@ -285,12 +341,14 @@ try {
         if (-not $PSCmdlet.ShouldProcess($ConfigPath, 'write')) {
             Would "write $ConfigPath (cloud_url $CloudUrl, veeam_url $VeeamUrl$(if ($veeamPin) { ', veeam_ca_file, veeam_cert_sha256' })$(if ($cloudCa) { ', cloud_ca_file' }))"
         } else {
-            if ($pem) { [IO.File]::WriteAllText($VeeamPemPath, $pem, [Text.UTF8Encoding]::new($false)); Changed "wrote $VeeamPemPath" }
-            if ($cloudCa) { Copy-Item -LiteralPath $CloudCaFile -Destination $CloudPemPath -Force; Changed "copied $CloudCaFile to $CloudPemPath" }
-            [IO.File]::WriteAllText($ConfigPath, $json + "`n", [Text.UTF8Encoding]::new($false))
+            if ($pem) { Write-NewFile $VeeamPemPath (Get-Utf8Bytes $pem); Changed "wrote $VeeamPemPath" }
+            if ($cloudCa) { Write-NewFile $CloudPemPath ([IO.File]::ReadAllBytes($CloudCaFile)); Changed "copied $CloudCaFile to $CloudPemPath" }
+            Write-NewFile $ConfigPath (Get-Utf8Bytes ($json + "`n"))
             Changed "wrote $ConfigPath"
+            $configWritten = $true
+            $configCloudUrl = $CloudUrl
             $check = Invoke-Worker @('config', 'check', '--config', $ConfigPath)
-            if ($check.Code -ne 0) { Stop-Install "the config written fails rpworker config check: $(Get-FirstLine ($check.Err + $check.Out))" }
+            if (-not (Test-ConfigCheck -Code $check.Code -Out $check.Out -Err $check.Err)) { Stop-Install "the config written fails rpworker config check: $(Get-FirstLine ($check.Err + $check.Out))" }
             Say 'ok: rpworker config check'
         }
     }
@@ -300,7 +358,8 @@ try {
     $held = @()
     if ($listed.Code -eq 0) { $held = @(($listed.Out -split "`r?`n") | Where-Object { $_ -ne '' } | ForEach-Object { $_.Trim() }) }
     elseif ($listed.Err -notmatch ': vault file not found') { Stop-Install "rpworker vault list failed: $(Get-FirstLine ($listed.Err + $listed.Out))" }
-    $plan = Get-VaultPlan -Held $held
+    $plan = Get-VaultPlan -Held $held -Replace $Replace.IsPresent
+    $credentialsSet = $false
     foreach ($name in $plan.Ask) {
         $prompt = switch ($name) {
             'veeam_username' { 'Veeam account (MACHINE\user, a Veeam Backup Administrator)' }
@@ -314,6 +373,7 @@ try {
         $value = $null
         if ($set.Code -ne 0) { Stop-Install "rpworker vault set $name failed: $(Get-FirstLine ($set.Err + $set.Out))" }
         Changed "rpworker vault set $name"
+        if ($name -like 'veeam_*') { $credentialsSet = $true }
     }
     foreach ($name in 'veeam_username', 'veeam_password') { if ($plan.Ask -notcontains $name) { Say "ok: $name is in the vault" } }
     if ($plan.Registered) { Say 'ok: cloud_api_token is in the vault (registered already)' }
@@ -338,21 +398,25 @@ try {
     # -- 7. the Graph certificate -------------------------------------------------------------
     if ($plan.NeedsCertificate) {
         if (-not $CertificateScript) { Stop-Install 'New-WorkerGraphCertificate.ps1 is not beside this script.' }
+        # Half a certificate (one of its two names, left by that script's own failure half-way)
+        # is made again over it, as that failure's line says: -Replace.
+        $certificateArguments = @{ Worker = $Worker; ServiceName = $ServiceName }
+        if ($plan.CertificateHalf) { $certificateArguments['Replace'] = $true; Say 'note: the vault holds half the Graph certificate (one of graph_cert_pfx_base64 and graph_cert_password): it is made again' }
         if ($PSCmdlet.ShouldProcess('the vault', 'New-WorkerGraphCertificate.ps1')) {
             # Its lines are Write-Host's (the information stream, 6) and rpworker's stderr (2).
-            try { $certificateLines = @(& $CertificateScript -Worker $Worker 2>&1 6>&1 | ForEach-Object { "$_" }) }
+            try { $certificateLines = @(& $CertificateScript @certificateArguments 2>&1 6>&1 | ForEach-Object { "$_" }) }
             catch { Stop-Install "New-WorkerGraphCertificate.ps1 failed: $($_.Exception.Message)" }
             $thumbLine = [regex]::Match(($certificateLines -join "`n"), 'thumbprint [0-9A-Fa-f]{40}[^\r\n]*').Value
             if (-not $thumbLine) { $thumbLine = 'thumbprint not printed' }
             Changed "New-WorkerGraphCertificate.ps1 ($thumbLine)"
-        } else { Would 'New-WorkerGraphCertificate.ps1 -Worker <rpworker>' }
+        } else { Would "New-WorkerGraphCertificate.ps1 -Worker <rpworker>$(if ($plan.CertificateHalf) { ' -Replace' })" }
     } else { Say 'ok: the Graph certificate is in the vault' }
 
     # -- 8. Veeam, and the organisation certificates' key files ---------------------------------
     $granted = @()
     if ($configKept -or -not $WhatIfPreference) {
         $list = Invoke-Worker @('veeam', 'list', '--config', $ConfigPath)
-        if ($list.Code -ne 0) { Stop-Install "rpworker veeam list failed: $(Get-FirstLine ($list.Err + $list.Out)) (the Veeam URL, its certificate or the account: fix it and run again)." }
+        if ($list.Code -ne 0) { Stop-Install "rpworker veeam list failed: $(Get-FirstLine ($list.Err + $list.Out)) (the Veeam URL, its certificate or the account: run the installer again with -Replace to give them again)." }
         $organisations = @(Read-OrganisationThumbprints -Text $list.Out)
         Say "ok: rpworker veeam list ($($organisations.Count) organisation(s))"
         if ($veeamHere) {
@@ -363,7 +427,7 @@ try {
                     if (-not $keyFile) { Say "problem: $($organisation.Organisation): certificate $thumbprint has no private key file on this machine; its restores will fail until the service account can read it (W4.12)"; continue }
                     if (Test-KeyFileRead -Path $keyFile -Sid $ServiceSid) { Say "ok: $($organisation.Organisation): read on the key file of $thumbprint"; $granted += $thumbprint; continue }
                     if (-not $PSCmdlet.ShouldProcess($keyFile, "icacls /grant:r *${ServiceSid}:(R)")) { Would "icacls `"$keyFile`" /grant:r *${ServiceSid}:(R) ($($organisation.Organisation), $thumbprint)"; continue }
-                    Set-Acl -LiteralPath $keyFile -AclObject (Add-FileReadRule -Acl (Get-Acl -LiteralPath $keyFile) -Sid $ServiceSid)
+                    Set-PathAcl $keyFile (Add-FileReadRule -Acl (Get-PathAcl $keyFile) -Sid $ServiceSid)
                     if (-not (Test-KeyFileRead -Path $keyFile -Sid $ServiceSid)) { Stop-Install "the key file of $thumbprint did not take the account's Read entry." }
                     Changed "$($organisation.Organisation): read on the key file of $thumbprint granted to $ServiceSid"
                     $granted += $thumbprint
@@ -387,23 +451,45 @@ try {
         if (Test-Path -LiteralPath $recordPath -PathType Leaf) {
             $record = Get-Content -LiteralPath $recordPath -Raw | ConvertFrom-Json
             $registration = [pscustomobject]@{ WorkerId = $record.worker_id; KeyId = $record.key_id }
+            $registeredWith = if ($record.PSObject.Properties['cloud_url']) { [string]$record.cloud_url } else { '' }
+            if ($registeredWith -and $configCloudUrl -and $registeredWith -cne $configCloudUrl) {
+                Stop-Install "this Worker is registered with $registeredWith ($recordPath) and the config names $configCloudUrl; its API token is the first Cloud's. To register with ${configCloudUrl}: rpworker vault remove cloud_api_token, then run the installer again with an install token of that Cloud."
+            }
         }
         Say "ok: registered with the Cloud$(if ($registration) { ' as worker ' + $registration.WorkerId })"
     } elseif ($PSCmdlet.ShouldProcess('the Cloud', 'rpworker cloud register')) {
         $arguments = @('cloud', 'register')
         if ($WorkerName) { $arguments += @('--name', $WorkerName) }
         $register = Invoke-Worker $arguments
+        if (Test-KeyAlreadyRegistered -Code $register.Code -Err $register.Err) {
+            # The Cloud holds this key from a registration whose answer never reached the vault;
+            # the 409 rolled back, so the install token is unused: a new key, and again.
+            $made = Invoke-Worker @('signer', 'new-key', '--replace')
+            if ($made.Code -ne 0) { Stop-Install "rpworker signer new-key --replace failed: $(Get-FirstLine ($made.Err + $made.Out))" }
+            $keyId = ([regex]::Match($made.Err, '(?m)^key ([0-9a-f]{64})')).Groups[1].Value
+            Changed "rpworker signer new-key --replace (key $keyId): the Cloud already held this Worker's old key, from a registration whose answer never reached this machine; that Worker is unused on the Cloud: revoke it (manage.py revoke-worker)"
+            $register = Invoke-Worker $arguments
+        }
         if ($register.Code -eq 2) {
             $null = Invoke-Worker @('vault', 'remove', 'cloud_install_token')
             Stop-Install "the Cloud refused the install token (unknown, used or expired); it was removed from the vault: make a new one (manage.py create-worker-token) and run the installer again."
         }
-        if ($register.Code -ne 0) { Stop-Install "rpworker cloud register failed: $(Get-FirstLine ($register.Err + $register.Out))" }
+        if ($register.Code -ne 0) { Stop-Install "rpworker cloud register failed: $(Get-FirstLine ($register.Err + $register.Out))$(if ($register.Code -eq 3) { ' (a wrong cloud_url: run the installer again with -Replace to give it again)' })" }
         $registration = Read-RegistrationLine -Text $register.Out
         if (-not $registration) { Stop-Install "rpworker cloud register printed no registration line." }
         Changed "rpworker cloud register (worker $($registration.WorkerId))"
     } else { Would 'rpworker cloud register' }
 
     # -- 11. service start ----------------------------------------------------------------------
+    # A running service read its config and the vault's Veeam account at its start: when this run
+    # changed either, it is stopped first so the start takes them.
+    if ($serviceState -eq 'ok' -and ($configWritten -or $credentialsSet)) {
+        if ($PSCmdlet.ShouldProcess($ServiceName, 'rpworker service stop')) {
+            $stop = Invoke-Worker @('service', 'stop')
+            if ($stop.Code -ne 0) { Stop-Install "rpworker service stop failed: $(Get-FirstLine ($stop.Err + $stop.Out))" }
+            if ($stop.Out -match '(?m)^stopped ') { Changed "rpworker service stop ($(Get-FirstLine $stop.Out)), so the start takes the new config and account" } else { Say "ok: $(Get-FirstLine $stop.Out)" }
+        } else { Would 'rpworker service stop' }
+    }
     if ($PSCmdlet.ShouldProcess($ServiceName, 'rpworker service start')) {
         $start = Invoke-Worker @('service', 'start')
         if ($start.Code -ne 0) { Stop-Install "rpworker service start failed: $(Get-FirstLine ($start.Err + $start.Out))" }

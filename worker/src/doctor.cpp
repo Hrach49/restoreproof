@@ -1033,7 +1033,7 @@ void check_veeam(const VeeamFacts& facts, Report& report)
         const std::string id = std::format("veeam.org[{}]", i + 1);
         const std::string name = table_cell(org.name);
         report.ok(id, std::format("veeam: {}: {}", name,
-                                  org.newest_point ? "newest restore point " + utc_text(*org.newest_point)
+                                  org.newest_point ? "newest restore point " + table_cell(*org.newest_point)
                                                    : std::string("no restore point yet")));
         if (org.certificates.empty()) {
             report.problem(id + ".certificate", "no_app",

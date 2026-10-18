@@ -354,7 +354,7 @@ struct CertificateFacts {
 };
 struct OrganisationFacts {
     std::string name;
-    std::optional<std::chrono::system_clock::time_point> newest_point;
+    std::optional<std::string> newest_point; // Veeam's backupTime of the newest, to the second
     std::vector<CertificateFacts> certificates; // Exchange's, then SharePoint's when another
 };
 struct VeeamFacts {

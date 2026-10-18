@@ -78,4 +78,8 @@ std::vector<std::filesystem::path> key_file_candidates(const std::filesystem::pa
 // in-memory store; machine_certificate is it on LocalMachine\My.
 std::optional<std::string> key_unique_name(void* store, std::string_view thumbprint);
 
+// %ProgramFiles% (FOLDERID_ProgramFiles). Throws std::runtime_error when
+// Windows can't say.
+std::filesystem::path program_files_dir();
+
 } // namespace rp::machine

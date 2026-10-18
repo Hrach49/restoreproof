@@ -1166,7 +1166,7 @@ VeeamFacts veeam_facts()
     facts.now = std::chrono::sys_days{std::chrono::year{2026} / 10 / 18};
     OrganisationFacts org;
     org.name = "RestoreProofLab.onmicrosoft.com";
-    org.newest_point = std::chrono::sys_days{std::chrono::year{2026} / 10 / 18} + 1h;
+    org.newest_point = "2026-10-18T01:00:00Z";
     CertificateFacts cert;
     cert.thumbprint = std::string(kThumb);
     cert.not_after = std::chrono::sys_days{std::chrono::year{2028} / 9 / 25};

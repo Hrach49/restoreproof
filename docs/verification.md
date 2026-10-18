@@ -1717,8 +1717,8 @@ In this order:
      the record's `close_detail`, `<ending>; changed` for `result_invalid`, before the next
      try). The Worker doesn't list as its evidence a file it knows was changed.
    - **another owner.** One of them is owned by neither SYSTEM, Administrators nor the
-     service's account (the vault's owner rule, `rp::check_trusted_owner`): the runs root has
-     the inherited ACL until W7.1, so a local user can put a file there. One `SECURITY:
+     service's account (the vault's owner rule, `rp::check_trusted_owner`): where the installer's
+     ACLs (W7.1) are not in force a local user can put a file there. One `SECURITY:
      service: run <run_id>: items.csv or veeam-session.log is owned by neither SYSTEM,
      Administrators nor this account; neither is kept: the close replaces both by their empty
      forms` line.

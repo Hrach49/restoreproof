@@ -999,7 +999,8 @@ This writes into the lab tenant and deletes there, as every run does. Before the
   loop reads nothing from it (`jobs error: <file>: owned by neither SYSTEM, Administrators nor
   this account`). A file written from the elevated shell is owned by Administrators;
   `(Get-Acl <jobs file>).Owner` shows it.
-- **W7.1 isn't built**, so nothing grants the account `NT SERVICE\RestoreProof` what the loop
+- **The installer (W7.1) makes these grants on a deployment**; this harness makes them by hand, so the
+  account `NT SERVICE\RestoreProof` gets what the loop
   needs: step 2 makes the grants by hand and step 12 takes them away.
 - The folders of earlier hand runs under `%ProgramData%\RestoreProof\runs` stay where they
   are. List them before and after: they must be untouched.
@@ -1631,12 +1632,71 @@ uv run pytest -m "not worker"    # CI's selection (.github/workflows/tenant-setu
   real answers caught, and no base64 ID naming anyone but the test accounts. To record again: into
   an empty folder, then run the suite (the file count and the date are held).
 
-"No test, no merge" holds `tools/tenant-setup/` (but its `tests/`) to a `.py` or `.ps1` change
-under `tools/tenant-setup/tests/` (`.github/scripts/tests_touched.py`).
+"No test, no merge" holds `tools/tenant-setup/` (but its `tests/`) to a `.py`, `.ps1` or `.psm1`
+change under `tools/tenant-setup/tests/` (`.github/scripts/tests_touched.py`).
 
 The live Done-when is by hand: `docs/api/veeam-lab/w7.0-harness/w70-teardown.ps1` (lab only, asks
 first), then `w70-live.ps1` from an elevated PowerShell 7 (the setup script twice around the W5.1
 harness; evidence `docs/api/veeam-lab/w7.0-done-when.txt`).
+## The Worker installer (W7.1)
+
+`tools/worker-install/` is the installer (`docs/decisions.md` 2026-10-16, "W7.1 (#80)"):
+`Install-RestoreProofWorker.ps1` over `RestoreProofWorker.psm1` (every rule pure) and
+`WorkerMachine.psm1` (what it reads of the machine: elevation, the installed service, Veeam's
+REST service, the certificate `veeam_url` presents, a certificate's key file). `tests/` is a uv
+project of its own whose pytest runs the PowerShell through `pwsh` (`pwsh.py`, the tenant
+setup's); a machine without PowerShell 7 fails these tests, never skips them. From that folder:
+
+```
+uv run pytest                    # everything; one test needs worker\build\dev\rpworker.exe built
+uv run pytest -m "not worker"    # CI's selection (.github/workflows/worker-install.yml, Windows)
+```
+
+- `test_rules.py`: the module's rules row by row, refusals first: the service account's SID
+  against `sc showsid` (any name, no service needed), the wanted ACLs and the difference
+  against DACLs built in memory, the `icacls` lines, the config document, the vault plan, the
+  Veeam certificate rule, the thumbprints read from `veeam list`'s table, the key file
+  candidates, the prerequisites, the installed-service rule, the registration line.
+- `test_install_script.py`: the script whole, on a temporary root, against `fake_rpworker.py`
+  (through a `.cmd`; every command the installer and the certificate script run, each failure
+  by a flag file, every command line in `argv.log`) and `FakeMachine.psm1` (the same six
+  functions as `WorkerMachine.psm1`, answering from `machine.json`; the script takes the module
+  by path, `-MachineModule`, since a global function can't shadow one a script imports
+  afterwards). Held: each refusal before anything after its step and the next run going on
+  from there; the first run's sixteen Worker calls in order, the files, the ACLs read back
+  (the root protected, SYSTEM, Administrators and the account alone, nothing for `Users`; the
+  six folders with Modify; the key file's Read ACE), every secret on stdin and in no argument,
+  output or file of the script's; a second run `changes: 0` asking nothing; `-WhatIf` writing
+  nothing; a registered Worker asked no token; a root with the inherited ACL and hand-made run
+  folders tightened with the folders untouched. The test's own account keeps full control of
+  the temporary root through `-AlsoFullControl` (a non-administrator would lock itself out).
+  The W7.1 code review added: a first install passing `config check` before the vault is made
+  (the fake's check ends on the missing vault's line, as the real one does); half a Graph
+  certificate made again; a wrong Veeam password corrected by `-Replace`; a URL given unlike the
+  kept config's refused; a running service stopped before its start after `-Replace`; a 409 on
+  registration answered by a new key and a second `cloud register`; a Worker registered with
+  another Cloud stopped. Three need an elevated test run and skip without one (CI's Windows
+  runner is elevated): a root and a folder owned by `Users` given to Administrators, a
+  `config.json` owned by `Users` never kept, a key file's audit entry kept.
+- `test_script_text.py`: the text: strict, 7.4, `SupportsShouldProcess`, a secret to the Worker
+  on stdin alone, nothing undone, the fake machine exporting what the real one does, the rules
+  module reading nothing of the machine.
+- `test_worker_real.py` (marked `worker`): the built `rpworker.exe` on a vault of the test's
+  own: `signer new-key` into it, refused the second time, `public-key` printing the same half;
+  `vault grant` by the SID of a service that doesn't exist; `config check` before the vault is made, as
+  `Test-ConfigCheck` reads it.
+
+Nothing under `%ProgramData%`, `%ProgramFiles%` or the Service Control Manager is touched. The
+package: `pwsh -File worker\tools\package.ps1` from a VS 2022 Developer PowerShell builds the
+`ci` preset (Release) and zips `RestoreProof-Worker-<version>.zip` under `worker\build\package`
+(`-NoBuild` zips what is built). "No test, no merge" holds `tools/worker-install/` (but its
+`tests/`) to a `.py`, `.ps1` or `.psm1` change under `tools/worker-install/tests/`.
+
+The live Done-when is by hand: `docs/api/veeam-lab/w7.1-harness/w71-live.ps1` from an elevated
+PowerShell 7 on this laptop (the package installed by the script around the W5.1 harness's
+stack and plan; evidence `docs/api/veeam-lab/w7.1-done-when.txt`), and `w71-vm.ps1` for the
+clean Server 2022 VM (`docs/decisions.md` 2026-10-16 point 11).
+
 ## Cloud
 
 `cloud/` is the FastAPI backend (C5.1), its data model (C5.2), its repository layer (C5.3), its

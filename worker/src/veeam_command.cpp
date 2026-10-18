@@ -69,12 +69,39 @@ bool org_less(const Organization& a, const Organization& b)
            std::forward_as_tuple(ascii_lower(b.name), b.id);
 }
 
-constexpr std::array<std::string_view, 8> kColumns{
-    "ORGANIZATION", "BACKUP TIME", "EX", "SP", "OD", "TM", "LONG-TERM", "RESTORE POINT ID"};
+constexpr std::array<std::string_view, 9> kColumns{
+    "ORGANIZATION", "APP CERTIFICATE", "BACKUP TIME", "EX", "SP", "OD", "TM", "LONG-TERM",
+    "RESTORE POINT ID"};
 
 std::string flag(bool set)
 {
     return set ? "x" : "-";
+}
+
+// W7.1: the thumbprints of the organisation app's certificates, Exchange's
+// then SharePoint's, once each, joined by a comma; "-" when Veeam named none.
+// The installer grants the service account Read on each one's key file
+// (docs/decisions.md 2026-10-16, W7.1 point 6). A thumbprint is public.
+std::string app_certificates(const Organization& org)
+{
+    std::vector<std::string> thumbprints;
+    for (const std::optional<OrganizationApp>* app : {&org.exchange_app, &org.sharepoint_app}) {
+        if (*app && std::ranges::find(thumbprints, (*app)->certificate_thumbprint) ==
+                        thumbprints.end()) {
+            thumbprints.push_back((*app)->certificate_thumbprint);
+        }
+    }
+    if (thumbprints.empty()) {
+        return "-";
+    }
+    std::string text;
+    for (const std::string& thumbprint : thumbprints) {
+        if (!text.empty()) {
+            text += ',';
+        }
+        text += table_cell(thumbprint);
+    }
+    return text;
 }
 
 // The table, then a blank line and the summary (text_table.hpp). Veeam's
@@ -87,12 +114,14 @@ std::string format_listing(const std::vector<OrgListing>& listing)
     std::size_t point_count = 0;
     for (const OrgListing& entry : listing) {
         const std::string name = table_cell(entry.org.name);
+        const std::string certificates = app_certificates(entry.org);
         if (entry.points.empty()) {
-            rows.push_back({prefix(entry.configured), {name, "(no restore points)"}});
+            rows.push_back({prefix(entry.configured), {name, certificates, "(no restore points)"}});
         }
         for (const RestorePoint& point : entry.points) {
             rows.push_back({prefix(entry.configured),
-                            {name, table_cell(point.backup_time), flag(point.is_exchange),
+                            {name, certificates, table_cell(point.backup_time),
+                             flag(point.is_exchange),
                              flag(point.is_sharepoint), flag(point.is_onedrive),
                              flag(point.is_teams), point.is_long_term_copy ? "yes" : "no",
                              table_cell(point.id)}});

@@ -10,6 +10,7 @@
 #include "file_read.hpp"
 #include "path_utf8.hpp"
 
+#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <format>
@@ -69,6 +70,65 @@ int run_public_key(std::optional<std::string_view> vault_arg, std::ostream& out,
     // file as it is (`rpworker signer public-key > worker.pub.pem`), which a
     // verifier refuses with any line after the block. The key's ID goes to
     // `err`, once the key is out.
+    out << key->public_key_pem();
+    const int code = answered(out, err, exit_code::ok);
+    if (code == exit_code::ok) {
+        err << "key " << key->key_id() << '\n';
+    }
+    return code;
+}
+
+// `rpworker signer new-key [--vault <file>] [--replace]` (W7.1).
+int run_new_key(std::optional<std::string_view> vault_arg, bool replace, std::ostream& out,
+                std::ostream& err, const SignerCommandEnv& env)
+{
+    // The vault as public-key reads it: one return after the handler.
+    std::filesystem::path vault;
+    WipedSecrets held;
+    std::optional<std::string> problem;
+    try {
+        vault = command_vault_path(vault_arg, env.default_vault_path);
+        held.secrets = env.load_secrets(vault);
+    } catch (const ConfigError& e) {
+        problem = e.what();
+    }
+    if (problem) {
+        err << "config error: " << *problem << '\n';
+        return exit_code::config;
+    }
+    if (held.secrets.signing_key_base64 && !held.secrets.signing_key_base64->empty() && !replace) {
+        err << "signer error: the vault already holds " << kNameSigningKeyBase64
+            << "; this Worker has its key (rpworker signer public-key prints it); --replace "
+               "makes a new one, after which the Cloud must be told (manage.py revoke-worker, "
+               "a new install token)\n";
+        return exit_code::config;
+    }
+    std::array<unsigned char, kEd25519SeedBytes> seed{};
+    if (!env.random_seed(seed)) {
+        err << "signer error: no random bytes could be made\n";
+        return exit_code::config;
+    }
+    // The text the vault takes, parsed back as every reader parses it: the
+    // key's public half and ID come from that, so what is printed is what
+    // the stored text gives.
+    held.secrets.signing_key_base64 = signing_key_text(seed);
+    secure_wipe(seed);
+    const std::optional<SigningKey> key = SigningKey::from_base64(*held.secrets.signing_key_base64);
+    if (!key) {
+        // The primitive refused a seed it was handed: nothing is stored.
+        err << "signer error: the key couldn't be made\n";
+        return exit_code::config;
+    }
+    try {
+        env.store_secrets(vault, held.secrets);
+    } catch (const VaultError& e) {
+        problem = e.what();
+    }
+    if (problem) {
+        err << "vault error: " << *problem << '\n';
+        return exit_code::config;
+    }
+    err << "set " << kNameSigningKeyBase64 << " in " << path_to_utf8(vault) << '\n';
     out << key->public_key_pem();
     const int code = answered(out, err, exit_code::ok);
     if (code == exit_code::ok) {
@@ -229,7 +289,7 @@ int run_verify(const VerifyArgs& args, std::ostream& out, std::ostream& err)
 
 SignerCommandEnv default_signer_command_env()
 {
-    return {default_vault_path, read_vault};
+    return {default_vault_path, read_vault, random_seed, write_vault};
 }
 
 int run_signer_command(std::span<const std::string_view> args, std::ostream& out,
@@ -240,6 +300,14 @@ int run_signer_command(std::span<const std::string_view> args, std::ostream& out
         const std::optional<std::string_view> vault = options ? options->value("--vault") : std::nullopt;
         if (options && !(vault && vault->empty())) {
             return run_public_key(vault, out, err, env);
+        }
+    }
+    if (!args.empty() && args[0] == "new-key") {
+        const std::optional<CommandOptions> options =
+            parse_options(args.subspan(1), {"--vault"}, {"--replace"});
+        const std::optional<std::string_view> vault = options ? options->value("--vault") : std::nullopt;
+        if (options && !(vault && vault->empty())) {
+            return run_new_key(vault, options->has_flag("--replace"), out, err, env);
         }
     }
     if (!args.empty() && args[0] == "verify") {

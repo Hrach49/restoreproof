@@ -180,6 +180,13 @@ void secure_wipe(std::string& s) noexcept
     s.clear();
 }
 
+void secure_wipe(std::span<unsigned char> bytes) noexcept
+{
+    if (!bytes.empty()) {
+        SecureZeroMemory(bytes.data(), bytes.size());
+    }
+}
+
 ExportedPfx::ExportedPfx(ExportedPfx&& other) noexcept
     : pfx_base64(std::move(other.pfx_base64)), password(std::move(other.password))
 {

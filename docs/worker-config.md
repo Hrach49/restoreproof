@@ -854,8 +854,10 @@ It needs:
   administrator); the Worker's service runs as a virtual account with a Read ACE on the key
   file (W4.12, `docs/decisions.md` 2026-10-07). Without it the export fails after the guard has
   passed and the explore sessions are open, before anything is sent: `restore error:
-  veeam_m365: certificate <thumbprint> in LocalMachine\My: its private key can't be opened
-  (error 0x80090016); ...; the restore was not sent`, exit 4;
+  veeam_m365: certificate <thumbprint> in LocalMachine\My: its private key can't be opened by
+  this account (error 0x80090016: no read access to its key file, or no key file); rpworker
+  doctor names the line that grants it; the restore was not sent`, exit 4 (W7.2: `rpworker
+  doctor` prints the key file's `icacls` line);
 - the vault (W4.5; `--vault <file>` or the default; a vault that can't be used is `config
   error: <file>: ...`, exit 1), read once after the config: `veeam_username` and
   `veeam_password` (`config error: <name> is not in the vault`, exit 1), then the Worker app's

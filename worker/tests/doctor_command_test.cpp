@@ -7,6 +7,8 @@
 
 #include "fake_http_client.hpp"
 #include "graph_lab.hpp"
+#include "result_lab.hpp"
+#include "schema_walk.hpp"
 #include "signing_lab.hpp"
 #include "test_support.hpp"
 #include "tsa_lab.hpp"
@@ -21,6 +23,7 @@
 #include <rp/signer.hpp>
 #include <rp/vault.hpp>
 
+#include <nlohmann/json-schema.hpp>
 #include <nlohmann/json.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -464,6 +467,13 @@ TEST_CASE("doctor: a Worker as the installer leaves it has no problem, a client 
     CHECK(doc["windows_build"] == "10.0.20348");
     CHECK(doc["elevated"] == true);
     CHECK(doc["counts"]["problem"] == 0);
+    // shared/schemas/doctor.v1.json: the subset both drafts read alike, and this file valid.
+    const json schema = json::parse(rp::test::read_shared("schemas/doctor.v1.json"));
+    CHECK(rp::test::problems_of(schema) == std::vector<std::string>{});
+    CHECK(schema.at("properties").at("format").at("const") == std::string(rp::doctor::kDoctorFormat));
+    nlohmann::json_schema::json_validator validator;
+    validator.set_root_schema(schema);
+    CHECK_NOTHROW(validator.validate(doc));
     const std::string text = doc.dump();
     for (const std::string_view secret : {"Sentinel-Doctor-Veeam-Password", "SENTINEL-DOCTOR", "RestoreProofLab",
                                           "veeam.test", "tsa.test", "C:\\\\PD"}) {

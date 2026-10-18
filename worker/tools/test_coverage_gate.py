@@ -143,6 +143,7 @@ class GateTest(unittest.TestCase):
             ("src/client_profile.cpp", "client_profile"),
             ("src/client_check.cpp", "client_check"),
             ("src/cloud_command.cpp", "cloud"),
+            ("src/doctor_command.cpp", "doctor"),
         ):
             with self.subTest(rel=rel):
                 code, out, summary = self.run_gate(
@@ -285,6 +286,7 @@ class GateTest(unittest.TestCase):
             "strict_json",
             "client_check",
             "cloud",
+            "doctor",
         ):
             self.assertIn(f"`{name}`: not present yet", summary)
 

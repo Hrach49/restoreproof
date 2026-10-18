@@ -48,6 +48,7 @@ add_library(rpcore STATIC
     src/command_config.cpp
     src/config.cpp
     src/config_check.cpp
+    src/doctor.cpp
     src/console_input.cpp
     src/connector.cpp
     src/connector_registry.cpp
@@ -210,6 +211,7 @@ add_executable(rptests
     tests/connector_registry_test.cpp
     tests/connector_test.cpp
     tests/deps_test.cpp
+    tests/doctor_test.cpp
     tests/ed25519_test.cpp
     tests/evidence_builder_test.cpp
     tests/expected_set_test.cpp

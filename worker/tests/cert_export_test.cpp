@@ -21,6 +21,7 @@
 #include <chrono>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -69,6 +70,19 @@ std::string export_error(HCERTSTORE store, const std::string& thumbprint,
     return "(no error)";
 }
 
+// W7.2: the reason the refusal carries, for doctor's codes; nullopt for no refusal.
+std::optional<rp::CertExportFailure> export_reason(HCERTSTORE store, const std::string& thumbprint,
+                                                   std::chrono::system_clock::time_point wall_now =
+                                                       std::chrono::system_clock::now())
+{
+    try {
+        rp::cert_export_detail::export_from_store(store, thumbprint, wall_now, "the test store");
+    } catch (const rp::CertExportError& e) {
+        return e.reason();
+    }
+    return std::nullopt;
+}
+
 std::string lower(std::string text)
 {
     for (char& c : text) {
@@ -94,6 +108,7 @@ TEST_CASE("a thumbprint that isn't 40 hex digits is refused before the store is 
 
     // A null store: any use of it would fail differently.
     CHECK(export_error(nullptr, thumbprint) == "a certificate thumbprint must be 40 hex digits");
+    CHECK(export_reason(nullptr, thumbprint) == rp::CertExportFailure::malformed_thumbprint);
     const auto exporter = rp::make_local_machine_cert_exporter();
     CHECK_THROWS_WITH(exporter->export_pfx(thumbprint),
                       "a certificate thumbprint must be 40 hex digits");
@@ -106,6 +121,7 @@ TEST_CASE("a certificate that isn't in the store is not found", "[cert_export]")
 
     CHECK(export_error(lab.store.get(), other) ==
           "certificate " + other + " in the test store: not found");
+    CHECK(export_reason(lab.store.get(), other) == rp::CertExportFailure::not_found);
 }
 
 TEST_CASE("LocalMachine\\My is read without elevation, and an unknown thumbprint isn't there",
@@ -130,11 +146,15 @@ TEST_CASE("a certificate outside its validity is refused", "[cert_export]")
         const std::string what = export_error(lab.store.get(), lab.thumbprint, now + 400 * 24h);
         CHECK_THAT(what, ContainsSubstring("certificate " + lab.thumbprint +
                                            " in the test store: expired at "));
+        CHECK(export_reason(lab.store.get(), lab.thumbprint, now + 400 * 24h) ==
+              rp::CertExportFailure::expired);
     }
     SECTION("not yet valid")
     {
         const std::string what = export_error(lab.store.get(), lab.thumbprint, now - 2h);
         CHECK_THAT(what, ContainsSubstring("in the test store: not valid before "));
+        CHECK(export_reason(lab.store.get(), lab.thumbprint, now - 2h) ==
+              rp::CertExportFailure::not_yet_valid);
     }
 }
 
@@ -146,6 +166,7 @@ TEST_CASE("a certificate without a private key is refused", "[cert_export]")
 
     CHECK(export_error(cert_only.get(), lab.thumbprint) ==
           "certificate " + lab.thumbprint + " in the test store: the certificate has no private key");
+    CHECK(export_reason(cert_only.get(), lab.thumbprint) == rp::CertExportFailure::no_private_key);
 }
 
 TEST_CASE("a private key that isn't exportable is refused", "[cert_export]")
@@ -194,6 +215,7 @@ TEST_CASE("a private key that isn't exportable is refused", "[cert_export]")
     CHECK_THAT(what, ContainsSubstring("certificate " + lab.thumbprint +
                                        " in the test store: its private key isn't exportable "
                                        "(error 0x"));
+    CHECK(export_reason(locked.get(), lab.thumbprint) == rp::CertExportFailure::not_exportable);
 }
 
 // --- Happy paths ------------------------------------------------------------
@@ -352,4 +374,11 @@ TEST_CASE("a private key that can't be opened is worded for the account, not for
     CHECK(text.find("elevated") == std::string::npos);
     CHECK(private_key_refusal("c", static_cast<unsigned long>(CRYPT_E_NO_KEY_PROPERTY)) ==
           "c: the certificate has no private key");
+    using rp::cert_export_detail::private_key_failure;
+    CHECK(private_key_failure(static_cast<unsigned long>(CRYPT_E_NO_KEY_PROPERTY)) ==
+          rp::CertExportFailure::no_private_key);
+    CHECK(private_key_failure(0x80090016UL) == rp::CertExportFailure::key_unopenable);
+    CHECK(private_key_failure(5UL) == rp::CertExportFailure::key_unopenable);
+    // A CertExportError made from text alone, as the fakes make it, is `other`.
+    CHECK(rp::CertExportError("x").reason() == rp::CertExportFailure::other);
 }

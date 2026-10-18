@@ -782,6 +782,12 @@ TEST_CASE("doctor: --record writes the exchanges, scrubbed", "[doctor_command]")
     const std::string folder = utf8(lab.dir.path() / "rec");
     const Run run = lab.run({"--record", folder});
     CHECK_THAT(run.out, ContainsSubstring("recorded "));
+    // Every service doctor calls is recorded: Veeam, the Cloud, the TSA and the two hosts.
+    CHECK(run.out.find("recorded 0 exchange(s)") == std::string::npos);
+    for (const char* service : {"veeam", "cloud", "tsa", "reach"}) {
+        CAPTURE(service);
+        CHECK(std::filesystem::is_directory(lab.dir.path() / "rec" / service));
+    }
     for (const auto& entry : std::filesystem::recursive_directory_iterator(lab.dir.path() / "rec")) {
         if (!entry.is_regular_file()) {
             continue;

@@ -696,6 +696,7 @@ int run(const Args& args, std::ostream& out, std::ostream& err, const DoctorEnv&
         read_vault_area(d, command_vault_path(args.vault, [&] { return d.data / kVaultFileName; }));
         d.print();
         recorder = open_recording(args.record, "doctor", d.secrets);
+        d.recorder = recorder;
         const doctor::RecordFacts record = read_worker_record(d);
         read_signing(d, record);
         d.print();

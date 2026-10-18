@@ -997,6 +997,13 @@ TEST_CASE("doctor: the exe the service runs", "[doctor]")
     CHECK(line_of(by_id(gone, "service.exe_access")) ==
           "problem: service: C:\\Program Files\\RestoreProof\\rpworker.exe is not there (fix: "
           "pwsh -File Install-RestoreProofWorker.ps1)");
+    facts.exe_security.present = true;
+    Report unreadable;
+    check_service(facts, unreadable);
+    CHECK(line_of(by_id(unreadable, "service.exe_access")) ==
+          "problem: service: C:\\Program Files\\RestoreProof\\rpworker.exe: its security can't be "
+          "read (fix: run rpworker doctor again from an elevated prompt)");
+    CHECK(by_id(unreadable, "service.exe_access").code == "unreadable");
 }
 
 TEST_CASE("doctor: a run in progress, and a held one", "[doctor]")

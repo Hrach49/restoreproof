@@ -373,7 +373,7 @@ TEST_CASE("doctor: arguments it doesn't understand are usage, exit 64", "[doctor
 {
     const Args args = GENERATE(Args{"--client"}, Args{"--client", ""}, Args{"--config", "a", "--config", "b"},
                                Args{"--vault", "a", "--vault", "b"}, Args{"--json", "a", "--json", "b"},
-                               Args{"--record", "a", "--record", "b"}, Args{"--hash"}, Args{"list"},
+                               Args{"--record", "a", "--record", "b"}, Args{"--hash"}, Args{"--hash", "x"}, Args{"list"},
                                Args{"--config"});
     Lab lab;
     const Run run = lab.run(args);

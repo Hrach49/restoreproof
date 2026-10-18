@@ -90,8 +90,6 @@ struct DoctorEnv {
     std::function<std::unique_ptr<IHttpClient>(std::shared_ptr<spdlog::logger>)> make_graph_http;
     VeeamClientOptions veeam_options;
     graph::GraphClientOptions graph_options;
-    // The RFC 3161 primitive (rp::openssl_rfc3161 by default).
-    const Rfc3161* rfc3161 = nullptr;
 };
 
 // The real environment: rp::default_config_path's folder, the known folders,

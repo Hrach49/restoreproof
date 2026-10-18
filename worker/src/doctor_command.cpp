@@ -86,19 +86,14 @@ std::optional<std::string> json_refusal(std::string_view arg, path& file)
         return shown + "not a UTF-8 path";
     }
     file = *parsed;
-    switch (check_new_file(file)) {
-    case NewFileCheck::ok:
+    const NewFileCheck check = check_new_file(file);
+    if (check == NewFileCheck::ok) {
         return std::nullopt;
-    case NewFileCheck::not_a_file_name:
-        return shown + "not a file name";
-    case NewFileCheck::exists:
-        return shown + "the file already exists";
-    case NewFileCheck::no_folder:
-        return shown + "the folder doesn't exist";
-    case NewFileCheck::cannot_write:
-        break;
     }
-    return shown + "a file can't be written there";
+    return shown + (check == NewFileCheck::not_a_file_name ? "not a file name"
+                    : check == NewFileCheck::exists        ? "the file already exists"
+                    : check == NewFileCheck::no_folder     ? "the folder doesn't exist"
+                                                           : "a file can't be written there");
 }
 
 std::string text_of(const path& p)
@@ -414,9 +409,6 @@ void read_tsa(Doctor& d)
     options.url = facts.url;
     options.ca_pem = ca;
     options.http = http.get();
-    if (d.env.rfc3161 != nullptr) {
-        options.primitive = d.env.rfc3161;
-    }
     options.stop_requested = [&asked] { return asked++ > 0; };
     const Timestamper timestamper(std::move(options));
     const TimestampOutcome outcome = timestamper.stamp(sha256_bytes(kDoctorStampText));
@@ -540,13 +532,6 @@ void read_veeam(Doctor& d)
 
 // --- 10, 11: Graph and the clients ----------------------------------------------------
 
-// A download client that is never used: doctor reads the targets' listings
-// and downloads nothing.
-class NoDownloads final : public IHttpClient {
-public:
-    HttpResponse send(const HttpRequest&) override { throw std::logic_error("doctor downloads nothing"); }
-};
-
 std::string reach(Doctor& d, std::string_view url)
 {
     const std::unique_ptr<IHttpClient> http = d.http("reach");
@@ -603,11 +588,13 @@ std::string graph_error(const graph::GraphError& e)
 
 doctor::TargetRead read_target(const std::function<std::size_t()>& list)
 {
+    doctor::TargetRead read;
     try {
-        return {true, list(), {}};
+        read = {true, list(), {}};
     } catch (const graph::GraphError& e) {
-        return {false, 0, graph_error(e)};
+        read = {false, 0, graph_error(e)};
     }
+    return read;
 }
 
 void read_client(Doctor& d, int number, std::string_view file_arg, bool graph_ready)
@@ -623,6 +610,8 @@ void read_client(Doctor& d, int number, std::string_view file_arg, bool graph_re
         facts.profile = read_client_profile_file(*file);
     } catch (const ConfigError& e) {
         facts.profile_error = e.what();
+    }
+    if (facts.profile_error) {
         doctor::check_client(facts, graph_ready, d.report);
         return;
     }
@@ -643,7 +632,8 @@ void read_client(Doctor& d, int number, std::string_view file_arg, bool graph_re
         graph::GraphClientOptions options = d.env.graph_options;
         options.logger = d.logger;
         const std::unique_ptr<IHttpClient> http = recorded(d.env.make_graph_http(d.logger), d.recorder, "graph");
-        NoDownloads downloads;
+        // A client with no token that nothing uses: doctor lists, it downloads nothing.
+        const std::unique_ptr<IHttpClient> downloads = d.http("download");
         graph::GraphClient client(*http, facts.profile.graph_tenant_id, facts.profile.graph_client_id,
                                   std::move(*cert), options);
         try {
@@ -655,7 +645,7 @@ void read_client(Doctor& d, int number, std::string_view file_arg, bool graph_re
             graph::TargetReaderOptions reader_options;
             reader_options.logger = d.logger;
             reader_options.hash_items = false;
-            graph::TargetReader reader(client, downloads,
+            graph::TargetReader reader(client, *downloads,
                                        connector::RestoreTargets::from_profile(facts.profile), reader_options);
             facts.mail = read_target([&] { return reader.list_mail().size(); });
             facts.library = read_target([&] { return reader.list_sharepoint().size(); });
@@ -743,13 +733,16 @@ int run_doctor_command(std::span<const std::string_view> args, std::ostream& out
     }
     std::shared_ptr<FixtureRecorder> recorder;
     int code = exit_code::config;
+    std::string failure;
     try {
         code = run(*parsed, out, err, env, recorder);
     } catch (const ConfigError& e) {
-        err << "doctor error: " << e.what() << '\n';
-        return exit_code::config;
+        failure = std::string("doctor error: ") + e.what();
     } catch (...) {
-        err << "error: unexpected failure\n";
+        failure = "error: unexpected failure";
+    }
+    if (!failure.empty()) {
+        err << failure << '\n';
         return exit_code::config;
     }
     return finish_recording(recorder.get(), out, err, code);

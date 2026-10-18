@@ -2559,3 +2559,54 @@ TEST_CASE("wait pauses on the client's own sleep", "[graph][client]")
 
     CHECK(lab.waits() == std::vector<std::chrono::milliseconds>{2s});
 }
+
+// W7.2: doctor reads the roles of the token Entra issued, from its payload; the token never
+// leaves the client. The JWTs here are built by the test with a signature of zeros: nothing
+// verifies them (the Worker isn't their audience's verifier) and none is a real token.
+namespace {
+
+std::string jwt_with_payload(const std::string& payload_json)
+{
+    return rp::base64url_encode(std::string(R"({"alg":"RS256","typ":"JWT"})")) + "." +
+           rp::base64url_encode(payload_json) + "." + rp::base64url_encode(std::string(32, '\0'));
+}
+
+} // namespace
+
+TEST_CASE("token_roles reads the roles claim of the token Entra issued", "[graph][client]")
+{
+    struct Row {
+        std::string token;
+        std::vector<std::string> roles;
+    };
+    const Row row = GENERATE_COPY(values<Row>({
+        {jwt_with_payload(R"({"aud":"https://graph.microsoft.com","roles":["Sites.Selected",)"
+                          R"("Files.SelectedOperations.Selected","Lists.SelectedOperations.Selected"]})"),
+         {"Sites.Selected", "Files.SelectedOperations.Selected", "Lists.SelectedOperations.Selected"}},
+        {jwt_with_payload(R"({"roles":["Sites.Selected"]})"), {"Sites.Selected"}},
+        // No roles, roles of another kind, a payload that is no JSON object, no JWT at all:
+        // no role, never a throw.
+        {jwt_with_payload(R"({"aud":"x"})"), {}},
+        {jwt_with_payload(R"({"roles":"Sites.Selected"})"), {}},
+        {jwt_with_payload(R"({"roles":["Sites.Selected",5]})"), {"Sites.Selected"}},
+        {jwt_with_payload("[1]"), {}},
+        {"not-a-jwt", {}},
+        {"a.%%%.c", {}},
+    }));
+    Lab lab;
+    lab.token_always(token_response(row.token));
+    const std::unique_ptr<GraphClient> client = lab.make_client();
+    CHECK(client->token_roles() == row.roles);
+    CHECK(lab.token_requests == 1);
+    // The token held is the one used afterwards: no second sign-in.
+    CHECK(client->token_roles() == row.roles);
+    CHECK(lab.token_requests == 1);
+}
+
+TEST_CASE("token_roles throws what the sign-in throws", "[graph][client]")
+{
+    Lab lab;
+    lab.token_always(load_fixture("graph", "token-unknown-app-400"));
+    const std::unique_ptr<GraphClient> client = lab.make_client();
+    CHECK(catch_graph([&] { (void)client->token_roles(); }).kind == "AuthError");
+}

@@ -1,5 +1,8 @@
 #include <rp/graph_client.hpp>
 
+#include <rp/base64.hpp>
+#include <rp/cert_export.hpp>
+
 #include <rp/redact.hpp>
 #include <rp/retry_policy.hpp>
 #include <rp/version.hpp>
@@ -738,6 +741,41 @@ void GraphClient::rethrow_failure_since_locked(std::uint64_t failures_seen) cons
     if (renewal_failures_.load() != failures_seen && last_renewal_failure_) {
         std::rethrow_exception(last_renewal_failure_);
     }
+}
+
+std::vector<std::string> GraphClient::token_roles()
+{
+    milliseconds waited{0};
+    Token token = current_token(waited);
+    std::vector<std::string> roles;
+    // header.payload.signature; the payload in base64url without padding.
+    const std::size_t first = token.access.find('.');
+    const std::size_t second =
+        first == std::string::npos ? std::string::npos : token.access.find('.', first + 1);
+    if (second != std::string::npos) {
+        std::string payload = token.access.substr(first + 1, second - first - 1);
+        std::replace(payload.begin(), payload.end(), '-', '+');
+        std::replace(payload.begin(), payload.end(), '_', '/');
+        payload.append((4 - payload.size() % 4) % 4, '=');
+        std::optional<std::vector<unsigned char>> bytes = base64_decode(payload);
+        secure_wipe(payload);
+        if (bytes) {
+            std::string text(bytes->begin(), bytes->end());
+            secure_wipe(std::span<unsigned char>(bytes->data(), bytes->size()));
+            const json doc = json::parse(text, nullptr, false);
+            secure_wipe(text);
+            const auto found = doc.is_object() ? doc.find("roles") : doc.end();
+            if (doc.is_object() && found != doc.end() && found->is_array()) {
+                for (const json& role : *found) {
+                    if (role.is_string()) {
+                        roles.push_back(role.get<std::string>());
+                    }
+                }
+            }
+        }
+    }
+    secure_wipe(token.access);
+    return roles;
 }
 
 bool GraphClient::token_due()

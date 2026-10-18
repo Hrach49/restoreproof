@@ -107,7 +107,9 @@ inline constexpr std::string_view kCliUsage =
     "rpworker signer public-key [--vault <file>] | rpworker signer new-key [--vault <file>] [--replace] | "
     "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | "
     "rpworker service install [--config <path>] | rpworker service uninstall|start|stop | "
-    "rpworker service run [--config <path>]\n";
+    "rpworker service run [--config <path>] | "
+    "rpworker doctor [--config <path>] [--vault <file>] [--client <profile file>]... "
+    "[--json <file>] [--record <dir>]\n";
 
 // rpworker's command line: `--version`, `config ...` (rp/config_check.hpp),
 // `vault ...` (rp/vault_command.hpp, W4.5), `veeam ...`
@@ -115,8 +117,9 @@ inline constexpr std::string_view kCliUsage =
 // (rp/client_command.hpp, W4.10), `restore ...`
 // (rp/restore_command.hpp), `test ...` (rp/test_command.hpp), `outbox ...`
 // (rp/outbox_command.hpp, W4.6), `cloud ...` (rp/cloud_command.hpp, W5.1),
-// `signer ...` (rp/signer_command.hpp) or
-// `service ...` (rp/service_command.hpp, W4.7).
+// `signer ...` (rp/signer_command.hpp),
+// `service ...` (rp/service_command.hpp, W4.7) or `doctor ...`
+// (rp/doctor_command.hpp, W7.2).
 // `args` is argv without the program name, in UTF-8. Normal output goes to
 // `out`, usage and errors to `err`.
 // Returns the process exit code (rp::exit_code): 0 on success, 64 with

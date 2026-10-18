@@ -42,11 +42,35 @@ struct ExportedPfx {
     void wipe() noexcept;
 };
 
+// Why an export failed, for a caller that acts on the reason rather than the
+// words (W7.2's doctor: its codes and fixes). `other` is everything the list
+// doesn't name (a store that won't open, no random bytes, a PFX Windows
+// couldn't make), and what a CertExportError made from text alone carries.
+enum class CertExportFailure {
+    other,
+    malformed_thumbprint, // not 40 hex digits
+    not_found,            // no certificate with that thumbprint in the store
+    not_yet_valid,
+    expired,
+    no_private_key,       // the certificate has none
+    key_unopenable,       // there may be one, and this account can't open it
+    not_exportable        // the key's export policy forbids it
+};
+
 // An export that failed. what() is safe to print: it names the thumbprint and
 // the reason, never key material or the password.
 class CertExportError : public std::runtime_error {
 public:
-    using std::runtime_error::runtime_error;
+    explicit CertExportError(const std::string& message,
+                             CertExportFailure reason = CertExportFailure::other)
+        : std::runtime_error(message), reason_(reason)
+    {
+    }
+
+    CertExportFailure reason() const noexcept { return reason_; }
+
+private:
+    CertExportFailure reason_;
 };
 
 class CertificateExporter {

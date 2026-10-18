@@ -471,3 +471,23 @@ def test_the_key_already_registered_is_the_409s_line_alone():
         "}"
     ))
     assert result == {"yes": True, "code": False, "other": False}
+
+
+def test_the_wanted_acls_are_the_shared_vector():
+    """W7.2 point 1: rpworker doctor checks the same folders against the same rules; both are
+    held to shared/testdata/worker-acls-v1.json, so a change on one side fails here first."""
+    from pathlib import Path
+
+    vector = json.loads((Path(__file__).resolve().parents[3] / "shared" / "testdata" / "worker-acls-v1.json").read_text(encoding="utf-8"))
+    wanted = run_json(with_module(
+        "$w = Get-WantedAcls -ServiceSid 'S-1-5-80-1-2-3-4-5'\n"
+        "@($w.Keys | ForEach-Object { [pscustomobject]@{ path = $_; protected = $w[$_].Protected;"
+        " rules = @($w[$_].Rules | ForEach-Object { [pscustomobject]@{ sid = $_.Sid; rights = $_.Rights } }) } })"
+    ))
+    service = "S-1-5-80-1-2-3-4-5"
+    expected = [
+        {"path": f["path"], "protected": f["protected"],
+         "rules": [{"sid": service if r["sid"] == vector["service_sid"] else r["sid"], "rights": r["rights"]} for r in f["rules"]]}
+        for f in vector["folders"]
+    ]
+    assert wanted == expected

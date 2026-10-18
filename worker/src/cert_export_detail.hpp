@@ -42,6 +42,10 @@ ExportedPfx export_from_store(HCERTSTORE store, std::string_view thumbprint,
 // both and points to rpworker doctor, which tells them apart; any other code is said as it is.
 std::string private_key_refusal(std::string_view name, unsigned long code);
 
+// The reason that goes with private_key_refusal's words: no_private_key for
+// CRYPT_E_NO_KEY_PROPERTY, key_unopenable for every other code.
+CertExportFailure private_key_failure(unsigned long code) noexcept;
+
 // A FILETIME (100 ns ticks since 1601-01-01 UTC) on the system clock.
 std::chrono::system_clock::time_point to_time_point(const FILETIME& time) noexcept;
 

@@ -442,6 +442,14 @@ Worker`, W4.7): `rpworker service run`, started by Windows at boot under the vir
 within 30 s of being asked. Installed and removed by `rpworker service install` and
 `uninstall`. Its body is the scheduler loop (W4.8).
 
+**Doctor (`rpworker doctor`, W7.2).** The read-only check of an installed Worker, run elevated
+on the Veeam server: one line per check, `ok:`, `warning:`, `problem: ... (fix: <the line to
+run>)` or `skip: ... (needs <check>)`, exit 5 when a line is a problem. What the service account
+may do is computed by Windows' access check for the service's SID, never by running as it. A
+**skip** is a check whose input a failed check was to give: it is never a problem of its own, so
+one missing grant is one problem line. `--json` is the support file: ids, results and codes,
+never a text, a path or a tenant value (`docs/worker-config.md` "`rpworker doctor`").
+
 **Service log (`worker.log`).** The running service's log,
 `%ProgramData%\RestoreProof\logs\worker.log`: five files of 10 MiB at most, every line
 through `redact()`, `SECURITY: ` lines written at every `log_level`. The commands log to

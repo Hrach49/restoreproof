@@ -1,0 +1,757 @@
+#include <rp/doctor_command.hpp>
+
+#include <rp/cli.hpp>
+#include <rp/client_assertion.hpp>
+#include <rp/client_check.hpp>
+#include <rp/client_profile.hpp>
+#include <rp/cloud_api.hpp>
+#include <rp/config.hpp>
+#include <rp/connector.hpp>
+#include <rp/graph_errors.hpp>
+#include <rp/graph_targets.hpp>
+#include <rp/recording_http_client.hpp>
+#include <rp/service_log.hpp>
+#include <rp/service_recovery.hpp>
+#include <rp/sha256.hpp>
+#include <rp/signer.hpp>
+#include <rp/version.hpp>
+
+#include "atomic_file.hpp"
+#include "command_config.hpp"
+#include "http_exchange.hpp"
+#include "path_utf8.hpp"
+#include "text_table.hpp"
+
+#include <algorithm>
+#include <format>
+#include <fstream>
+#include <ostream>
+#include <sstream>
+#include <stdexcept>
+
+namespace rp {
+
+namespace {
+
+using std::filesystem::path;
+
+struct Args {
+    std::optional<std::string_view> config;
+    std::optional<std::string_view> vault;
+    std::optional<std::string_view> json;
+    std::optional<std::string_view> record;
+    std::vector<std::string_view> clients;
+};
+
+// `--client` may be given more than once; every other option at most once;
+// every value not empty.
+std::optional<Args> parse_args(std::span<const std::string_view> args)
+{
+    Args out;
+    for (std::size_t i = 0; i < args.size(); i += 2) {
+        if (i + 1 >= args.size() || args[i + 1].empty()) {
+            return std::nullopt;
+        }
+        const std::string_view value = args[i + 1];
+        std::optional<std::string_view>* once = nullptr;
+        if (args[i] == "--client") {
+            out.clients.push_back(value);
+            continue;
+        }
+        if (args[i] == "--config") {
+            once = &out.config;
+        } else if (args[i] == "--vault") {
+            once = &out.vault;
+        } else if (args[i] == "--json") {
+            once = &out.json;
+        } else if (args[i] == "--record") {
+            once = &out.record;
+        } else {
+            return std::nullopt;
+        }
+        if (once->has_value()) {
+            return std::nullopt;
+        }
+        *once = value;
+    }
+    return out;
+}
+
+// The --json path, as `test --json` checks it: before anything is read.
+std::optional<std::string> json_refusal(std::string_view arg, path& file)
+{
+    const std::string shown = "--json " + table_cell(arg) + ": ";
+    const std::optional<path> parsed = path_from_utf8(arg);
+    if (!parsed) {
+        return shown + "not a UTF-8 path";
+    }
+    file = *parsed;
+    switch (check_new_file(file)) {
+    case NewFileCheck::ok:
+        return std::nullopt;
+    case NewFileCheck::not_a_file_name:
+        return shown + "not a file name";
+    case NewFileCheck::exists:
+        return shown + "the file already exists";
+    case NewFileCheck::no_folder:
+        return shown + "the folder doesn't exist";
+    case NewFileCheck::cannot_write:
+        break;
+    }
+    return shown + "a file can't be written there";
+}
+
+std::string text_of(const path& p)
+{
+    return path_to_utf8(p);
+}
+
+bool has_value(const std::optional<std::string>& value)
+{
+    return value && !value->empty();
+}
+
+// What a whole run of doctor shares while it reads.
+struct Doctor {
+    const DoctorEnv& env;
+    std::ostream& out;
+    doctor::Report report;
+    std::size_t printed = 0;
+    std::string service_sid;
+    path data;
+    std::chrono::system_clock::time_point now;
+    std::optional<Config> config;
+    Secrets secrets;
+    bool vault_read = false;
+    std::shared_ptr<FixtureRecorder> recorder;
+    std::shared_ptr<spdlog::logger> logger;
+    std::vector<Organization> organisations;
+    bool veeam_read = false;
+    std::optional<std::string> worker_id;
+    std::optional<std::string> key_id;
+
+    // Prints the lines added since the last call: each area's lines appear as
+    // it is read, so a slow network check shows where it is.
+    void print()
+    {
+        for (; printed < report.checks().size(); ++printed) {
+            out << doctor::line_of(report.checks()[printed]) << '\n';
+        }
+        out.flush();
+    }
+
+    std::optional<std::uint32_t> access(const path& p) const
+    {
+        return env.access_for(p, service_sid, doctor::service_token_groups());
+    }
+
+    std::unique_ptr<IHttpClient> http(std::string service, std::optional<std::string> ca_file = {},
+                                      std::optional<std::string> pin = {}) const
+    {
+        HttpClientOptions options;
+        options.ca_file = std::move(ca_file);
+        options.pinned_cert_sha256 = std::move(pin);
+        options.logger = logger;
+        options.sleep = env.veeam_options.sleep;
+        options.jitter = env.veeam_options.jitter;
+        return recorded(env.make_http(options), recorder, std::move(service));
+    }
+};
+
+// --- 1, 2: the machine and the config ------------------------------------------------
+
+std::optional<std::string> service_exe(const DoctorEnv& env)
+{
+    ServiceSetup setup;
+    if (env.read_setup(kServiceName, setup).error != 0) {
+        return std::nullopt;
+    }
+    return doctor::exe_of_command_line(setup.command_line);
+}
+
+void read_config(Doctor& d, const path& file)
+{
+    doctor::ConfigFacts facts;
+    facts.file = text_of(file);
+    facts.owner = check_trusted_owner(file);
+    const doctor::Security security = d.env.read_security(file);
+    facts.explicit_entries = std::any_of(security.aces.begin(), security.aces.end(),
+                                         [](const doctor::Ace& ace) { return !ace.inherited; });
+    try {
+        d.config = load_config(file);
+        facts.jobs_file_set = has_value(d.config->jobs_file);
+        const Config& c = *d.config;
+        facts.client_keys_set =
+            !(c.veeam_org_name + c.graph_tenant_id + c.graph_client_id + c.test_mailbox +
+              c.test_site_id + c.test_library_id + c.test_onedrive_drive_id + c.test_onedrive_folder_id)
+                 .empty();
+    } catch (const ConfigError& e) {
+        facts.load_error = e.what();
+    }
+    doctor::check_config(facts, d.report);
+}
+
+// --- 3: folders, outbox, disk, log -----------------------------------------------------
+
+struct Listing {
+    bool listable = false;
+    int folders = 0;
+    std::optional<std::chrono::seconds> oldest;
+};
+
+Listing list_folders(const path& folder)
+{
+    Listing out;
+    std::error_code ec;
+    std::filesystem::directory_iterator it(folder, ec);
+    if (ec) {
+        return out;
+    }
+    out.listable = true;
+    const auto file_now = std::filesystem::file_time_type::clock::now();
+    for (; it != std::filesystem::directory_iterator(); it.increment(ec)) {
+        if (!it->is_directory(ec)) {
+            continue;
+        }
+        ++out.folders;
+        const auto written = it->last_write_time(ec);
+        const auto age = std::chrono::floor<std::chrono::seconds>(file_now - written);
+        if (!ec && (!out.oldest || age > *out.oldest)) {
+            out.oldest = age;
+        }
+    }
+    return out;
+}
+
+std::optional<std::uint64_t> size_of(const path& file)
+{
+    std::error_code ec;
+    const std::uintmax_t size = std::filesystem::file_size(file, ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    return size;
+}
+
+void read_folders(Doctor& d)
+{
+    const std::vector<doctor::WantedAcl> wanted = doctor::wanted_folders(d.service_sid);
+    std::vector<doctor::FolderFacts> facts;
+    for (const doctor::WantedAcl& want : wanted) {
+        const path folder = want.path.empty() ? d.data : d.data / want.path;
+        doctor::FolderFacts fact{text_of(folder), d.env.read_security(folder), std::nullopt};
+        if (fact.security.present && fact.security.readable) {
+            fact.service_access = d.access(folder);
+        }
+        facts.push_back(std::move(fact));
+    }
+    doctor::check_folders(wanted, facts, d.report);
+
+    const Listing queued = list_folders(d.data / "outbox");
+    const Listing sent = list_folders(d.data / "sent");
+    const Listing failed = list_folders(d.data / "failed");
+    doctor::check_outbox({text_of(d.data / "failed"), failed.listable, queued.folders, sent.folders,
+                          failed.folders, queued.oldest},
+                         d.report);
+    doctor::check_disk({text_of(d.data), d.env.free_bytes(d.data)}, d.report);
+
+    const path logs = d.data / "logs";
+    doctor::LogFacts log{text_of(logs / kLogFileName), size_of(logs / kLogFileName), 0};
+    for (std::size_t i = 0; i < LogLimits{}.files; ++i) {
+        const path file = i == 0 ? logs / kLogFileName : logs / std::format("worker.{}.log", i);
+        log.set_bytes += size_of(file).value_or(0);
+    }
+    doctor::check_log(log, d.report);
+}
+
+// --- 4, 5: the vault and the signing key ---------------------------------------------------
+
+std::vector<std::string> names_in(const Secrets& secrets)
+{
+    std::vector<std::string> names;
+    for (const std::string_view name : kSecretNames) {
+        const std::optional<std::string>* field = secret_field(secrets, name);
+        if (field != nullptr && has_value(*field)) {
+            names.emplace_back(name);
+        }
+    }
+    return names;
+}
+
+void read_vault_area(Doctor& d, const path& file)
+{
+    doctor::VaultFacts facts;
+    facts.path = text_of(file);
+    facts.service_sid = d.service_sid;
+    facts.exe = text_of(d.env.own_exe());
+    facts.security = d.env.read_security(file);
+    if (facts.security.present && facts.security.readable) {
+        facts.service_access = d.access(file);
+        for (const doctor::Ace& ace : facts.security.aces) {
+            facts.account_names.emplace_back(ace.sid, d.env.account_name(ace.sid));
+        }
+    }
+    try {
+        d.secrets = d.env.load_secrets(file);
+        d.vault_read = true;
+        facts.names = names_in(d.secrets);
+    } catch (const ConfigError& e) {
+        facts.read_error = e.what();
+    }
+    doctor::check_vault(facts, d.report);
+}
+
+doctor::RecordFacts read_worker_record(const Doctor& d)
+{
+    const TrustedFile file = read_trusted_file(d.data / "state" / kWorkerFileName, 64 * 1024);
+    doctor::RecordFacts facts;
+    facts.present = file.state != TrustedRead::absent;
+    if (file.state == TrustedRead::read) {
+        facts.record = parse_worker_record(file.bytes);
+    }
+    return facts;
+}
+
+void read_signing(Doctor& d, const doctor::RecordFacts& record)
+{
+    if (!d.vault_read) {
+        d.report.skip("signing.key", "signing key: its key_id", "vault.read");
+        return;
+    }
+    doctor::SigningFacts facts;
+    facts.in_vault = has_value(d.secrets.signing_key_base64);
+    if (facts.in_vault) {
+        if (const std::optional<SigningKey> key = SigningKey::from_base64(*d.secrets.signing_key_base64)) {
+            facts.key_id = key->key_id();
+            d.key_id = key->key_id();
+        }
+    }
+    doctor::check_signing_key(facts, record, d.report);
+}
+
+// --- 6: the service --------------------------------------------------------------
+
+void read_service(Doctor& d)
+{
+    doctor::ServiceFacts facts;
+    facts.read = d.env.read_setup(kServiceName, facts.setup);
+    facts.query = d.env.query_service(kServiceName, facts.status);
+    facts.expected_exe = text_of(d.env.installed_exe());
+    facts.service_sid = d.service_sid;
+    facts.logon = d.env.logon_rights();
+    facts.exe_security = d.env.read_security(d.env.installed_exe());
+    if (facts.exe_security.present && facts.exe_security.readable) {
+        facts.exe_access = d.access(d.env.installed_exe());
+    }
+    facts.log_file = text_of(d.data / "logs" / kLogFileName);
+    const TrustedFile running = read_trusted_file(d.data / "state" / kRunningFileName, kMaxRecordBytes);
+    facts.running.present = running.state != TrustedRead::absent;
+    if (running.state == TrustedRead::read) {
+        if (const std::optional<RunningRecord> record = parse_record(running.bytes)) {
+            facts.running.run_id = record->run_id;
+            if (const auto taken = record_time(record->taken_at)) {
+                facts.running.age = std::chrono::floor<std::chrono::seconds>(d.now - *taken);
+            }
+        }
+    }
+    doctor::check_service(facts, d.report);
+}
+
+// --- 7, 8: the Cloud, the TSA and the clock ---------------------------------------------
+
+void read_cloud(Doctor& d, const doctor::RecordFacts& record)
+{
+    if (!d.config) {
+        d.report.skip("cloud", "cloud: the registration and /v1/version", "config.load");
+        return;
+    }
+    doctor::CloudFacts facts;
+    facts.cloud_url = d.config->cloud_url;
+    facts.record = record;
+    if (record.record) {
+        d.worker_id = record.record->worker_id;
+    }
+    const std::unique_ptr<IHttpClient> http = d.http("cloud", d.config->cloud_ca_file);
+    HttpRequest request;
+    request.url = d.config->cloud_url;
+    while (request.url.ends_with('/')) {
+        request.url.pop_back();
+    }
+    request.url += "/v1/version";
+    request.max_attempts = 1;
+    request.max_body_bytes = 64 * 1024;
+    const Exchange answer = exchange(*http, request);
+    facts.version.answered = answer.response.has_value();
+    facts.version.failure = answer.word;
+    if (answer.response) {
+        facts.version.status = answer.response->status;
+        facts.version.kind = cloud_answer_kind(*answer.response);
+        facts.version.body = answer.response->body;
+    }
+    doctor::check_cloud(facts, d.report);
+}
+
+void read_tsa(Doctor& d)
+{
+    if (!d.config) {
+        d.report.skip("tsa", "tsa and clock: a token's time", "config.load");
+        return;
+    }
+    doctor::TsaFacts facts;
+    facts.url = d.config->tsa_url.value_or(std::string(kDefaultTsaUrl));
+    // The config's load already read tsa_ca_file and found a certificate in it;
+    // a file gone since is an empty root, and the token "tsa_untrusted".
+    std::string ca = std::string(default_tsa_ca_pem());
+    if (d.config->tsa_ca_file) {
+        std::ifstream file(*path_from_utf8(*d.config->tsa_ca_file), std::ios::binary);
+        std::ostringstream text;
+        text << file.rdbuf();
+        ca = text.str();
+    }
+    const std::unique_ptr<IHttpClient> http = d.http("tsa");
+    int asked = 0;
+    TimestamperOptions options;
+    options.url = facts.url;
+    options.ca_pem = ca;
+    options.http = http.get();
+    if (d.env.rfc3161 != nullptr) {
+        options.primitive = d.env.rfc3161;
+    }
+    options.stop_requested = [&asked] { return asked++ > 0; };
+    const Timestamper timestamper(std::move(options));
+    const TimestampOutcome outcome = timestamper.stamp(sha256_bytes(kDoctorStampText));
+    facts.stamped = outcome.stamped();
+    facts.error = std::string(outcome.error);
+    facts.gen_time = outcome.gen_time;
+    facts.now = std::chrono::duration_cast<std::chrono::seconds>(d.now.time_since_epoch()).count();
+    doctor::check_tsa(facts, d.report);
+}
+
+// --- 9: Veeam ------------------------------------------------------------------
+
+bool is_this_machine(std::string_view url, const std::optional<std::string>& host_name)
+{
+    std::string_view host = url;
+    if (const std::size_t scheme = host.find("://"); scheme != std::string_view::npos) {
+        host.remove_prefix(scheme + 3);
+    }
+    host = host.substr(0, host.find('/'));
+    if (host.starts_with('[')) {
+        host = host.substr(1, host.find(']') - 1);
+    } else {
+        host = host.substr(0, host.find(':'));
+    }
+    std::string lower(host);
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; });
+    if (lower == "localhost" || lower == "::1" || lower.starts_with("127.")) {
+        return true;
+    }
+    if (!host_name) {
+        return false;
+    }
+    std::string name = *host_name;
+    std::transform(name.begin(), name.end(), name.begin(),
+                   [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; });
+    return lower == name;
+}
+
+std::string upper(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](char c) { return c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c; });
+    return text;
+}
+
+doctor::CertificateFacts read_certificate(const Doctor& d, const std::string& thumbprint)
+{
+    doctor::CertificateFacts facts;
+    facts.thumbprint = thumbprint;
+    try {
+        ExportedPfx pfx = d.env.exporter()->export_pfx(thumbprint);
+        pfx.wipe();
+    } catch (const CertExportError& e) {
+        facts.export_failure = e.reason();
+        facts.export_message = e.what();
+    }
+    const DoctorCertificate cert = d.env.machine_certificate(thumbprint);
+    facts.not_after = cert.not_after;
+    if (cert.key_file) {
+        facts.key_file = text_of(*cert.key_file);
+        facts.service_access = d.access(*cert.key_file);
+    }
+    return facts;
+}
+
+void read_veeam(Doctor& d)
+{
+    if (!d.config) {
+        d.report.skip("veeam", "veeam: the login, the organisations and their certificates", "config.load");
+        return;
+    }
+    doctor::VeeamFacts facts;
+    facts.url = d.config->veeam_url;
+    facts.url_local = is_this_machine(d.config->veeam_url, d.env.host_name());
+    facts.rest_query = d.env.query_service(doctor::kVeeamRestService, facts.rest_status);
+    facts.service_sid = d.service_sid;
+    facts.now = d.now;
+    if (!has_value(d.secrets.veeam_username) || !has_value(d.secrets.veeam_password)) {
+        facts.login_error = "veeam: veeam_username or veeam_password is not in the vault";
+        doctor::check_veeam(facts, d.report);
+        return;
+    }
+    const std::unique_ptr<IHttpClient> http =
+        d.http("veeam", d.config->veeam_ca_file, d.config->veeam_cert_sha256);
+    VeeamClientOptions options = d.env.veeam_options;
+    options.logger = d.logger;
+    VeeamClient client(*http, d.config->veeam_url, *d.secrets.veeam_username,
+                       *d.secrets.veeam_password, options);
+    try {
+        client.login();
+        d.organisations = client.list_organizations();
+        for (const Organization& org : d.organisations) {
+            doctor::OrganisationFacts of;
+            of.name = org.name;
+            for (const RestorePoint& point : client.list_restore_points(org.id)) {
+                if (!of.newest_point || point.backup_time > *of.newest_point) {
+                    of.newest_point = point.backup_time;
+                }
+            }
+            std::vector<std::string> thumbprints;
+            for (const std::optional<OrganizationApp>* app : {&org.exchange_app, &org.sharepoint_app}) {
+                if (*app && std::find(thumbprints.begin(), thumbprints.end(),
+                                      upper((*app)->certificate_thumbprint)) == thumbprints.end()) {
+                    thumbprints.push_back(upper((*app)->certificate_thumbprint));
+                }
+            }
+            for (const std::string& thumbprint : thumbprints) {
+                of.certificates.push_back(read_certificate(d, thumbprint));
+            }
+            facts.organisations.push_back(std::move(of));
+        }
+        d.veeam_read = true;
+    } catch (const VeeamError& e) {
+        facts.login_error = std::string("veeam error: ") + e.what();
+        facts.organisations.clear();
+    }
+    client.logout();
+    doctor::check_veeam(facts, d.report);
+}
+
+// --- 10, 11: Graph and the clients ----------------------------------------------------
+
+// A download client that is never used: doctor reads the targets' listings
+// and downloads nothing.
+class NoDownloads final : public IHttpClient {
+public:
+    HttpResponse send(const HttpRequest&) override { throw std::logic_error("doctor downloads nothing"); }
+};
+
+std::string reach(Doctor& d, std::string_view url)
+{
+    const std::unique_ptr<IHttpClient> http = d.http("reach");
+    HttpRequest request;
+    request.url = std::string(url);
+    request.max_attempts = 1;
+    request.max_body_bytes = 64 * 1024;
+    return exchange(*http, request).word;
+}
+
+std::optional<graph::ClientCertificate> certificate(const Doctor& d, std::string* error)
+{
+    try {
+        return graph::certificate_from_secrets(d.secrets, d.now, d.logger);
+    } catch (const ConfigError& e) {
+        if (error != nullptr) {
+            *error = e.what();
+        }
+    }
+    return std::nullopt;
+}
+
+bool read_graph(Doctor& d, bool clients_named)
+{
+    if (!d.vault_read) {
+        d.report.skip("graph", "graph: the Worker's certificate", "vault.read");
+        return false;
+    }
+    doctor::GraphFacts facts;
+    facts.now = d.now;
+    facts.exe = text_of(d.env.own_exe());
+    facts.clients_named = clients_named;
+    std::string error;
+    if (const std::optional<graph::ClientCertificate> cert = certificate(d, &error)) {
+        facts.thumbprint = cert->sha1_thumbprint();
+        facts.not_after = cert->not_after();
+    } else {
+        facts.certificate_error = error;
+    }
+    if (!clients_named && !facts.certificate_error) {
+        for (const std::string_view url : {kEntraReachUrl, kGraphReachUrl}) {
+            std::string_view host = url.substr(8);
+            host = host.substr(0, host.find('/'));
+            facts.reach.emplace_back(std::string(host), reach(d, url));
+        }
+    }
+    return doctor::check_graph(facts, d.report);
+}
+
+std::string graph_error(const graph::GraphError& e)
+{
+    return std::string("graph error: ") + e.what();
+}
+
+doctor::TargetRead read_target(const std::function<std::size_t()>& list)
+{
+    try {
+        return {true, list(), {}};
+    } catch (const graph::GraphError& e) {
+        return {false, 0, graph_error(e)};
+    }
+}
+
+void read_client(Doctor& d, int number, std::string_view file_arg, bool graph_ready)
+{
+    doctor::ClientFacts facts;
+    facts.number = number;
+    facts.file = std::string(file_arg);
+    try {
+        const std::optional<path> file = path_from_utf8(file_arg);
+        if (!file) {
+            throw ConfigError("--client", "--client " + table_cell(file_arg) + ": not a UTF-8 path");
+        }
+        facts.profile = read_client_profile_file(*file);
+    } catch (const ConfigError& e) {
+        facts.profile_error = e.what();
+        doctor::check_client(facts, graph_ready, d.report);
+        return;
+    }
+    if (d.veeam_read) {
+        const auto org = std::find_if(d.organisations.begin(), d.organisations.end(),
+                                      [&](const Organization& o) { return o.name == facts.profile.veeam_org_name; });
+        if (org == d.organisations.end()) {
+            facts.veeam_check = "Veeam has no organisation " + table_cell(facts.profile.veeam_org_name) +
+                                " (veeam_org_name)";
+        } else {
+            const std::optional<ClientMismatch> mismatch =
+                check_client(facts.profile, {org->name, org->msid, org->type, org->region});
+            facts.veeam_check = mismatch ? "client_mismatch: " + mismatch->text : std::string();
+        }
+    }
+    if (graph_ready) {
+        std::optional<graph::ClientCertificate> cert = certificate(d, nullptr);
+        graph::GraphClientOptions options = d.env.graph_options;
+        options.logger = d.logger;
+        const std::unique_ptr<IHttpClient> http = recorded(d.env.make_graph_http(d.logger), d.recorder, "graph");
+        NoDownloads downloads;
+        graph::GraphClient client(*http, facts.profile.graph_tenant_id, facts.profile.graph_client_id,
+                                  std::move(*cert), options);
+        try {
+            facts.roles = client.token_roles();
+        } catch (const graph::GraphError& e) {
+            facts.token_error = graph_error(e);
+        }
+        if (!facts.token_error) {
+            graph::TargetReaderOptions reader_options;
+            reader_options.logger = d.logger;
+            reader_options.hash_items = false;
+            graph::TargetReader reader(client, downloads,
+                                       connector::RestoreTargets::from_profile(facts.profile), reader_options);
+            facts.mail = read_target([&] { return reader.list_mail().size(); });
+            facts.library = read_target([&] { return reader.list_sharepoint().size(); });
+            facts.folder = read_target([&] { return reader.list_onedrive().size(); });
+        }
+    }
+    doctor::check_client(facts, graph_ready, d.report);
+}
+
+// --- the command -------------------------------------------------------------------
+
+int run(const Args& args, std::ostream& out, std::ostream& err, const DoctorEnv& env,
+        std::shared_ptr<FixtureRecorder>& recorder)
+{
+    path json_file;
+    if (args.json) {
+        if (const std::optional<std::string> refusal = json_refusal(*args.json, json_file)) {
+            err << "doctor error: " << *refusal << '\n';
+            return exit_code::config;
+        }
+    }
+    Doctor d{env, out};
+    d.service_sid = *doctor::service_sid(kServiceName);
+    d.data = env.data_dir();
+    d.now = env.now();
+    d.logger = make_command_logger();
+
+    const bool elevated = env.elevated();
+    const bool go = doctor::check_doctor({elevated, std::string(version()), text_of(env.own_exe()),
+                                          elevated ? service_exe(env) : std::nullopt},
+                                         d.report);
+    d.print();
+    if (go) {
+        read_config(d, command_config_path(args.config, [&] { return d.data / "config.json"; }));
+        d.print();
+        read_folders(d);
+        d.print();
+        read_vault_area(d, command_vault_path(args.vault, [&] { return d.data / kVaultFileName; }));
+        d.print();
+        recorder = open_recording(args.record, "doctor", d.secrets);
+        const doctor::RecordFacts record = read_worker_record(d);
+        read_signing(d, record);
+        d.print();
+        read_service(d);
+        d.print();
+        read_cloud(d, record);
+        d.print();
+        read_tsa(d);
+        d.print();
+        read_veeam(d);
+        d.print();
+        const bool graph_ready = read_graph(d, !args.clients.empty());
+        d.print();
+        for (std::size_t i = 0; i < args.clients.size(); ++i) {
+            read_client(d, static_cast<int>(i) + 1, args.clients[i], graph_ready);
+            d.print();
+        }
+    }
+    out << d.report.summary_line() << '\n';
+    if (args.json) {
+        const doctor::JsonFacts facts{std::string(version()), env.windows_build(),
+                                      std::format("{:%Y-%m-%dT%H:%M:%SZ}",
+                                                  std::chrono::floor<std::chrono::seconds>(d.now)),
+                                      elevated, d.worker_id.value_or(""), d.key_id.value_or("")};
+        if (!write_file_atomically(json_file, doctor::json_text(d.report, facts))) {
+            err << "doctor error: --json " << text_of(json_file) << ": couldn't be written\n";
+            return exit_code::config;
+        }
+    }
+    out.flush();
+    wipe_secrets(d.secrets, "");
+    return d.report.exit_code();
+}
+
+} // namespace
+
+int run_doctor_command(std::span<const std::string_view> args, std::ostream& out, std::ostream& err,
+                       const DoctorEnv& env)
+{
+    const std::optional<Args> parsed = parse_args(args);
+    if (!parsed) {
+        err << kCliUsage;
+        return exit_code::usage;
+    }
+    std::shared_ptr<FixtureRecorder> recorder;
+    int code = exit_code::config;
+    try {
+        code = run(*parsed, out, err, env, recorder);
+    } catch (const ConfigError& e) {
+        err << "doctor error: " << e.what() << '\n';
+        return exit_code::config;
+    } catch (...) {
+        err << "error: unexpected failure\n";
+        return exit_code::config;
+    }
+    return finish_recording(recorder.get(), out, err, code);
+}
+
+} // namespace rp

@@ -1,6 +1,15 @@
 #include "machine_reads.hpp"
 
+#include <rp/config.hpp>
+#include <rp/doctor_command.hpp>
+#include <rp/graph_client.hpp>
+#include <rp/vault.hpp>
+
 #include "cert_export_detail.hpp"
+#include "command_config.hpp"
+#include "folder_ops.hpp"
+#include "host_name.hpp"
+#include "scm.hpp"
 #include "utf16.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -16,6 +25,7 @@
 #include <ncrypt.h>
 #include <ntsecapi.h>
 #include <sddl.h>
+#include <shlobj.h>
 #include <wincrypt.h>
 
 #include <array>
@@ -387,4 +397,56 @@ MachineCertificate machine_certificate(std::string_view thumbprint,
     return out;
 }
 
+std::filesystem::path program_files_dir()
+{
+    PWSTR folder = nullptr;
+    if (SHGetKnownFolderPath(FOLDERID_ProgramFiles, 0, nullptr, &folder) != S_OK) {
+        CoTaskMemFree(folder);
+        throw std::runtime_error("the Program Files folder can't be found");
+    }
+    std::filesystem::path out(folder);
+    CoTaskMemFree(folder);
+    return out;
+}
+
 } // namespace rp::machine
+
+namespace rp {
+
+DoctorEnv default_doctor_env()
+{
+    DoctorEnv env;
+    env.data_dir = [] { return program_data_dir() / "RestoreProof"; };
+    env.program_data = [] { return program_data_dir(); };
+    env.installed_exe = [] { return machine::program_files_dir() / "RestoreProof" / "rpworker.exe"; };
+    env.own_exe = [] { return own_executable_path(); };
+    env.elevated = [] { return machine::is_elevated(); };
+    env.windows_build = [] { return machine::windows_build(); };
+    env.host_name = [] { return dns_host_name(); };
+    env.now = [] { return std::chrono::system_clock::now(); };
+    env.load_secrets = read_vault;
+    env.read_security = [](const std::filesystem::path& p) { return machine::read_security(p); };
+    env.access_for = [](const std::filesystem::path& p, std::string_view sid,
+                        const std::vector<std::string>& groups) { return machine::access_for(p, sid, groups); };
+    env.logon_rights = [] { return machine::service_logon_rights(); };
+    env.free_bytes = [](const std::filesystem::path& p) { return machine::free_bytes(p); };
+    env.account_name = [](std::string_view sid) { return machine::account_name(sid); };
+    env.machine_certificate = [](std::string_view thumbprint) {
+        const machine::MachineCertificate cert = machine::machine_certificate(thumbprint, program_data_dir());
+        return DoctorCertificate{cert.found, cert.not_after, cert.key_file};
+    };
+    env.exporter = [] { return make_local_machine_cert_exporter(); };
+    env.read_setup = [](std::string_view name, ServiceSetup& setup) { return scm::read_setup(name, setup); };
+    env.query_service = [](std::string_view name, ServiceStatus& status) {
+        return scm::query_service(name, status);
+    };
+    env.make_http = [](const HttpClientOptions& options) -> std::unique_ptr<IHttpClient> {
+        return std::make_unique<HttpClient>(options);
+    };
+    env.make_graph_http = [](std::shared_ptr<spdlog::logger> logger) {
+        return graph::make_graph_http_client(std::move(logger));
+    };
+    return env;
+}
+
+} // namespace rp

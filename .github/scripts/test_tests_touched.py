@@ -98,6 +98,10 @@ CASES = [
         ["tools/tenant-setup/RestoreProofTenant.psm1"],
     ),
     ([("D", "tools/tenant-setup/New-WorkerGraphCertificate.ps1")], ["tools/tenant-setup/New-WorkerGraphCertificate.ps1"]),
+    # W7.1: the installer, held by tools/worker-install/tests/; a tenant-setup test is not its test.
+    (["tools/worker-install/Install-RestoreProofWorker.ps1"], ["tools/worker-install/Install-RestoreProofWorker.ps1"]),
+    (["tools/worker-install/RestoreProofWorker.psm1", "tools/tenant-setup/tests/test_app_rules.py"], ["tools/worker-install/RestoreProofWorker.psm1"]),
+    (["tools/worker-install/WorkerMachine.psm1", "tools/worker-install/tests/uv.lock"], ["tools/worker-install/WorkerMachine.psm1"]),
     # --- allowed ---
     ([], []),
     (["tools/tenant-setup/RestoreProofTenant.psm1", "tools/tenant-setup/tests/test_app_rules.py"], []),
@@ -106,6 +110,9 @@ CASES = [
     (["tools/tenant-setup/tests/fixtures/lab/001-organization.json"], []),
     (["tools/tenant-setup/tests/test_profile.py"], []),
     (["tools/tenant-setupfoo/x.ps1"], []),
+    (["tools/worker-install/RestoreProofWorker.psm1", "tools/worker-install/tests/test_rules.py"], []),
+    (["tools/worker-install/Install-RestoreProofWorker.ps1", "tools/worker-install/tests/FakeMachine.psm1"], []),
+    (["tools/worker-install/tests/fake_rpworker.py"], []),
     # C5.11: a Cloud test covers both the CLI and the verifier.
     (["cloud/manage.py", "cloud/tests/test_manage.py"], []),
     (["shared/tools/verify_bundle.py", "cloud/tests/test_verify_bundle.py"], []),

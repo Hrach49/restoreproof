@@ -5,6 +5,7 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
+#include <openssl/rand.h>
 #include <openssl/x509.h>
 
 #include <algorithm>
@@ -183,6 +184,12 @@ const Ed25519& openssl_ed25519() noexcept
 {
     static const OpenSslEd25519 primitive;
     return primitive;
+}
+
+bool random_seed(std::span<unsigned char, kEd25519SeedBytes> seed) noexcept
+{
+    const ClearOpenSslErrors clear_errors;
+    return RAND_bytes(seed.data(), static_cast<int>(seed.size())) == 1;
 }
 
 } // namespace rp

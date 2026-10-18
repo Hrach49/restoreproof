@@ -343,7 +343,8 @@ keeps other accounts out**, and the entropy is a label, not a second lock. The f
 entries, `SYSTEM: Full`, `BUILTIN\Administrators: Full` and `OWNER RIGHTS: Full` (the file's
 owner, whoever that is), and nothing for `Users`. `rpworker vault grant <account>` adds one
 `Read` entry for an account, which is how the Worker's service account (a virtual account,
-`NT SERVICE\<service name>`, W4.12) is let read it; W7.1's installer will run it. A write
+`NT SERVICE\<service name>`, W4.12) is let read it; the installer runs it, by the account's SID
+(W7.1, `tools/worker-install`). A write
 (`set`, `remove`) keeps the DACL it finds, so a grant survives a password rotation. Every
 read and write refuses a vault file whose owner is neither `SYSTEM`, `Administrators` nor the
 calling account (`<file>: the vault file is owned by neither SYSTEM, Administrators nor this
@@ -353,7 +354,8 @@ opens the file once and applies the owner rule, the read and the ACL change thro
 handle, so the file that passed the rule is the file that is decrypted or changed, whatever
 is moved onto its path meanwhile (PR #162 review). The folder
 `%ProgramData%\RestoreProof` is made by `vault set` when it isn't there, with the inherited
-ACL; an existing folder's ACL is left alone (W7.1 tightens it).
+ACL; an existing folder's ACL is left alone (the installer sets it, W7.1: `docs/testing.md` "The Worker
+installer").
 
 **`--vault <file>`.** Every command that reads a secret, and every `vault` command, takes
 `--vault <file>` to use another vault file; without it the default is read. The default path is
@@ -441,10 +443,10 @@ result (W4.3; `docs/verification.md`, "The signature"; `docs/decisions.md` 2026-
 point 3). The value is one line of standard Base64, 64 characters, of the key's PKCS#8 DER (48
 bytes: the 16 bytes `302e020100300506032b657004220420`, then the 32-byte seed). It is the body
 line of the PEM that `openssl genpkey -algorithm ed25519` writes, without the two armour
-lines. No `rpworker` command makes or prints a private key; in the lab `python -m seeder
-new-signing-key` makes the pair and keeps the line in Credential Manager, and
-`fill-worker-vault.ps1` moves it into the vault (`lab/README.md`). W7.1's installer will make
-it.
+lines. No `rpworker` command prints a private key; `rpworker signer new-key` makes one straight
+into the vault (W7.1, "`rpworker signer`" below), which is what the installer runs; in the lab
+`python -m seeder new-signing-key` makes the pair and keeps the line in Credential Manager, and
+`fill-worker-vault.ps1` moves it into the vault (`lab/README.md`).
 
 - **When it is required.** Only `rpworker test --evidence <dir>`, which always signs, and
   `rpworker signer public-key`. Every other command reads the vault with it in and never parses
@@ -602,9 +604,9 @@ must be in the vault (see "Secrets"). The code is `rp::run_veeam_command` in
 With the lab's organisation (the recorded responses in `worker/tests/fixtures/veeam/`):
 
 ```
-  ORGANIZATION                     BACKUP TIME                   EX  SP  OD  TM  LONG-TERM  RESTORE POINT ID
-* RestoreProofLab.onmicrosoft.com  2026-09-25T19:37:15.2145203Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e371ac3d9c-eb29-42b6-a391-ae81fcc4681c
-* RestoreProofLab.onmicrosoft.com  2026-09-25T19:24:31.0936821Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e32fb3c7e0-ff6e-4949-8b2d-ae32ecf9e9a7
+  ORGANIZATION                     APP CERTIFICATE                           BACKUP TIME                   EX  SP  OD  TM  LONG-TERM  RESTORE POINT ID
+* RestoreProofLab.onmicrosoft.com  AC3220B58A2B4C438DA13816C2DD1E25D1F783A7  2026-09-25T19:37:15.2145203Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e371ac3d9c-eb29-42b6-a391-ae81fcc4681c
+* RestoreProofLab.onmicrosoft.com  AC3220B58A2B4C438DA13816C2DD1E25D1F783A7  2026-09-25T19:24:31.0936821Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e32fb3c7e0-ff6e-4949-8b2d-ae32ecf9e9a7
 
 1 organisation(s), 2 restore point(s); * = veeam_org_name
 ```
@@ -614,6 +616,11 @@ With the lab's organisation (the recorded responses in `worker/tests/fixtures/ve
   table is still printed, so the right name can be copied from it, and the command fails
   with exit code 4. A config without client keys (W4.10) names no organisation: every one is
   listed, none is marked, and no organisation is missing (exit 0).
+- **`APP CERTIFICATE`** (W7.1) is the SHA-1 thumbprint of the certificate Veeam's own Entra app
+  signs in to that organisation with (`applicationCertificateThumbprint`), Exchange's then
+  SharePoint's when they differ, joined by a comma, or `-` when Veeam named none. The installer
+  reads this column and grants the service account read on each certificate's private key file
+  (W4.12). A thumbprint is public.
 - **Restore points** are newest first. `BACKUP TIME` is exactly what Veeam sent, the form
   the Worker opens explore sessions with. `EX`, `SP`, `OD` and `TM` are `x` when the point
   holds Exchange, SharePoint, OneDrive or Teams data, `-` when not. `LONG-TERM` is `yes` for
@@ -1723,8 +1730,11 @@ whose answer was lost, or a vault that couldn't take the token after it (`cloud 
 registered as worker <id>, but the API token couldn't be stored; revoke that Worker (manage.py
 revoke-worker) and register again with a new signing key and a new install token`, exit 1)
 spends the install token and leaves the Cloud holding this key, which it never takes twice: the
-way out is `manage.py revoke-worker`, a new signing key (`python -m seeder new-signing-key` into
-the vault) and a new install token. A `state\worker.json` that couldn't be written is
+way out is a new signing key (`rpworker signer new-key --replace`) and `cloud register` again,
+with the same install token when the Cloud refused the key with 409 (that refusal rolls back and
+leaves the token unused) or a new one when the first 201 spent it; `manage.py revoke-worker`
+then retires the Worker row the old key made. The installer does this itself on the 409 (W7.1's
+code review, finding 8). A `state\worker.json` that couldn't be written is
 `cloud register: registered as worker <id>; state\worker.json couldn't be written`, exit 1, the
 registration kept.
 
@@ -1739,15 +1749,38 @@ writes the 201 with `api_token` as `[REDACTED]` and never the request body.
 
 ```
 rpworker signer public-key [--vault <file>]
+rpworker signer new-key [--vault <file>] [--replace]
 rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]
 ```
 
 Two read-only commands for the signature of a run folder (W4.3; `docs/verification.md`, "The
-signature"; `docs/decisions.md` 2026-10-05, W4.3 point 4 and its build notes). Neither reads
-`config.json`, calls a service or writes a file; `public-key` reads the vault (`--vault <file>`
-or the default), `verify` reads no secret at all. The code is `rp::run_signer_command` in
-`worker/include/rp/signer_command.hpp`. Anything else after `signer` is the usage line, exit
-64.
+signature"; `docs/decisions.md` 2026-10-05, W4.3 point 4 and its build notes), and the one that
+makes the key (W7.1). None reads `config.json` or calls a service; `public-key` reads the vault
+(`--vault <file>` or the default), `new-key` reads and writes it, `verify` reads no secret at
+all. The code is `rp::run_signer_command` in `worker/include/rp/signer_command.hpp`. Anything
+else after `signer` is the usage line, exit 64.
+
+### `signer new-key [--vault <file>] [--replace]`
+
+Makes the Worker's signing key straight into the vault (W7.1, `docs/decisions.md` 2026-10-16
+point 4): 32 bytes from OpenSSL's random generator, stored as `signing_key_base64` in the form
+every reader parses ("The signing key" above), beside the vault's other names, in one write.
+The installer runs it; by hand, from an elevated prompt for the default vault. It prints what
+`public-key` prints: the public key's PEM alone on stdout (`rpworker signer new-key >
+worker.pub.pem` is a key file), and on stderr `set signing_key_base64 in <file>` then `key
+<key_id>`. The private half reaches nothing: not a stream, not a log line, not a recording.
+
+| stderr | Exit |
+|---|---|
+| `set signing_key_base64 in <file>`, `key <key_id>` | 0 |
+| `signer error: the vault already holds signing_key_base64; this Worker has its key (rpworker signer public-key prints it); --replace makes a new one, after which the Cloud must be told (manage.py revoke-worker, a new install token)` | 1, nothing changed |
+| `config error: <file>: vault file not found` (and the vault's other refusals; the vault must be there: `vault set` makes it) | 1 |
+| `signer error: no random bytes could be made` | 1, nothing stored |
+| `vault error: <file>: the vault file couldn't be written` (and the vault's other write refusals) | 1, nothing printed on stdout |
+| `set signing_key_base64 in <file>`, `signer error: the answer couldn't be written` | 1: the key is in the vault, stdout was lost; `signer public-key` prints it |
+
+A new key is a new Worker to the Cloud, which never takes a key twice (C5.5): after `--replace`,
+`manage.py revoke-worker` the old one, a new install token, `rpworker cloud register` again.
 
 ### `signer public-key [--vault <file>]`
 
@@ -1886,7 +1919,8 @@ The service is always the same one; nothing about it is an option:
 below): it reads the jobs, runs them one at a time through `rpworker test`'s pipeline, queues
 and uploads the run folders and sends heartbeats. The commands here give the account nothing:
 read access to the vault, the folders' ACLs and Veeam's certificate key are the installer's
-(W7.1), and until it exists they are set by hand.
+(W7.1, `tools/worker-install/Install-RestoreProofWorker.ps1`; `docs/testing.md` "The Worker
+installer"), and the lab's harnesses set them by hand.
 
 ### `service install [--config <path>]`
 
@@ -2050,11 +2084,12 @@ one outbox and one run mutex:
 
 The vault is the default one (`%ProgramData%\RestoreProof\vault.bin`) and, for a job that asks
 for canaries (its `canary_cursor`), the manifest is `canaries\<tenant>.json` beside the config
-file, as for the commands. Until the installer exists
-(W7.1) the account `NT SERVICE\RestoreProof` is given by hand what the loop needs: `rpworker
-vault grant "NT SERVICE\RestoreProof"`, the Read entry on Veeam's certificate key (W4.12),
-Read on the config, the manifest, the jobs file and the CA files, and Modify on `runs\`,
-`outbox\`, `sent\` and `state\`.
+file, as for the commands. The installer (W7.1) gives the account `NT SERVICE\RestoreProof` what
+the loop needs, by its SID: `rpworker vault grant <SID>`, the Read entry on each organisation
+certificate's key file (W4.12), Read on everything beside the config through the data folder's
+ACL (SYSTEM and Administrators full, the account read and execute, nothing for `Users`), and
+Modify on `state\`, `runs\`, `outbox\`, `sent\`, `failed\` and `logs\`; the lab's harnesses
+make the same grants by hand.
 
 **The service touches one folder under `runs\`: the one its record names.** It lists nothing
 there and adopts nothing it finds. A folder a run made by hand with `--evidence` in that root
@@ -2479,9 +2514,9 @@ SECURITY: service: run <run_id>: result.json, signature.json or timestamp.tst is
 ```
 
 The first is written once and again every hour while a close meets it, and the close goes on; the second comes with `couldn't
-be closed (untrusted)`, once and hourly. Until W7.1 sets the folders' ACLs a local user can
-put a file under `runs\`; the rule keeps such a file from being signed or uploaded as the
-Worker's, not from being in the way.
+be closed (untrusted)`, once and hourly. Where the installer's ACLs (W7.1) are not in force a
+local user can put a file under `runs\`; the rule keeps such a file from being signed or
+uploaded as the Worker's, not from being in the way.
 
 ### The hold
 

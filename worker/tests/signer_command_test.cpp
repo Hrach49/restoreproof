@@ -25,8 +25,10 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -144,7 +146,14 @@ TEST_CASE("signer: a command line it doesn't understand is usage, 64, and nothin
         Args{},
         Args{""},
         Args{"sign"},
-        Args{"new-key"},
+        Args{"New-Key"},
+        Args{"new-key", "extra"},
+        Args{"new-key", "--vault"},
+        Args{"new-key", "--vault", ""},
+        Args{"new-key", "--replace", "--replace"},
+        Args{"new-key", "--Replace"},
+        Args{"new-key", "--force"},
+        Args{"new-key", "--public-key", "key.pem"},
         Args{"Public-Key"},
         Args{"public-key", "extra"},
         Args{"public-key", "--public-key", "key.pem"},
@@ -345,6 +354,301 @@ TEST_CASE("signer public-key: an answer that didn't reach stdout isn't one", "[s
     CHECK(rp::run_signer_command(args, out, err, env) == 1);
     // No `key <key_id>` line for a key that wasn't printed.
     CHECK(err.str() == "signer error: the answer couldn't be written\n");
+}
+
+// --- signer new-key (W7.1) -----------------------------------------------------------
+
+namespace {
+
+// `rpworker signer new-key <args>`: the vault holding `key` (none: no key),
+// the seed `seed_hex` (RFC 8032 test 1's by default), what was stored.
+struct NewKeyRan : Ran {
+    int seed_asked = 0;
+    std::optional<rp::Secrets> stored;
+    std::filesystem::path stored_at;
+};
+
+struct NewKeyLab {
+    std::optional<std::string> key;
+    std::string seed_hex{rp::test::kSigningSeed1Hex};
+    bool seed_fails = false;
+    std::optional<std::string> store_fails; // the VaultError's message
+    bool out_fails = false;
+
+    NewKeyRan run(const Args& args) const
+    {
+        NewKeyRan ran;
+        rp::SignerCommandEnv env;
+        env.default_vault_path = [&ran] {
+            ++ran.default_vault_asked;
+            return std::filesystem::path{"C:\\default\\vault.bin"};
+        };
+        env.load_secrets = [&ran, this](const std::filesystem::path& vault) {
+            ++ran.secrets_asked;
+            ran.vault_read = vault;
+            rp::Secrets secrets;
+            secrets.veeam_password = "a Veeam password";
+            secrets.cloud_api_token = "a token";
+            secrets.signing_key_base64 = key;
+            return secrets;
+        };
+        env.random_seed = [&ran, this](std::span<unsigned char, rp::kEd25519SeedBytes> seed) {
+            ++ran.seed_asked;
+            if (seed_fails) {
+                return false;
+            }
+            const std::vector<unsigned char> bytes = rp::test::bytes_from_hex(seed_hex);
+            std::copy(bytes.begin(), bytes.end(), seed.begin());
+            return true;
+        };
+        env.store_secrets = [&ran, this](const std::filesystem::path& vault,
+                                         const rp::Secrets& secrets) {
+            if (store_fails) {
+                throw rp::VaultError(*store_fails);
+            }
+            ran.stored = secrets;
+            ran.stored_at = vault;
+        };
+        std::ostringstream out;
+        if (out_fails) {
+            out.setstate(std::ios::failbit);
+        }
+        std::ostringstream err;
+        ran.code = rp::run_signer_command(args, out, err, env);
+        ran.out = out.str();
+        ran.err = err.str();
+        return ran;
+    }
+};
+
+const std::string kAlreadyHasKey =
+    "signer error: the vault already holds signing_key_base64; this Worker has its key "
+    "(rpworker signer public-key prints it); --replace makes a new one, after which the Cloud "
+    "must be told (manage.py revoke-worker, a new install token)\n";
+
+// No shape of the seed in `text`: the vault's text, the seed's Base64 and hex.
+void expect_no_private_key(const std::string& text, std::string_view seed_hex)
+{
+    const std::string vault_text = rp::test::pkcs8_base64(seed_hex);
+    const rp::SigningKey key = rp::test::signing_key(vault_text);
+    CHECK_THAT(text, !ContainsSubstring(vault_text));
+    for (const std::string& shape : key.secret_shapes()) {
+        CHECK_THAT(text, !ContainsSubstring(shape));
+    }
+    CHECK_THAT(text, !ContainsSubstring("PRIVATE"));
+}
+
+} // namespace
+
+TEST_CASE("signer new-key: a vault that can't be used is a config error, 1, and no key is made",
+          "[signer_command]")
+{
+    NewKeyRan ran;
+    rp::SignerCommandEnv env;
+    env.default_vault_path = [] { return std::filesystem::path{"C:\\default\\vault.bin"}; };
+    env.load_secrets = [](const std::filesystem::path&) -> rp::Secrets {
+        throw rp::VaultError("C:\\default\\vault.bin: vault file not found");
+    };
+    env.random_seed = [&ran](std::span<unsigned char, rp::kEd25519SeedBytes>) {
+        ++ran.seed_asked;
+        return true;
+    };
+    env.store_secrets = [&ran](const std::filesystem::path&, const rp::Secrets& secrets) {
+        ran.stored = secrets;
+    };
+    std::ostringstream out;
+    std::ostringstream err;
+    const Args args{"new-key"};
+    CHECK(rp::run_signer_command(args, out, err, env) == 1);
+    CHECK(out.str().empty());
+    CHECK(err.str() == "config error: C:\\default\\vault.bin: vault file not found\n");
+    CHECK(ran.seed_asked == 0);
+    CHECK_FALSE(ran.stored);
+}
+
+TEST_CASE("signer new-key: a --vault path that isn't UTF-8 is a config error, 1",
+          "[signer_command]")
+{
+    const NewKeyLab lab;
+    const NewKeyRan ran = lab.run({"new-key", "--vault", "C:\\\xff\\vault.bin"});
+    CHECK(ran.code == 1);
+    CHECK(ran.err == "config error: the --vault path is not valid UTF-8\n");
+    CHECK(ran.secrets_asked == 0);
+    CHECK(ran.seed_asked == 0);
+    CHECK_FALSE(ran.stored);
+}
+
+TEST_CASE("signer new-key refuses a vault that already holds a key, unless --replace",
+          "[signer_command]")
+{
+    NewKeyLab lab;
+    lab.key = std::string{rp::test::kSigningKey1Base64};
+    lab.seed_hex = rp::test::kSigningSeed2Hex;
+    SECTION("without --replace: the line, exit 1, no seed asked, nothing stored")
+    {
+        const NewKeyRan ran = lab.run({"new-key"});
+        CHECK(ran.code == 1);
+        CHECK(ran.out.empty());
+        CHECK(ran.err == kAlreadyHasKey);
+        CHECK(ran.secrets_asked == 1);
+        CHECK(ran.seed_asked == 0);
+        CHECK_FALSE(ran.stored);
+    }
+    SECTION("with --replace: the new key replaces the old one")
+    {
+        const NewKeyRan ran = lab.run({"new-key", "--replace"});
+        CHECK(ran.code == 0);
+        CHECK(ran.out == kKey2Pem);
+        CHECK(ran.err == "set signing_key_base64 in C:\\default\\vault.bin\nkey " + kKey2Id + "\n");
+        REQUIRE(ran.stored);
+        CHECK(ran.stored->signing_key_base64 == rp::test::signing_key2_base64());
+    }
+    SECTION("--replace before --vault, and after it")
+    {
+        CHECK(lab.run({"new-key", "--replace", "--vault", "C:\\other\\v.bin"}).code == 0);
+        CHECK(lab.run({"new-key", "--vault", "C:\\other\\v.bin", "--replace"}).code == 0);
+    }
+    SECTION("an empty value is no key")
+    {
+        lab.key = "";
+        const NewKeyRan ran = lab.run({"new-key"});
+        CHECK(ran.code == 0);
+        CHECK(ran.seed_asked == 1);
+        REQUIRE(ran.stored);
+    }
+}
+
+TEST_CASE("signer new-key stores the seed's key in the vault's form beside the other secrets and "
+          "prints the public half as public-key does, never the private one",
+          "[signer_command]")
+{
+    const NewKeyLab lab;
+    SECTION("the default vault")
+    {
+        const NewKeyRan ran = lab.run({"new-key"});
+        CHECK(ran.code == 0);
+        CHECK(ran.out == kKey1Pem);
+        CHECK(ran.err == "set signing_key_base64 in C:\\default\\vault.bin\nkey " + kKey1Id + "\n");
+        CHECK(ran.default_vault_asked == 1);
+        CHECK(ran.secrets_asked == 1);
+        CHECK(ran.seed_asked == 1);
+        REQUIRE(ran.stored);
+        CHECK(ran.stored_at == std::filesystem::path{"C:\\default\\vault.bin"});
+        // The text every reader parses (W4.3 point 3), and nothing else changed.
+        CHECK(ran.stored->signing_key_base64 == std::string{rp::test::kSigningKey1Base64});
+        CHECK(ran.stored->veeam_password == "a Veeam password");
+        CHECK(ran.stored->cloud_api_token == "a token");
+        CHECK_FALSE(ran.stored->veeam_username);
+        expect_no_private_key(ran.out, rp::test::kSigningSeed1Hex);
+        expect_no_private_key(ran.err, rp::test::kSigningSeed1Hex);
+        // What it prints is what public-key prints for the stored text.
+        const Ran printed = run({"public-key"}, *ran.stored->signing_key_base64);
+        CHECK(printed.out == ran.out);
+    }
+    SECTION("--vault")
+    {
+        const NewKeyRan ran = lab.run({"new-key", "--vault", "D:\\v\\vault.bin"});
+        CHECK(ran.code == 0);
+        CHECK(ran.default_vault_asked == 0);
+        CHECK(ran.vault_read == std::filesystem::path{"D:\\v\\vault.bin"});
+        CHECK(ran.stored_at == std::filesystem::path{"D:\\v\\vault.bin"});
+        CHECK(ran.err == "set signing_key_base64 in D:\\v\\vault.bin\nkey " + kKey1Id + "\n");
+    }
+}
+
+TEST_CASE("signer new-key: no random bytes is a signer error, 1, and nothing is stored",
+          "[signer_command]")
+{
+    NewKeyLab lab;
+    lab.seed_fails = true;
+    const NewKeyRan ran = lab.run({"new-key"});
+    CHECK(ran.code == 1);
+    CHECK(ran.out.empty());
+    CHECK(ran.err == "signer error: no random bytes could be made\n");
+    CHECK(ran.seed_asked == 1);
+    CHECK_FALSE(ran.stored);
+}
+
+TEST_CASE("signer new-key: a vault that couldn't be written is a vault error, 1, and no key is "
+          "printed",
+          "[signer_command]")
+{
+    NewKeyLab lab;
+    lab.store_fails = "C:\\default\\vault.bin: the vault file couldn't be written";
+    const NewKeyRan ran = lab.run({"new-key"});
+    CHECK(ran.code == 1);
+    CHECK(ran.out.empty());
+    CHECK(ran.err == "vault error: C:\\default\\vault.bin: the vault file couldn't be written\n");
+    expect_no_private_key(ran.err, rp::test::kSigningSeed1Hex);
+}
+
+TEST_CASE("signer new-key: an answer that didn't reach stdout isn't one, though the key is stored",
+          "[signer_command]")
+{
+    NewKeyLab lab;
+    lab.out_fails = true;
+    const NewKeyRan ran = lab.run({"new-key"});
+    CHECK(ran.code == 1);
+    // The key is in the vault (said first); no `key` line for a key that wasn't printed.
+    CHECK(ran.err == "set signing_key_base64 in C:\\default\\vault.bin\n"
+                     "signer error: the answer couldn't be written\n");
+    REQUIRE(ran.stored);
+}
+
+TEST_CASE("the real signer environment makes random seeds and writes the vault (W7.1)",
+          "[signer_command]")
+{
+    const rp::SignerCommandEnv env = rp::default_signer_command_env();
+    REQUIRE(env.random_seed);
+    REQUIRE(env.store_secrets);
+    std::array<unsigned char, rp::kEd25519SeedBytes> first{};
+    std::array<unsigned char, rp::kEd25519SeedBytes> second{};
+    REQUIRE(env.random_seed(first));
+    REQUIRE(env.random_seed(second));
+    CHECK(first != second);
+    CHECK(first != std::array<unsigned char, rp::kEd25519SeedBytes>{});
+
+    // Through run_cli on a vault of the test's own: the key made is the key
+    // read back, public-key prints the same half, a second run is refused, and
+    // --replace makes another.
+    const TempDir dir;
+    const std::filesystem::path vault = dir.path() / "vault.bin";
+    rp::Secrets secrets;
+    secrets.veeam_username = "DESKTOP\\rp-veeam";
+    rp::write_vault(vault, secrets);
+    const std::string vault_arg = utf8(vault);
+    const auto cli = [&](const Args& args) {
+        std::ostringstream out;
+        std::ostringstream err;
+        Ran ran;
+        ran.code = rp::run_cli(args, out, err);
+        ran.out = out.str();
+        ran.err = err.str();
+        return ran;
+    };
+    const Ran made = cli({"signer", "new-key", "--vault", vault_arg});
+    REQUIRE(made.code == 0);
+    CHECK_THAT(made.out, Catch::Matchers::StartsWith("-----BEGIN PUBLIC KEY-----\n"));
+    CHECK_THAT(made.err, Catch::Matchers::StartsWith("set signing_key_base64 in " + vault_arg + "\nkey "));
+    const rp::Secrets stored = rp::read_vault(vault);
+    REQUIRE(stored.signing_key_base64);
+    CHECK(stored.veeam_username == "DESKTOP\\rp-veeam");
+    const std::optional<rp::SigningKey> key = rp::SigningKey::from_base64(*stored.signing_key_base64);
+    REQUIRE(key);
+    CHECK(made.out == key->public_key_pem());
+    CHECK(made.err == "set signing_key_base64 in " + vault_arg + "\nkey " + key->key_id() + "\n");
+    CHECK_THAT(made.out, !ContainsSubstring(*stored.signing_key_base64));
+    CHECK(cli({"signer", "public-key", "--vault", vault_arg}).out == made.out);
+
+    const Ran again = cli({"signer", "new-key", "--vault", vault_arg});
+    CHECK(again.code == 1);
+    CHECK(again.err == kAlreadyHasKey);
+    CHECK(rp::read_vault(vault).signing_key_base64 == stored.signing_key_base64);
+
+    const Ran replaced = cli({"signer", "new-key", "--vault", vault_arg, "--replace"});
+    CHECK(replaced.code == 0);
+    CHECK(replaced.out != made.out);
+    CHECK(rp::read_vault(vault).signing_key_base64 != stored.signing_key_base64);
 }
 
 TEST_CASE("the real signer environment reads the secrets from the vault", "[signer_command]")

@@ -21,7 +21,9 @@ script: `docs/decisions.md`, 2026-10-16, "W7.0 (#189)".
   ```
 
   It makes the certificate in memory and puts it straight into the Worker's vault; it is never
-  shown or written to a file. A Worker uses the same certificate for all its clients. To give a
+  shown or written to a file. The Worker installer (W7.1) runs it when the vault has none, so on a
+  Worker the installer set up it has been run already. A Worker uses the same certificate for all
+  its clients. To give a
   client's tenant its public half (safe to send by email):
 
   ```

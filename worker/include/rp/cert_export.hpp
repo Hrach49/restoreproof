@@ -12,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include <stdexcept>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -20,6 +21,9 @@ namespace rp {
 // Overwrites every byte `s` holds, its spare capacity included, in a way the
 // compiler can't drop, then empties it.
 void secure_wipe(std::string& s) noexcept;
+
+// The same over raw bytes (W7.1: a signing seed before it is dropped).
+void secure_wipe(std::span<unsigned char> bytes) noexcept;
 
 // A PFX exported in memory with a one-time password. Move-only; both strings
 // are wiped (secure_wipe) in the destructor and by wipe(), and a moved-from

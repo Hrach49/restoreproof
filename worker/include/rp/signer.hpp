@@ -39,6 +39,12 @@ inline constexpr std::uintmax_t kMaxSignatureFileBytes = 4096;
 
 // The Worker's private signing key, parsed. Made only by from_base64. Movable,
 // not copyable; a moved-from one must not be used.
+// W7.1: the vault's text for a key with `seed`, the form from_base64 reads:
+// one line of standard Base64 of the 48-byte PKCS#8 DER (the 16-byte header,
+// then the seed). What `rpworker signer new-key` stores. Never throws but for
+// no memory.
+std::string signing_key_text(std::span<const unsigned char, kEd25519SeedBytes> seed);
+
 class SigningKey {
 public:
     // Opaque: holds the primitive's key. Defined in rpcore only.

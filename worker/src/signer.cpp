@@ -465,6 +465,16 @@ std::optional<std::vector<unsigned char>> public_der_of(std::string_view pem,
 
 } // namespace
 
+std::string signing_key_text(std::span<const unsigned char, kEd25519SeedBytes> seed)
+{
+    std::array<unsigned char, kPkcs8Bytes> der{};
+    std::copy(kPkcs8Prefix.begin(), kPkcs8Prefix.end(), der.begin());
+    std::copy(seed.begin(), seed.end(), der.begin() + kPkcs8Prefix.size());
+    std::string text = base64_encode(der);
+    secure_wipe(der);
+    return text;
+}
+
 std::optional<SigningKey> SigningKey::from_base64(std::string_view text,
                                                   const Ed25519& primitive) noexcept
 {

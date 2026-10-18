@@ -238,9 +238,9 @@ grant your own account once, from an elevated shell:
 ### The signing key (W4.3)
 
 `rpworker test --evidence <dir>` signs the result with an Ed25519 key (`signature.json` beside
-`result.json`; `docs/decisions.md` 2026-10-05 W4.3). The installer that makes the key (W7.1)
-doesn't exist yet, so the lab's key is made here, once, from `lab/`, and `fill-worker-vault.ps1`
-puts it into the vault as `signing_key_base64` (W4.5):
+`result.json`; `docs/decisions.md` 2026-10-05 W4.3). A deployment's key is made by the installer
+with `rpworker signer new-key` (W7.1); the lab's key was made here, once, from `lab/`, and
+`fill-worker-vault.ps1` puts it into the vault as `signing_key_base64` (W4.5):
 
 ```bash
 uv run python -m seeder new-signing-key

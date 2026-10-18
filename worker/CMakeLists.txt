@@ -215,6 +215,7 @@ add_executable(rptests
     tests/connector_test.cpp
     tests/deps_test.cpp
     tests/doctor_command_test.cpp
+    tests/doctor_live_test.cpp
     tests/doctor_test.cpp
     tests/ed25519_test.cpp
     tests/evidence_builder_test.cpp

@@ -17,6 +17,7 @@ ACL_SETUP = """
 function New-Acl([bool]$Protected, [object[]]$Rules) {
     $acl = [Security.AccessControl.DirectorySecurity]::new()
     $acl.SetAccessRuleProtection($Protected, $false)
+    $acl.SetOwner([Security.Principal.SecurityIdentifier]'S-1-5-32-544')
     foreach ($r in $Rules) {
         $flags = if ($r.Count -gt 3 -and $r[3]) { $r[3] } else { 'ContainerInherit, ObjectInherit' }
         $type = if ($r.Count -gt 2 -and $r[2]) { $r[2] } else { 'Allow' }
@@ -210,8 +211,9 @@ def test_a_config_document_that_breaks_the_workers_rules_is_refused(arguments):
         (["veeam_username", "veeam_password", "cloud_install_token"], [], True, True, False),
         (["veeam_username", "veeam_password", "cloud_api_token"], [], True, True, True),
         (["veeam_username", "veeam_password", "signing_key_base64", "graph_cert_pfx_base64", "graph_cert_password", "cloud_api_token"], [], False, False, True),
-        # half a certificate is a certificate the script refuses to make over (its own rule)
-        (["graph_cert_pfx_base64"], ["veeam_username", "veeam_password", "cloud_install_token"], True, False, False),
+        # half a certificate is made again (over it: the script's -Replace)
+        (["graph_cert_pfx_base64"], ["veeam_username", "veeam_password", "cloud_install_token"], True, True, False),
+        (["graph_cert_password"], ["veeam_username", "veeam_password", "cloud_install_token"], True, True, False),
         # names in another case are not the names
         (["Veeam_Username", "VEEAM_PASSWORD"], ["veeam_username", "veeam_password", "cloud_install_token"], True, True, False),
     ],
@@ -224,6 +226,14 @@ def test_the_vault_plan(held, ask, needs_key, needs_cert, registered):
     assert plan["NeedsCertificate"] is needs_cert
     assert plan["Registered"] is registered
     assert plan["HasInstallToken"] is ("cloud_install_token" in held)
+    assert plan["CertificateHalf"] is (("graph_cert_pfx_base64" in held) != ("graph_cert_password" in held))
+
+
+def test_replace_asks_the_veeam_account_and_password_again_and_nothing_else():
+    held = "@('veeam_username', 'veeam_password', 'signing_key_base64', 'graph_cert_pfx_base64', 'graph_cert_password', 'cloud_api_token')"
+    plan = run_json(with_module(f"Get-VaultPlan -Held {held} -Replace $true"))
+    assert plan["Ask"] == ["veeam_username", "veeam_password"]
+    assert plan["NeedsSigningKey"] is False and plan["NeedsCertificate"] is False and plan["Registered"] is True
 
 
 # --- Veeam's certificate (point 5) --------------------------------------------------------
@@ -347,3 +357,117 @@ def test_the_registration_line():
     ))
     assert rows[0] == {"WorkerId": "65fd2c3e-9b1a-4e87-a0c3-1f2e3d4c5b6a", "KeyId": "a" * 64}
     assert rows[1] is None and rows[2] is None
+
+
+# --- the owner (the W7.1 review's finding 2) ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "owner, owner_wrong",
+    [
+        ("S-1-5-18", False),
+        ("S-1-5-32-544", False),
+        ("S-1-5-21-1-2-3-1001", False),  # the account running the installer, passed in
+        ("S-1-5-32-545", True),  # Users
+        ("S-1-5-21-1-2-3-1002", True),  # another local user
+    ],
+)
+def test_an_owner_nobody_trusts_is_a_difference_and_is_given_to_administrators(owner, owner_wrong):
+    result = run_json(with_module(
+        ACL_SETUP +
+        f"$acl = New-Acl $true $full; $acl.SetOwner([Security.Principal.SecurityIdentifier]'{owner}')\n"
+        "$trusted = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-21-1-2-3-1001')\n"
+        "$d = Get-AclDifference -Acl $acl -Wanted $root -TrustedOwners $trusted\n"
+        "$updated = Update-AclObject -Acl $acl -Wanted $root -Difference $d\n"
+        "$after = Get-AclDifference -Acl $updated -Wanted $root -TrustedOwners $trusted\n"
+        "[pscustomobject]@{ wrong = $d.OwnerWrong; owner = $d.Owner; daclOk = $d.DaclOk; ok = $d.Ok;\n"
+        "  icacls = @(Get-IcaclsArguments -Path 'C:\\x' -Wanted $root -Difference $d);\n"
+        "  newOwner = $updated.GetOwner([Security.Principal.SecurityIdentifier]).Value; afterOk = $after.Ok }"
+    ))
+    assert result["wrong"] is owner_wrong and result["owner"] == owner
+    assert result["daclOk"] is True and result["ok"] is (not owner_wrong)
+    assert result["icacls"] == [], "the DACL line is empty: the owner is its own line"
+    assert result["newOwner"] == ("S-1-5-32-544" if owner_wrong else owner)
+    assert result["afterOk"] is True
+
+
+def test_the_default_trusted_owners_are_system_and_administrators():
+    result = run_json(with_module(
+        ACL_SETUP + "$acl = New-Acl $true $full; $acl.SetOwner([Security.Principal.SecurityIdentifier]'S-1-5-21-1-2-3-1001')\n"
+        "(Get-AclDifference -Acl $acl -Wanted $root).OwnerWrong"
+    ))
+    assert result is True
+
+
+@pytest.mark.parametrize(
+    "owner, explicit, reason",
+    [
+        ("S-1-5-32-544", [], None),
+        ("S-1-5-21-1-2-3-1001", ["S-1-5-18"], None),
+        ("S-1-5-32-545", [], "is owned by S-1-5-32-545, not by SYSTEM, Administrators or this account"),
+        ("", [], "is owned by nobody, not by SYSTEM, Administrators or this account"),
+        ("S-1-5-32-544", ["S-1-5-32-545", "S-1-5-11", "S-1-5-32-545"], "has rules of its own for S-1-5-11, S-1-5-32-545"),
+    ],
+)
+def test_a_kept_file_is_trusted_by_its_owner_and_its_own_rules(owner, explicit, reason):
+    sids = "@(" + ", ".join(ps_string(s) for s in explicit) + ")"
+    result = run_json(with_module(
+        f"$r = Test-TrustedFile -Owner {ps_string(owner)} -ExplicitSids {sids} -TrustedOwners @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-21-1-2-3-1001')\n"
+        "[pscustomobject]@{ reason = $r }"
+    ))
+    assert result["reason"] == reason
+
+
+# --- the config check and the config plan (the review's findings 1 and 7) ----------------
+
+
+@pytest.mark.parametrize(
+    "code, out, err, ok",
+    [
+        (0, "config file: C:\\x\\config.json\n", "", True),
+        # every first install: the settings, then the vault that isn't there yet
+        (1, "config file: C:\\x\\config.json\ncloud_url: https://c\n", "config error: C:\\ProgramData\\RestoreProof\\vault.bin: vault file not found\n", True),
+        # the config itself refused: nothing printed
+        (1, "", "config error: C:\\x\\config.json: cannot read config file\n", False),
+        (1, "", "config error: C:\\ProgramData\\RestoreProof\\vault.bin: vault file not found\n", False),
+        # a vault that is there and can't be read is no pass
+        (1, "config file: C:\\x\\config.json\n", "config error: C:\\v.bin: the vault couldn't be decrypted\n", False),
+        (1, "config file: C:\\x\\config.json\n", "config error: a: vault file not found\nconfig error: b\n", False),
+        (64, "config file: x\n", "config error: v: vault file not found\n", False),
+    ],
+)
+def test_the_config_check_passes_before_the_vault_is_made(code, out, err, ok):
+    result = run_json(with_module(f"[pscustomobject]@{{ ok = Test-ConfigCheck -Code {code} -Out {ps_string(out)} -Err {ps_string(err)} }}"))
+    assert result["ok"] is ok
+
+
+@pytest.mark.parametrize(
+    "arguments, action, why",
+    [
+        ("-Exists $false", "write", ""),
+        ("-Exists $true -CheckOk $false -Replace $true -Untrusted 'is owned by S-1-5-32-545'", "write", ""),
+        ("-Exists $true -CheckOk $true -Replace $true -KeptCloudUrl 'https://a' -CloudUrl 'https://b'", "write", ""),
+        ("-Exists $true -CheckOk $true", "keep", ""),
+        ("-Exists $true -CheckOk $true -KeptCloudUrl 'https://a' -CloudUrl 'https://a' -KeptVeeamUrl 'https://v' -VeeamUrl 'https://v'", "keep", ""),
+        ("-Exists $true -CheckOk $true -Untrusted 'is owned by S-1-5-32-545, not by SYSTEM, Administrators or this account'", "stop",
+         "is there and is owned by S-1-5-32-545, not by SYSTEM, Administrators or this account: someone else may have written it; read it, then give -Replace to write a new one."),
+        ("-Exists $true -CheckOk $false -CheckLine 'config error: cloud_url: must be an https:// URL'", "stop",
+         "is there and fails rpworker config check (config error: cloud_url: must be an https:// URL); fix it, or give -Replace to write a new one."),
+        ("-Exists $true -CheckOk $true -KeptCloudUrl 'https://a' -CloudUrl 'https://b'", "stop", "has cloud_url https://a, not https://b: give -Replace to write the new one."),
+        ("-Exists $true -CheckOk $true -KeptVeeamUrl 'https://v:4443' -VeeamUrl 'https://V:4443'", "stop", "has veeam_url https://v:4443, not https://V:4443: give -Replace to write the new one."),
+    ],
+)
+def test_the_config_plan(arguments, action, why):
+    result = run_json(with_module(f"Get-ConfigPlan {arguments}"))
+    assert result == {"Action": action, "Why": why}
+
+
+def test_the_key_already_registered_is_the_409s_line_alone():
+    result = run_json(with_module(
+        "[pscustomobject]@{\n"
+        "  yes = Test-KeyAlreadyRegistered -Code 4 -Err \"cloud register: this Worker's key is already registered`n\"\n"
+        "  code = Test-KeyAlreadyRegistered -Code 1 -Err \"cloud register: this Worker's key is already registered`n\"\n"
+        "  other = Test-KeyAlreadyRegistered -Code 4 -Err \"cloud register: refused (http_403)`n\"\n"
+        "}"
+    ))
+    assert result == {"yes": True, "code": False, "other": False}

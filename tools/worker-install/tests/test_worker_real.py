@@ -40,3 +40,20 @@ def test_new_key_makes_the_key_into_the_vault_and_grant_takes_a_sid_of_no_servic
     assert granted.stdout == f"granted read on {vault} to {sid}\n"
     acl = subprocess.run(["icacls", str(vault)], capture_output=True, text=True, check=True).stdout
     assert f"*{sid}:(R)" in acl or sid in acl
+
+
+def test_the_real_config_check_before_the_vault_is_made_passes_the_installers_rule(tmp_path):
+    # The W7.1 review's finding 1: step 4 checks the config before step 5 makes the vault.
+    config = tmp_path / "config.json"
+    config.write_text('{"cloud_url": "https://cloud.example.invalid", "veeam_url": "https://localhost:4443"}', encoding="utf-8")
+    checked = rpworker("config", "check", "--config", str(config), "--vault", str(tmp_path / "no-vault.bin"))
+    assert checked.returncode == 1 and checked.stderr.endswith(": vault file not found\n"), checked.stderr
+    result = run_json(with_module(
+        f"[pscustomobject]@{{ ok = Test-ConfigCheck -Code {checked.returncode} -Out {ps_string(checked.stdout)} -Err {ps_string(checked.stderr)} }}"))
+    assert result["ok"] is True
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"cloud_url": "http://nope", "veeam_url": "https://localhost:4443"}', encoding="utf-8")
+    refused = rpworker("config", "check", "--config", str(bad), "--vault", str(tmp_path / "no-vault.bin"))
+    result = run_json(with_module(
+        f"[pscustomobject]@{{ ok = Test-ConfigCheck -Code {refused.returncode} -Out {ps_string(refused.stdout)} -Err {ps_string(refused.stderr)} }}"))
+    assert refused.returncode == 1 and result["ok"] is False

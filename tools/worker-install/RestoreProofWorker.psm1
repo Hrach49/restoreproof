@@ -80,11 +80,15 @@ function Get-ServiceFolderNames { $script:ServiceFolders }
     Get-WantedAcls: Missing (rules to grant: absent, or there with other rights, inheritance
     flags or type), Extra (explicit rules to take away, each a SID and Allow or Deny: every
     Deny, and on a protected folder every Allow for a SID nobody wanted; a folder that inherits
-    is judged on its own rules only), and ProtectionWrong. Ok is true when all three are empty.
+    is judged on its own rules only), ProtectionWrong, and OwnerWrong: the owner is none of
+    `TrustedOwners` (SYSTEM, Administrators and the account running the installer, which the
+    script passes). An owner may always rewrite the DACL (READ_CONTROL and WRITE_DAC come with
+    ownership), so a folder a local user made before the install stays theirs until its owner
+    is changed. DaclOk is true when the first three are empty, Ok when all four are.
 #>
 function Get-AclDifference {
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$Acl, [Parameter(Mandatory)]$Wanted)
+    param([Parameter(Mandatory)]$Acl, [Parameter(Mandatory)]$Wanted, [string[]]$TrustedOwners = @($script:SidSystem, $script:SidAdministrators))
     $rules = @($Acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]))
     $missing = [System.Collections.Generic.List[object]]::new()
     $extra = [System.Collections.Generic.List[string]]::new()
@@ -107,11 +111,17 @@ function Get-AclDifference {
         if ($unwanted -and -not $extra.Contains("$type $sid")) { $extra.Add("$type $sid") }
     }
     $protectionWrong = [bool]$Acl.AreAccessRulesProtected -ne [bool]$Wanted.Protected
+    $owner = $Acl.GetOwner([Security.Principal.SecurityIdentifier])
+    $ownerWrong = ($null -eq $owner) -or ($TrustedOwners -notcontains $owner.Value)
+    $daclOk = ($missing.Count -eq 0 -and $extra.Count -eq 0 -and -not $protectionWrong)
     [pscustomobject]@{
         Missing         = @($missing)
         Extra           = @($extra | ForEach-Object { $type, $sid = $_ -split ' ', 2; [pscustomobject]@{ Sid = $sid; Type = $type } })
         ProtectionWrong = $protectionWrong
-        Ok              = ($missing.Count -eq 0 -and $extra.Count -eq 0 -and -not $protectionWrong)
+        Owner           = $(if ($owner) { $owner.Value } else { '' })
+        OwnerWrong      = $ownerWrong
+        DaclOk          = $daclOk
+        Ok              = ($daclOk -and -not $ownerWrong)
     }
 }
 
@@ -120,12 +130,13 @@ function Get-AclDifference {
     The one icacls command line that makes a folder's DACL what Get-WantedAcls says, from the
     difference: /inheritance:r or :e when the protection is wrong, /grant:r (replace that SID's
     rights) for each missing rule, /remove:g or /remove:d for each extra rule. Every SID as
-    icacls takes it, with the asterisk. Empty when nothing differs.
+    icacls takes it, with the asterisk. Empty when the DACL is right (an owner to change is its
+    own line, `icacls <path> /setowner *S-1-5-32-544`, which icacls takes alone).
 #>
 function Get-IcaclsArguments {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)]$Wanted, [Parameter(Mandatory)]$Difference)
-    if ($Difference.Ok) { return @() }
+    if ($Difference.DaclOk) { return @() }
     $arguments = [System.Collections.Generic.List[string]]::new()
     $arguments.Add($Path)
     if ($Difference.ProtectionWrong) { $arguments.Add($(if ($Wanted.Protected) { '/inheritance:r' } else { '/inheritance:e' })) }
@@ -147,13 +158,15 @@ function Get-IcaclsArguments {
     The DACL object changed to what Get-WantedAcls says, from the difference, and given back
     to the script, which sets it on the folder: the protection set (inherited rules dropped, not copied), each missing rule
     added after that SID's Allow rules are taken away (icacls' /grant:r), each extra rule taken
-    away. By SID throughout: .NET needs no account name, where icacls refuses a service SID the
-    machine can't map yet (error 1332 before `service install`). Get-IcaclsArguments is the
-    same change as the icacls line, for the record.
+    away, and an owner nobody trusts replaced by Administrators. By SID throughout: .NET needs
+    no account name, where icacls refuses a service SID the machine can't map yet (error 1332
+    before `service install`). Get-IcaclsArguments is the same change as the icacls line, for
+    the record.
 #>
 function Update-AclObject {
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Acl, [Parameter(Mandatory)]$Wanted, [Parameter(Mandatory)]$Difference)
+    if ($Difference.OwnerWrong) { $Acl.SetOwner([Security.Principal.SecurityIdentifier]$script:SidAdministrators) }
     if ($Difference.ProtectionWrong) { $Acl.SetAccessRuleProtection([bool]$Wanted.Protected, $false) }
     $inherit = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
     foreach ($extra in $Difference.Extra) {
@@ -182,6 +195,69 @@ function Add-FileReadRule {
 }
 
 # --- the config (decision point 3) -----------------------------------------------------
+
+<#
+.SYNOPSIS
+    Whether a file the installer would keep (config.json) may be trusted: its owner one of
+    `TrustedOwners` and no explicit rule for anyone else (a file the installer wrote has its
+    folder's inherited rules alone). $null when it may, else the reason in a few words. A
+    config.json a local user put there before the install names the URLs the service sends the
+    Veeam password and the Cloud token to.
+#>
+function Test-TrustedFile {
+    [CmdletBinding()]
+    param([AllowEmptyString()][string]$Owner, [string[]]$ExplicitSids = @(), [Parameter(Mandatory)][string[]]$TrustedOwners)
+    if ($TrustedOwners -notcontains $Owner) { return "is owned by $(if ($Owner) { $Owner } else { 'nobody' }), not by SYSTEM, Administrators or this account" }
+    $others = @($ExplicitSids | Where-Object { $TrustedOwners -notcontains $_ } | Sort-Object -Unique)
+    if ($others.Count -gt 0) { return "has rules of its own for $($others -join ', ')" }
+    $null
+}
+
+<#
+.SYNOPSIS
+    Whether `rpworker config check` passed on the config: exit 0, or exit 1 with the settings
+    printed (`config file: ...` first) and the one line naming a vault that isn't there yet,
+    which is every first install's (the vault is made after the config). Any other failure is
+    the config's.
+#>
+function Test-ConfigCheck {
+    [CmdletBinding()]
+    param([int]$Code, [AllowEmptyString()][string]$Out = '', [AllowEmptyString()][string]$Err = '')
+    if ($Code -eq 0) { return $true }
+    $errLines = @($Err -split "`r?`n" | Where-Object { $_ -ne '' })
+    $Code -eq 1 -and $Out -match '(?m)^config file: ' -and $errLines.Count -eq 1 -and $errLines[0] -match '^config error: .+: vault file not found$'
+}
+
+<#
+.SYNOPSIS
+    What step 4 does with config.json: 'keep' it, 'write' a new one from the answers, or
+    'stop' with `Why`. Absent, or -Replace: write (-Replace is the way to correct a URL found
+    wrong at step 8 or 10). There, trusted and passing the check: keep, unless a URL given on
+    the command line differs from the kept one's (stop, naming -Replace: a given URL is never
+    dropped without a word). There and untrusted (Test-TrustedFile) or failing the check: stop.
+#>
+function Get-ConfigPlan {
+    [CmdletBinding()]
+    param(
+        [bool]$Exists,
+        [bool]$CheckOk,
+        [AllowEmptyString()][string]$Untrusted = '',
+        [bool]$Replace,
+        [AllowEmptyString()][string]$KeptCloudUrl = '',
+        [AllowEmptyString()][string]$KeptVeeamUrl = '',
+        [AllowEmptyString()][string]$CloudUrl = '',
+        [AllowEmptyString()][string]$VeeamUrl = '',
+        [AllowEmptyString()][string]$CheckLine = ''
+    )
+    function New-Plan([string]$Action, [string]$Why = '') { [pscustomobject]@{ Action = $Action; Why = $Why } }
+    if (-not $Exists -or $Replace) { return New-Plan 'write' }
+    if ($Untrusted) { return New-Plan 'stop' "is there and ${Untrusted}: someone else may have written it; read it, then give -Replace to write a new one." }
+    if (-not $CheckOk) { return New-Plan 'stop' "is there and fails rpworker config check ($CheckLine); fix it, or give -Replace to write a new one." }
+    foreach ($pair in @(@('cloud_url', $KeptCloudUrl, $CloudUrl), @('veeam_url', $KeptVeeamUrl, $VeeamUrl))) {
+        if ($pair[2] -and $pair[2] -cne $pair[1]) { return New-Plan 'stop' "has $($pair[0]) $($pair[1]), not $($pair[2]): give -Replace to write the new one." }
+    }
+    New-Plan 'keep'
+}
 
 <#
 .SYNOPSIS
@@ -214,21 +290,25 @@ function New-ConfigDocument {
 <#
 .SYNOPSIS
     From the names `rpworker vault list` printed: which to ask for (veeam_username and
-    veeam_password when absent; cloud_install_token only when neither it nor cloud_api_token is
-    there), whether the signing key and the Graph certificate must be made, and whether the
-    Worker is registered already.
+    veeam_password when absent, or always with -Replace, the way to correct a password found
+    wrong at step 8; cloud_install_token only when neither it nor cloud_api_token is there),
+    whether the signing key and the Graph certificate must be made, and whether the Worker is
+    registered already. The certificate is two names: with one of them alone it is made again
+    over it (CertificateHalf: New-WorkerGraphCertificate.ps1 -Replace, as that script's own
+    failure half-way says).
 #>
 function Get-VaultPlan {
     [CmdletBinding()]
-    param([string[]]$Held = @())
+    param([string[]]$Held = @(), [bool]$Replace = $false)
     $ask = [System.Collections.Generic.List[string]]::new()
-    foreach ($name in 'veeam_username', 'veeam_password') { if ($Held -cnotcontains $name) { $ask.Add($name) } }
+    foreach ($name in 'veeam_username', 'veeam_password') { if ($Replace -or $Held -cnotcontains $name) { $ask.Add($name) } }
     $registered = $Held -ccontains 'cloud_api_token'
     if (-not $registered -and $Held -cnotcontains 'cloud_install_token') { $ask.Add('cloud_install_token') }
     [pscustomobject]@{
         Ask              = @($ask)
         NeedsSigningKey  = $Held -cnotcontains 'signing_key_base64'
-        NeedsCertificate = ($Held -cnotcontains 'graph_cert_pfx_base64') -and ($Held -cnotcontains 'graph_cert_password')
+        NeedsCertificate = ($Held -cnotcontains 'graph_cert_pfx_base64') -or ($Held -cnotcontains 'graph_cert_password')
+        CertificateHalf  = ($Held -ccontains 'graph_cert_pfx_base64') -ne ($Held -ccontains 'graph_cert_password')
         Registered       = $registered
         HasInstallToken  = $Held -ccontains 'cloud_install_token'
     }
@@ -354,6 +434,17 @@ function Test-InstalledService {
 
 <#
 .SYNOPSIS
+    Whether `rpworker cloud register` was refused because the Cloud already holds this
+    Worker's key: a registration whose 201 never reached this machine, or whose API token the
+    vault could not take. The install token stays unused (the 409's transaction is rolled back),
+    so a new key and a second register with the same token is the way out.
+#>
+function Test-KeyAlreadyRegistered([int]$Code, [AllowEmptyString()][string]$Err = '') {
+    $Code -eq 4 -and $Err -match "(?m)^cloud register: this Worker's key is already registered\s*$"
+}
+
+<#
+.SYNOPSIS
     The worker id and key id from `rpworker cloud register`'s line, or $null.
 #>
 function Read-RegistrationLine([AllowEmptyString()][string]$Text) {
@@ -363,6 +454,6 @@ function Read-RegistrationLine([AllowEmptyString()][string]$Text) {
 }
 
 Export-ModuleMember -Function Get-ServiceSid, Get-WantedAcls, Get-ServiceFolderNames, Get-AclDifference, Get-IcaclsArguments, Update-AclObject, Add-FileReadRule,
-    New-ConfigDocument, Get-VaultPlan, Test-VeeamCertificate, Test-Thumbprint, ConvertTo-Pem,
+    Test-TrustedFile, Test-ConfigCheck, Get-ConfigPlan, New-ConfigDocument, Get-VaultPlan, Test-VeeamCertificate, Test-Thumbprint, ConvertTo-Pem,
     Read-OrganisationThumbprints, Get-KeyFileCandidates, Test-Prerequisites, Get-ServiceCommandLine,
-    Test-InstalledService, Read-RegistrationLine
+    Test-InstalledService, Test-KeyAlreadyRegistered, Read-RegistrationLine

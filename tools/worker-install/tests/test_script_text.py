@@ -52,10 +52,14 @@ def test_the_rules_module_reads_nothing_of_the_machine():
 
 def test_the_acls_are_set_through_dotnet_by_sid_and_recorded_as_the_icacls_line():
     # icacls refuses a service SID the machine can't map yet (error 1332 before `service
-    # install`), so the script never runs it: Set-Acl with the module's objects, by SID.
+    # install`), so the script never runs it: .NET with the module's objects, by SID. Never
+    # Get-Acl and Set-Acl, which elevated writes the SACL back and drops its audit entries (the
+    # W7.1 review's finding 3): FileSystemAclExtensions writes the sections changed alone.
     script = text(SCRIPT)
     assert "icacls.exe" not in script
-    assert "Set-Acl -LiteralPath $Path -AclObject $updated" in script
+    assert not re.search(r"(?<![-\w])(Get|Set)-Acl(?![-\w])", script)
+    assert "[IO.FileSystemAclExtensions]::SetAccessControl" in script
+    assert "Set-PathAcl $Path $updated" in script
     assert "Update-AclObject -Acl $acl -Wanted $Wanted -Difference $difference" in script
-    assert "Set-Acl -LiteralPath $keyFile -AclObject (Add-FileReadRule -Acl (Get-Acl -LiteralPath $keyFile) -Sid $ServiceSid)" in script
+    assert "Set-PathAcl $keyFile (Add-FileReadRule -Acl (Get-PathAcl $keyFile) -Sid $ServiceSid)" in script
     assert "Get-IcaclsArguments -Path $Path -Wanted $Wanted -Difference $difference" in script, "the line it amounts to is the record"

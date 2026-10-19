@@ -144,11 +144,11 @@ try {
         $profileValues = Get-Content -LiteralPath $LabProfile -Raw | ConvertFrom-Json
         Import-Module Microsoft.Graph.Authentication
         Connect-MgGraph -TenantId $Lab.TenantId -Scopes 'AppRoleAssignment.ReadWrite.All', 'Application.Read.All' -NoWelcome
-        $app = (Invoke-MgGraphRequest GET "/v1.0/servicePrincipals?`$filter=appId eq '$($profileValues.graph_client_id)'").value
-        $graph = (Invoke-MgGraphRequest GET "/v1.0/servicePrincipals?`$filter=appId eq '$GraphAppId'").value
+        $app = (Invoke-MgGraphRequest GET "/v1.0/servicePrincipals?`$filter=appId eq '$($profileValues.graph_client_id)'" -OutputType PSObject).value
+        $graph = (Invoke-MgGraphRequest GET "/v1.0/servicePrincipals?`$filter=appId eq '$GraphAppId'" -OutputType PSObject).value
         if (@($app).Count -ne 1 -or @($graph).Count -ne 1) { throw 'the lab app or Graph''s service principal was not found once' }
         $roleId = ($graph[0].appRoles | Where-Object value -eq $Role).id
-        $assignment = (Invoke-MgGraphRequest GET "/v1.0/servicePrincipals/$($app[0].id)/appRoleAssignments").value | Where-Object appRoleId -eq $roleId
+        $assignment = (Invoke-MgGraphRequest GET "/v1.0/servicePrincipals/$($app[0].id)/appRoleAssignments" -OutputType PSObject).value | Where-Object appRoleId -eq $roleId
         if (@($assignment).Count -ne 1) { throw "the app has no single $Role consent to remove" }
         Invoke-MgGraphRequest DELETE "/v1.0/servicePrincipals/$($app[0].id)/appRoleAssignments/$($assignment[0].id)" | Out-Null
         $consentTaken = $true

@@ -64,8 +64,10 @@ struct DoctorEnv {
     std::function<std::filesystem::path()> own_exe;
     std::function<bool()> elevated;
     std::function<std::string()> windows_build;
-    // This machine's DNS host name (rp::dns_host_name), for veeam_url.
-    std::function<std::optional<std::string>()> host_name;
+    // What veeam_url may call this machine by (rp::this_machine_names): its
+    // DNS host name, its fully qualified name, its NetBIOS name and its
+    // addresses, any case.
+    std::function<std::vector<std::string>()> machine_names;
     std::function<std::chrono::system_clock::time_point()> now;
 
     std::function<Secrets(const std::filesystem::path& vault)> load_secrets;

@@ -422,7 +422,7 @@ DoctorEnv default_doctor_env()
     env.own_exe = [] { return own_executable_path(); };
     env.elevated = [] { return machine::is_elevated(); };
     env.windows_build = [] { return machine::windows_build(); };
-    env.host_name = [] { return dns_host_name(); };
+    env.machine_names = [] { return this_machine_names(); };
     env.now = [] { return std::chrono::system_clock::now(); };
     env.load_secrets = read_vault;
     env.read_security = [](const std::filesystem::path& p) { return machine::read_security(p); };

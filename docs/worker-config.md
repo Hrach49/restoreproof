@@ -855,9 +855,10 @@ It needs:
   file (W4.12, `docs/decisions.md` 2026-10-07). Without it the export fails after the guard has
   passed and the explore sessions are open, before anything is sent: `restore error:
   veeam_m365: certificate <thumbprint> in LocalMachine\My: its private key can't be opened by
-  this account (error 0x80090016: no read access to its key file, or no key file); rpworker
-  doctor names the line that grants it; the restore was not sent`, exit 4 (W7.2: `rpworker
-  doctor` prints the key file's `icacls` line);
+  this account (error 0x80090016: no read access to its key file, or no key file); at a
+  console, run elevated, which a machine key needs; for the service's account, rpworker doctor
+  names the line that grants it; the restore was not sent`, exit 4 (W7.2: `rpworker doctor`
+  prints the key file's `icacls` line; the console's hint is the W7.2 review's finding 10);
 - the vault (W4.5; `--vault <file>` or the default; a vault that can't be used is `config
   error: <file>: ...`, exit 1), read once after the config: `veeam_username` and
   `veeam_password` (`config error: <name> is not in the vault`, exit 1), then the Worker app's
@@ -1938,19 +1939,28 @@ in a fix is the installed `rpworker.exe` (`%ProgramFiles%\RestoreProof\rpworker.
    `logs` against the installer's ACLs (`shared/testdata/worker-acls-v1.json`, held by the
    installer's tests and the Worker's): the protection, the owner, every wanted entry, and every
    other explicit Allow or Deny (stricter than the installer, which leaves an extra Allow on a
-   folder that inherits: W7.1 review finding 10; the fix then is the `icacls /remove` lines);
+   folder that inherits: W7.1 review finding 10; the fix then is the `icacls /remove` lines),
+   an explicit Allow for a wanted account that isn't exactly its rule included (`has another
+   entry for <SID>`, broader rights or other inheritance, with or without the exact entry
+   beside it: W7.2 review finding 3; the fix then is the installer, since `icacls /remove`
+   takes the account's rule with it);
    then, by Windows' own access check, read and execute on the root and modify on the six for
    the service. **outbox**: the counts; `failed\` that can't be listed (a file of that name, an
    ACL without the account) is a `problem:` (W5.1 review finding 10: the outbox then uploads
-   nothing); the oldest queued run over 24 h and runs in `failed\` are `warning:`s. **disk**:
+   nothing); the oldest queued run over 24 h, by its manifest's `queued_at` (the folder's own
+   time is the last upload attempt's, since each rewrites `manifest.json`; a folder without a
+   manifest the outbox would read goes by its time: W7.2 review finding 2), and runs in
+   `failed\` are `warning:`s. **disk**:
    free space on the folder's volume, `problem:` under 1 GiB, `warning:` under 5 GiB. **log**:
    `worker.log` over 10 MiB or the set over 50 MiB is a `warning:`, a reader holding the file so
    it doesn't rotate (W4.7). The log's own count of write failures lives in the service process
    and is not shown.
 4. **vault**: its DACL (each entry by account name; anything beyond SYSTEM, Administrators,
-   OWNER RIGHTS and the service's Read is a `problem:` with the `icacls` lines; the service's
-   Read missing is `problem: vault: <file>: NT SERVICE\RestoreProof can't read it (fix: rpworker
-   vault grant "NT SERVICE\RestoreProof")`); the service's read by Windows' own check; it
+   OWNER RIGHTS and the service's Read is a `problem:` with the `icacls` lines, the removals
+   first and then the grants, so a service entry broader than Read is removed and Read granted
+   again (W7.2 review finding 3); the service's Read missing and nothing else wrong is `problem:
+   vault: <file>: NT SERVICE\RestoreProof can't read it (fix: rpworker vault grant "NT
+   SERVICE\RestoreProof")`); the service's read by Windows' own check; it
    decrypts (`vault test`'s words); the names it holds, and a `problem:` for each that a Worker
    needs and lacks (the Veeam account, the Graph certificate's two halves together, the signing
    key, `cloud_api_token`) and a `warning:` for an install token left beside the API token.
@@ -1962,8 +1972,11 @@ in a fix is the installed `rpworker.exe` (`%ProgramFiles%\RestoreProof\rpworker.
    fourth); its state (stopped with the service's own exit words); "Log on as a service" holds the
    service's SID or `NT SERVICE\ALL SERVICES` and "Deny log on as a service" neither (a domain
    policy can take it); the exe readable and runnable by the service and writable only by SYSTEM,
-   Administrators and TrustedInstaller; `state\running.json`: a run in progress is a `warning:`,
-   one over six hours a `problem:` (a held run).
+   Administrators and TrustedInstaller; `state\running.json`, read when its owner is SYSTEM,
+   Administrators, the caller or the service's own SID (the service writes it, so the owner rule
+   of the vault would never pass it: W7.2 review finding 1): a run in progress is a `warning:`,
+   one over six hours a `problem:` (a held run), a record that is there and can't be read a
+   `warning:` with no age (`run_unreadable`).
 7. **cloud**: `state\worker.json` (worker, `key_id`, when and with which Cloud it registered), its
    `cloud_url` the config's; `GET <cloud_url>/v1/version` with no token, under `cloud_ca_file`
    (C5.11 point 8 (e)): `ok: cloud: RestoreProof Cloud <version>, API 1`; a 2xx without
@@ -1971,13 +1984,18 @@ in a fix is the installed `rpworker.exe` (`%ProgramFiles%\RestoreProof\rpworker.
    <status>`; no answer its word. Of the body only `api` and `version` are read, through strict
    JSON. The API token itself is not tried (every route that takes it writes or dispatches).
 8. **tsa** and **clock**: one request to `tsa_url` (or the default TSA) over the SHA-256 of
-   `restoreproof doctor`, the token verified under the TSA's root; then this machine's clock
-   against the token's time, a `problem:` over 120 s (W4.4's threshold).
-9. **veeam**: `veeam_url` is this machine (a loopback address or this machine's DNS name) and
+   `restoreproof doctor`, the token verified under the TSA's root; then this machine's clock,
+   read as the token comes back (never doctor's start, so the reads before it are no skew: W7.2
+   review finding 6), against the token's time, a `problem:` over 120 s (W4.4's threshold).
+9. **veeam**: `veeam_url` is this machine (a loopback address, or this machine's DNS host name,
+   fully qualified name, NetBIOS name or one of its addresses, any case: W7.2 review finding 5) and
    `Veeam.Archiver.REST.Service` runs here: the organisation certificates are in the Veeam
    server's store, so a Worker elsewhere can restore nothing (what W7.1 left to W7.2 "what to
-   grant where": nothing, run the Worker on the Veeam server); the login (`veeam list`'s words);
-   per organisation its newest restore point and, for each application certificate, **the
+   grant where": nothing, run the Worker on the Veeam server); the login (`veeam list`'s words;
+   a `skip:` naming `vault.read`, `vault.veeam_username` or `vault.veeam_password` when the vault
+   couldn't give the account, which those checks already said: W7.2 review finding 7);
+   per organisation (one whose ID isn't a UUID a `problem:`, `bad_id`, and nothing more of it
+   asked: W7.2 review finding 9) its newest restore point and, for each application certificate, **the
    Worker's own export in memory, discarded** (`not in LocalMachine\My`, `has expired`, `not
    valid yet`, `isn't exportable`, `no private key`), a `warning:` within 30 days of its end, and
    **the service's Read on the key file** by Windows' own check: after a renewal the new key file
@@ -1985,13 +2003,16 @@ in a fix is the installed `rpworker.exe` (`%ProgramFiles%\RestoreProof\rpworker.
    can't read the key file of certificate <thumbprint> (fix: icacls "<key file>" /grant
    "*S-1-5-80-...:(R)")` (W4.12 point 4). The export is made as the elevated caller, which says
    whether the key is there, valid and exportable; whether the service could read it is the
-   access check's.
+   access check's. A key the caller can't open (`key_unopenable`) with no key file found for it
+   is one `problem:`: the key file's line is a `skip:`, since its name is read through the key
+   (W7.2 review finding 8).
 10. **graph**: the Worker's certificate opens (its thumbprint and end; a `warning:` within 30
     days); without `--client`, `login.microsoftonline.com` and `graph.microsoft.com` are reached
     over TLS (any HTTP answer counts) and `skip: graph: no client named`.
 11. **client <n>**, per `--client`, in the order given: the profile reads; the client check
-    against Veeam (the organisation it names is an `Office365` organisation in `Worldwide` whose
-    tenant is the profile's, W4.11); the app's token for that tenant: one `ok:` per role it
+    against Veeam (the organisation it names, found as the pipeline finds it: by name whatever
+    the case of A-Z, one only, its ID a UUID, W7.2 review finding 4; an `Office365` organisation
+    in `Worldwide` whose tenant is the profile's, W4.11); the app's token for that tenant: one `ok:` per role it
     carries of `Files.SelectedOperations.Selected`, `Lists.SelectedOperations.Selected` and
     `Sites.Selected`, **one `problem:` per role missing, naming it**, and one per role it must
     never have; then the three targets read as `client check` reads them, each read `skip`ped
@@ -2031,10 +2052,10 @@ text, a fix, a path, a thumbprint, an organisation's name, a tenant value, a URL
 | `outbox.failed`, `outbox.oldest`, `outbox.failed_runs`, `disk.free`, `log.size` | `unlistable`; `queued_too_long`, `failed_runs` (warnings); `low` (problem or warning), `unreadable`; `rotation_stuck` (warning) |
 | `vault.acl`, `vault.service_read`, `vault.read`, `vault.<name>`, `vault.graph_certificate`, `vault.cloud_api_token`, `vault.cloud_install_token` | `acl`, `no_service_read`, `unreadable`; `missing`, `half`; `not_registered`; `leftover_install_token` (warning) |
 | `signing.key`, `signing.registered` | `not_a_key`; `key_mismatch` |
-| `service.installed`, `.account`, `.start_type`, `.command_line`, `.recovery`, `.state`, `.logon_right`, `.exe_access`, `.exe_writers`, `.run` | `not_installed`, `unreadable`, `account`, `start_type`, `command_line`, `recovery`, `stopped`, `pending` (warning), `denied`, `not_granted`, `missing`, `service_access`, `writable`, `held_run`, `run_in_progress` (warning) |
+| `service.installed`, `.account`, `.start_type`, `.command_line`, `.recovery`, `.state`, `.logon_right`, `.exe_access`, `.exe_writers`, `.run` | `not_installed`, `unreadable`, `account`, `start_type`, `command_line`, `recovery`, `stopped`, `pending` (warning), `denied`, `not_granted`, `missing`, `service_access`, `writable`, `held_run`; `run_in_progress`, `run_unreadable` (warnings) |
 | `cloud.registration`, `cloud.url`, `cloud.version` | `not_registered`, `unreadable`; `other_cloud`; `no_answer`, `http_status`, `not_cloud`, `bad_body`, `other_api` |
 | `tsa.token`, `clock.skew` | the timestamp codes (`tsa_unreachable`, `tsa_http_status`, ..., "The timestamp authority"); `skew` |
-| `veeam.local`, `veeam.rest_service`, `veeam.login`, `veeam.organisations`, `veeam.org[n].certificate`, `veeam.org[n].cert[m].export`, `.expiry`, `.key_file` | `remote`; `not_installed`, `not_running`, `unreadable`; `login`; `none`; `no_app`; `not_found`, `expired`, `not_yet_valid`, `not_exportable`, `no_private_key`, `key_unopenable`, `export_failed`; `expires_soon` (warning); `no_key_file`, `missing_ace` |
+| `veeam.local`, `veeam.rest_service`, `veeam.login`, `veeam.organisations`, `veeam.org[n]`, `veeam.org[n].certificate`, `veeam.org[n].cert[m].export`, `.expiry`, `.key_file` | `remote`; `not_installed`, `not_running`, `unreadable`; `login`; `none`; `bad_id`; `no_app`; `not_found`, `expired`, `not_yet_valid`, `not_exportable`, `no_private_key`, `key_unopenable`, `export_failed`; `expires_soon` (warning); `no_key_file`, `missing_ace` |
 | `graph.certificate`, `graph.certificate_expiry`, `graph.reach[n]` | `certificate`; `expires_soon` (warning); `unreachable` |
 | `client[n].profile`, `.veeam`, `.graph.token`, `.graph.role.<role>`, `.graph.role_extra[m]`, `.graph.mail`, `.graph.library`, `.graph.folder` | `profile`; `client_mismatch`; `sign_in`; `role_missing`; `role_extra`; `read_failed` |
 

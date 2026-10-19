@@ -279,6 +279,29 @@ TEST_CASE("doctor: what an ACL lacks and has too much of", "[doctor]")
         f.aces.push_back(allow("S-1-5-11", kRightsModify));
         CHECK(acl_difference(f, wanted_folders(kSid)[1]).extra.size() == 2);
     }
+    SECTION("a wanted SID's entry that isn't its rule is extra, beside its rule or in its place")
+    {
+        // W7.2 review finding 3: Modify where RX is wanted is a right the
+        // account mustn't have, with or without the exact entry beside it.
+        Security s = root_as_installed();
+        s.aces[2].mask = kRightsModify;
+        AclDifference d = acl_difference(s, root);
+        CHECK(d.missing.size() == 1);
+        REQUIRE(d.extra.size() == 1);
+        CHECK(d.extra[0].sid == std::string(kSid));
+        s = root_as_installed();
+        s.aces.push_back(allow(std::string(kSid), kRightsFull));
+        d = acl_difference(s, root);
+        CHECK(d.missing.empty());
+        REQUIRE(d.extra.size() == 1);
+        CHECK(d.extra[0].mask == kRightsFull);
+        s = root_as_installed();
+        s.aces.push_back(Ace{std::string(kSid), true, kRightsReadExecute, true, true, false});
+        CHECK(acl_difference(s, root).extra.size() == 1); // inherit-only, not the rule
+        s = root_as_installed();
+        s.aces.push_back(Ace{std::string(kSid), true, kRightsFull, true, false, true});
+        CHECK(acl_difference(s, root).ok()); // inherited: the parent's to answer for
+    }
     SECTION("inheritance and the owner")
     {
         Security s = root_as_installed();
@@ -488,6 +511,16 @@ TEST_CASE("doctor: a folder that isn't as the installer sets it", "[doctor]")
               "S-1-1-0 (fix: icacls \"C:\\R\\logs\" /remove:g *S-1-5-32-545; icacls "
               "\"C:\\R\\logs\" /remove:d *S-1-1-0)");
     }
+    SECTION("a broader entry for the service is the installer's to set, never a remove line")
+    {
+        // icacls would take the service's Modify away with its Full Control
+        // (W7.2 review finding 3).
+        facts[6].security.aces.push_back(allow(std::string(kSid), kRightsFull));
+        Report report;
+        check_folders(wanted, facts, report);
+        CHECK(line_of(by_id(report, "folders.logs")) ==
+              "problem: folders: C:\\R\\logs: has another entry for " + std::string(kSid) + installer);
+    }
     SECTION("an ACL as wanted that still gives the service too little")
     {
         facts[0].service_access = kRightsRead;
@@ -649,10 +682,35 @@ TEST_CASE("doctor: a vault's other ACL faults are icacls lines", "[doctor]")
           "problem: vault: C:\\R\\vault.bin: lacks *S-1-5-18:(F), has an entry for S-1-5-32-545, "
           "has a Deny entry for S-1-5-11, inherits from its parent, is owned by S-1-5-21-7 (fix: "
           "icacls \"C:\\R\\vault.bin\" /inheritance:r; icacls \"C:\\R\\vault.bin\" /setowner "
-          "*S-1-5-32-544; icacls \"C:\\R\\vault.bin\" /grant \"*S-1-5-18:(F)\"; icacls "
-          "\"C:\\R\\vault.bin\" /remove:g *S-1-5-32-545; icacls \"C:\\R\\vault.bin\" /remove:d "
-          "*S-1-5-11)");
+          "*S-1-5-32-544; icacls \"C:\\R\\vault.bin\" /remove:g *S-1-5-32-545; icacls "
+          "\"C:\\R\\vault.bin\" /remove:d *S-1-5-11; icacls \"C:\\R\\vault.bin\" /grant "
+          "\"*S-1-5-18:(F)\")");
     CHECK(by_id(report, "vault.acl").code == "acl");
+}
+
+TEST_CASE("doctor: the service with more than Read on the vault is never \"can't read it\"", "[doctor]")
+{
+    // W7.2 review finding 3: Modify in place of Read is an entry to take away
+    // and Read granted after it (icacls removes a SID's entries whole), never
+    // vault grant, whose merge leaves the Modify as it is.
+    const std::string svc(kSid);
+    const std::string fix = "icacls \"C:\\R\\vault.bin\" /remove:g *" + svc +
+                            "; icacls \"C:\\R\\vault.bin\" /grant \"*" + svc + ":(R)\"";
+    VaultFacts facts = vault_facts();
+    facts.security.aces.back().mask = kRightsModify;
+    Report modify;
+    check_vault(facts, modify);
+    CHECK(line_of(by_id(modify, "vault.acl")) == "problem: vault: C:\\R\\vault.bin: lacks *" + svc +
+                                                     ":(R), has another entry for " + svc + " (fix: " + fix + ")");
+    CHECK(by_id(modify, "vault.service_read").result == Result::skip);
+
+    // The exact Read beside a Modify: never "nothing else".
+    facts = vault_facts();
+    facts.security.aces.push_back(allow(svc, kRightsModify, false));
+    Report both;
+    check_vault(facts, both);
+    CHECK(line_of(by_id(both, "vault.acl")) ==
+          "problem: vault: C:\\R\\vault.bin: has another entry for " + svc + " (fix: " + fix + ")");
 }
 
 TEST_CASE("doctor: a vault whose ACL is right and still keeps the service out", "[doctor]")
@@ -1024,12 +1082,17 @@ TEST_CASE("doctor: a run in progress, and a held one", "[doctor]")
           "7 h (fix: read C:\\R\\logs\\worker.log; rpworker service stop ends it as "
           "interrupted)");
     CHECK(by_id(held, "service.run").code == "held_run");
+    // A record doctor couldn't read has no age: never "0 min", never a held
+    // run it can't date (W7.2 review finding 1).
     facts.running.run_id.clear();
-    facts.running.age = 1min;
+    facts.running.age = 0s;
     Report unreadable;
     check_service(facts, unreadable);
-    CHECK_THAT(line_of(by_id(unreadable, "service.run")),
-               ContainsSubstring("run (state\\running.json unreadable) in progress"));
+    CHECK(line_of(by_id(unreadable, "service.run")) ==
+          "warning: service: state\\running.json is there and can't be read, so how long its run "
+          "has been in progress is unknown; a restore target may hold its items (fix: read "
+          "C:\\R\\logs\\worker.log)");
+    CHECK(by_id(unreadable, "service.run").code == "run_unreadable");
 }
 
 // --- 7. cloud -------------------------------------------------------------------
@@ -1274,6 +1337,23 @@ TEST_CASE("doctor: the export's refusals, worded for doctor", "[doctor]")
           row.key_file_skipped);
 }
 
+TEST_CASE("doctor: a key this account can't open, and no key file found for it, is one line",
+          "[doctor]")
+{
+    // W7.2 review finding 8: the key file's name is read through the key, so
+    // a key the operator can't open is a key file doctor can't find either.
+    VeeamFacts facts = veeam_facts();
+    facts.organisations[0].certificates[0].export_failure = rp::CertExportFailure::key_unopenable;
+    facts.organisations[0].certificates[0].export_message = "x";
+    facts.organisations[0].certificates[0].key_file.reset();
+    Report report;
+    check_veeam(facts, report);
+    CHECK(report.count(Result::problem) == 1);
+    CHECK(line_of(by_id(report, "veeam.org[1].cert[1].key_file")) ==
+          "skip: veeam: RestoreProofLab.onmicrosoft.com: the key file of certificate " + std::string(kThumb) +
+              " (needs veeam.org[1].cert[1].export)");
+}
+
 TEST_CASE("doctor: a certificate near its end, and one without a key file", "[doctor]")
 {
     VeeamFacts facts = veeam_facts();
@@ -1346,6 +1426,34 @@ TEST_CASE("doctor: Veeam elsewhere, its REST service, its login, no organisation
           "veeam_ca_file and veeam_cert_sha256)");
     CHECK(line_of(by_id(login, "veeam.organisations")) ==
           "skip: veeam: the organisations and their certificates (needs veeam.login)");
+
+    // The login's input missing is a skip naming the vault's check, which
+    // already said so (W7.2 review finding 7).
+    for (const char* needs : {"vault.read", "vault.veeam_password"}) {
+        facts = veeam_facts();
+        facts.login_needs = needs;
+        Report skipped;
+        check_veeam(facts, skipped);
+        CHECK(skipped.count(Result::problem) == 0);
+        CHECK(line_of(by_id(skipped, "veeam.login")) ==
+              std::string("skip: veeam: the login, the organisations and their certificates (needs ") + needs +
+                  ")");
+        CHECK(skipped.checks().back().id == "veeam.login");
+    }
+
+    // An organisation whose ID isn't a UUID is said, and nothing more of it
+    // is asked (W7.2 review finding 9).
+    facts = veeam_facts();
+    facts.organisations[0].id_ok = false;
+    facts.organisations[0].certificates.clear();
+    facts.organisations.push_back(veeam_facts().organisations[0]);
+    Report bad_id;
+    check_veeam(facts, bad_id);
+    CHECK(line_of(by_id(bad_id, "veeam.org[1]")) ==
+          "problem: veeam: RestoreProofLab.onmicrosoft.com: Veeam's ID for it isn't a UUID (fix: check that "
+          "veeam_url is Veeam Backup for Microsoft 365's REST API, v8)");
+    CHECK(by_id(bad_id, "veeam.org[1]").code == "bad_id");
+    CHECK(by_id(bad_id, "veeam.org[2].cert[1].key_file").result == Result::ok);
 
     facts = veeam_facts();
     facts.organisations.clear();

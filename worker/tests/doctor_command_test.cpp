@@ -5,6 +5,7 @@
 // %ProgramData%, the SCM, LocalMachine\My or the network. The lines' words
 // are doctor_test.cpp's; here, which facts reach them.
 
+#include "../src/host_name.hpp"
 #include "fake_http_client.hpp"
 #include "graph_lab.hpp"
 #include "result_lab.hpp"
@@ -30,6 +31,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -265,8 +267,11 @@ struct Lab {
             return elevated;
         };
         e.windows_build = [] { return std::string("10.0.20348"); };
-        e.host_name = [this] { return host; };
-        e.now = [] { return std::chrono::system_clock::from_time_t(rp::test::kTestTsaTime) + 30s; };
+        e.machine_names = [this] { return names; };
+        e.now = [this] {
+            ++now_calls;
+            return now ? now(now_calls) : std::chrono::system_clock::from_time_t(rp::test::kTestTsaTime) + 30s;
+        };
         e.load_secrets = [this](const std::filesystem::path& vault) -> rp::Secrets {
             vault_read = vault;
             if (vault_error) {
@@ -344,7 +349,10 @@ struct Lab {
     bool vault_error = false;
     bool installed_service = true;
     std::function<void()> on_elevated;
-    std::optional<std::string> host = "veeam.test";
+    std::vector<std::string> names{"veeam", "veeam.test", "10.0.0.5"};
+    // The clock by the number of the call (1: doctor's start); null: the TSA's time and 30 s.
+    std::function<std::chrono::system_clock::time_point(int)> now;
+    int now_calls = 0;
     rp::Secrets secrets{"DESKTOP\\rp-veeam",
                         "Sentinel-Doctor-Veeam-Password",
                         pfx_base64(),
@@ -558,6 +566,38 @@ TEST_CASE("doctor: the outbox's folders, a file among them, and an unlistable fa
     CHECK(run.has("ok: log: " + utf8(lab.data / "logs" / "worker.log") + " 0 MiB, 0 MiB with the rotated files"));
 }
 
+TEST_CASE("doctor: a queued run is dated by its manifest, not its folder's time", "[doctor_command]")
+{
+    // W7.2 review finding 2: every failed upload rewrites manifest.json in
+    // the folder, so a run queued 5 days ago has a folder written a minute ago.
+    Lab lab;
+    const auto now = std::chrono::system_clock::from_time_t(rp::test::kTestTsaTime) + 30s;
+    const std::string run_id = "7cc849e8-0000-4000-8000-000000000003";
+    std::filesystem::create_directories(lab.data / "outbox" / run_id);
+    rp::OutboxManifest manifest;
+    manifest.run_id = run_id;
+    manifest.queued_at = rp::outbox_time_text(now - 120h - 5min);
+    manifest.attempts = 12;
+    manifest.last_attempt_at = rp::outbox_time_text(now - 1min);
+    manifest.next_attempt_at = rp::outbox_time_text(now + 59min);
+    manifest.last_error = "upload_http_503";
+    manifest.files = {"items.csv", "result.json", "signature.json"};
+    lab.write("outbox/" + run_id + "/manifest.json", rp::manifest_text(manifest));
+    // A folder with no manifest the outbox would read is dated by the folder: just made.
+    std::filesystem::create_directories(lab.data / "outbox" / "7cc849e8-0000-4000-8000-000000000004");
+    lab.write("outbox/7cc849e8-0000-4000-8000-000000000004/manifest.json", "{}");
+    const Run run = lab.run({});
+    CHECK(run.has("ok: outbox: 2 queued, 0 sent, 0 failed"));
+    CHECK(run.has("warning: outbox: the oldest queued run is 120 h old (fix: rpworker outbox list; rpworker "
+                  "outbox flush says why each run stays)"));
+
+    Lab fresh;
+    std::filesystem::create_directories(fresh.data / "outbox" / run_id);
+    manifest.queued_at = rp::outbox_time_text(now - 2h);
+    fresh.write("outbox/" + run_id + "/manifest.json", rp::manifest_text(manifest));
+    CHECK(fresh.run({}).out.find("warning: outbox: the oldest") == std::string::npos);
+}
+
 TEST_CASE("doctor: a folder that isn't there and one the service can't change", "[doctor_command]")
 {
     Lab lab;
@@ -578,7 +618,23 @@ TEST_CASE("doctor: a vault that can't be read skips the key, Graph and the clien
     CHECK(run.has("skip: signing key: its key_id (needs vault.read)"));
     CHECK(run.has("skip: graph: the Worker's certificate (needs vault.read)"));
     CHECK(run.has("skip: client 1: graph: the app's token and the three targets (needs graph.certificate)"));
-    CHECK_THAT(run.out, ContainsSubstring("problem: veeam: veeam_username or veeam_password is not in the vault"));
+    // One cause, one problem line: the login is a skip (W7.2 review finding 7).
+    CHECK(run.has("skip: veeam: the login, the organisations and their certificates (needs vault.read)"));
+    CHECK(count_of(run.out, "problem:") == 1);
+}
+
+TEST_CASE("doctor: a vault without the Veeam password skips the login", "[doctor_command]")
+{
+    Lab lab;
+    lab.secrets.veeam_password.reset();
+    const Run run = lab.run({});
+    CHECK(run.has_problem("vault: veeam_password is not in it"));
+    CHECK(run.has("skip: veeam: the login, the organisations and their certificates (needs vault.veeam_password)"));
+    CHECK(count_of(run.out, "problem:") == 1);
+    Lab user;
+    user.secrets.veeam_username.reset();
+    CHECK(user.run({}).has(
+        "skip: veeam: the login, the organisations and their certificates (needs vault.veeam_username)"));
 }
 
 TEST_CASE("doctor: the vault's entries are named by account", "[doctor_command]")
@@ -623,7 +679,25 @@ TEST_CASE("doctor: the service not installed, and a run in progress", "[doctor_c
                   "{\"format\":\"restoreproof.running.v1\",\"kind\":\"run\",\"run_id\":\"r1\"}");
     const Run garbled = running.run({});
     CHECK_THAT(garbled.out, ContainsSubstring("warning: doctor: the service runs " + utf8(running.installed)));
-    CHECK_THAT(garbled.out, ContainsSubstring("warning: service: run (state\\running.json unreadable) in progress"));
+    CHECK_THAT(garbled.out, ContainsSubstring("warning: service: state\\running.json is there and can't be read"));
+}
+
+TEST_CASE("doctor: a run record the service wrote is read, its owner the service's SID", "[doctor_command]")
+{
+    // W7.2 review finding 1: the service writes state\running.json, so its
+    // owner is NT SERVICE\RestoreProof, which the owner rule never passes for
+    // the operator; a run held for 10 h must still be the held_run problem.
+    Lab lab;
+    rp::RunningRecord record = rp::new_run_record("7cc849e8-0000-4000-8000-000000000002", std::nullopt,
+                                                  rp::read_client_profile_file(lab.profile),
+                                                  std::chrono::system_clock::from_time_t(rp::test::kTestTsaTime) - 10h);
+    lab.write("state/running.json", rp::record_text(record));
+    Security owned = lab.security_of(lab.data / "state" / "running.json");
+    owned.owner_sid = *rp::doctor::service_sid(rp::kServiceName);
+    lab.securities[lab.data / "state" / "running.json"] = owned;
+    const Run run = lab.run({});
+    CHECK_THAT(run.out, ContainsSubstring("problem: service: run 7cc849e8-0000-4000-8000-000000000002 has been in "
+                                          "progress for 10 h"));
 }
 
 TEST_CASE("doctor: a run record of the service's own, by its time", "[doctor_command]")
@@ -668,26 +742,54 @@ TEST_CASE("doctor: the default TSA, and a cloud_url ending in a slash", "[doctor
 
 TEST_CASE("doctor: whether veeam_url is this machine", "[doctor_command]")
 {
+    // W7.2 review finding 5: the machine by its short name, its full name or
+    // an address of its own, as the installer's "store" path takes a Veeam
+    // certificate that names the host.
+    using Names = std::vector<std::string>;
     struct Row {
         std::string url;
-        std::optional<std::string> host;
+        Names names;
         bool local;
     };
-    const Row row = GENERATE(Row{"https://localhost:4443", std::nullopt, true},
-                             Row{"https://127.0.0.1:4443", std::nullopt, true},
-                             Row{"https://[::1]:4443", std::nullopt, true},
-                             Row{"https://VEEAM.test:4443", std::string("veeam.TEST"), true},
-                             Row{"https://veeam.test", std::nullopt, false},
-                             Row{"https://other:4443", std::string("veeam.test"), false});
+    const Names mine{"vbo01", "vbo01.corp.local", "VBO01", "10.0.0.5", "fe80::1"};
+    const Row row = GENERATE_COPY(Row{"https://localhost:4443", {}, true},
+                                  Row{"https://127.0.0.1:4443", {}, true},
+                                  Row{"https://[::1]:4443", {}, true},
+                                  Row{"https://VEEAM.test:4443", Names{"veeam.TEST"}, true},
+                                  Row{"https://vbo01:4443", mine, true},
+                                  Row{"https://VBO01.Corp.Local:4443", mine, true},
+                                  Row{"https://10.0.0.5:4443", mine, true},
+                                  Row{"https://[FE80::1]:4443", mine, true},
+                                  Row{"https://veeam.test", {}, false},
+                                  Row{"https://vbo01.corp.local.evil:4443", mine, false},
+                                  Row{"https://10.0.0.50:4443", mine, false},
+                                  Row{"https://other:4443", Names{"veeam.test"}, false});
     CAPTURE(row.url);
     Lab lab;
-    lab.host = row.host;
+    lab.names = row.names;
     lab.write("config.json", "{\"cloud_url\": \"" + kCloud + "\", \"veeam_url\": \"" + row.url + "\"}");
     lab.http.on(HttpMethod::post, row.url.substr(0, row.url.find('/', 8)) + "/v8/token",
                 {make_response(401, "{}")});
     const Run run = lab.run({});
     CHECK(run.out.find(row.local ? "ok: veeam: " + row.url + " is this machine"
                                  : "problem: veeam: " + row.url + " is not this machine") != std::string::npos);
+}
+
+TEST_CASE("doctor: this machine's names, as Windows gives them", "[doctor_command]")
+{
+    // The real read under DoctorEnv::machine_names: the DNS host name first,
+    // each name once, no address with an IPv6 zone. Nothing leaves the machine.
+    const std::vector<std::string> names = rp::this_machine_names();
+    const std::optional<std::string> host = rp::dns_host_name();
+    REQUIRE(host);
+    REQUIRE_FALSE(names.empty());
+    CHECK(names.front() == *host);
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        CAPTURE(names[i]);
+        CHECK_FALSE(names[i].empty());
+        CHECK(names[i].find('%') == std::string::npos);
+        CHECK(std::count(names.begin(), names.end(), names[i]) == 1);
+    }
 }
 
 TEST_CASE("doctor: Veeam's refusal skips the organisations and the clients' Veeam check", "[doctor_command]")
@@ -752,6 +854,68 @@ TEST_CASE("doctor: a client whose organisation Veeam doesn't have, or another te
     CHECK_THAT(run.out, ContainsSubstring("problem: client 1: client_mismatch: "));
     CHECK_THAT(run.out, ContainsSubstring("problem: client 1: graph error: "));
     CHECK(run.has("skip: client 1: graph: the OneDrive RestoreTarget folder (needs client[1].graph.token)"));
+}
+
+TEST_CASE("doctor: a client's organisation found as the pipeline finds it", "[doctor_command]")
+{
+    // W7.2 review finding 4: by name whatever the case of A-Z, and one only.
+    Lab lab;
+    json profile = Lab::lab_profile();
+    profile["veeam_org_name"] = "restoreprooflab.ONMICROSOFT.com";
+    const std::string folded = utf8(lab.dir.write("folded.json", profile.dump()));
+    CHECK(lab.run({"--client", folded}).has(
+        "ok: client 1: Veeam's organisation restoreprooflab.ONMICROSOFT.com is this tenant's"));
+
+    // Two that differ in case alone, the second with an ID that isn't a UUID
+    // (W7.2 review finding 9): said, the summary printed, no unexpected failure.
+    Lab twice;
+    json orgs = rp::test::load_fixture_json("veeam", "organizations-200");
+    json second = orgs["body"]["results"][0];
+    second["name"] = "RESTOREPROOFLAB.onmicrosoft.com";
+    second["id"] = "not-a-uuid";
+    orgs["body"]["results"].push_back(second);
+    twice.http.on(HttpMethod::get, kVeeam + "/v8/Organizations?limit=1000&offset=0", {rp::test::to_response(orgs)});
+    const Run run = twice.run_with_client();
+    INFO(run.out << " ERR: " << run.err);
+    CHECK(run.err.empty());
+    CHECK(run.exit_code == 5);
+    CHECK(run.has("problem: veeam: RESTOREPROOFLAB.onmicrosoft.com: Veeam's ID for it isn't a UUID (fix: check "
+                  "that veeam_url is Veeam Backup for Microsoft 365's REST API, v8)"));
+    CHECK(run.has_problem("client 1: 2 organisations in Veeam are named RestoreProofLab.onmicrosoft.com "
+                          "(veeam_org_name)"));
+    CHECK_THAT(run.out, ContainsSubstring("\ndoctor: "));
+
+    // The one organisation by that name, its ID no UUID.
+    Lab bad;
+    json alone = rp::test::load_fixture_json("veeam", "organizations-200");
+    alone["body"]["results"][0]["id"] = "not-a-uuid";
+    bad.http.on(HttpMethod::get, kVeeam + "/v8/Organizations?limit=1000&offset=0", {rp::test::to_response(alone)});
+    CHECK(bad.run_with_client().has_problem(
+        "client 1: Veeam's ID for the organisation RestoreProofLab.onmicrosoft.com isn't a UUID"));
+}
+
+TEST_CASE("doctor: a key the operator can't open and no key file found is one problem line", "[doctor_command]")
+{
+    // W7.2 review finding 8.
+    Lab lab;
+    lab.export_failure = rp::CertExportFailure::key_unopenable;
+    lab.certificate.key_file.reset();
+    const Run run = lab.run({});
+    CHECK(count_of(run.out, "problem:") == 1);
+    CHECK(run.has("skip: veeam: RestoreProofLab.onmicrosoft.com: the key file of certificate " + kThumb +
+                  " (needs veeam.org[1].cert[1].export)"));
+}
+
+TEST_CASE("doctor: the clock is read as the TSA's token comes back", "[doctor_command]")
+{
+    // W7.2 review finding 6: five minutes spent on the reads before the
+    // stamp (a Cloud that times out, a slow Veeam) are no skew.
+    Lab lab;
+    const auto tsa_time = std::chrono::system_clock::from_time_t(rp::test::kTestTsaTime);
+    lab.now = [&](int call) { return call == 1 ? tsa_time - 300s : tsa_time + 5s; };
+    const Run run = lab.run({});
+    CHECK(run.has("ok: clock: 5 s from the TSA's time"));
+    CHECK(lab.now_calls == 2);
 }
 
 TEST_CASE("doctor: one role removed from the app's token is one problem line (the Done-when)",

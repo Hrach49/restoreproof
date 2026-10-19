@@ -357,21 +357,23 @@ TEST_CASE("an ExportedPfx wipes itself, and what it was moved from", "[cert_expo
 
 // W7.2 point 7: the words for a private key this account can't open. NTE_BAD_KEYSET is what
 // CAPI and CNG answer both for a key file the account may not read and for no key file, so the
-// words name both and send the operator to doctor, which tells them apart; never "elevated or
-// LocalSystem", which was wrong for the service (W4.12).
+// words name both and send the service's case to doctor, which tells them apart; never
+// "LocalSystem", which was wrong for the service (W4.12). The console's case keeps its hint, run
+// elevated, which doctor (elevated itself) can never name (W7.2 review finding 10).
 TEST_CASE("a private key that can't be opened is worded for the account, not for elevation",
           "[cert_export]")
 {
     using rp::cert_export_detail::private_key_refusal;
     CHECK(private_key_refusal("certificate AB in LocalMachine\My", 0x80090016UL) ==
           "certificate AB in LocalMachine\My: its private key can't be opened by this account "
-          "(error 0x80090016: no read access to its key file, or no key file); rpworker doctor "
-          "names the line that grants it");
+          "(error 0x80090016: no read access to its key file, or no key file); at a console, run "
+          "elevated, which a machine key needs; for the service's account, rpworker doctor names "
+          "the line that grants it");
     const auto other = GENERATE(0x80090009UL, 0x8009000BUL, 5UL);
     const std::string text = private_key_refusal("c", other);
     CHECK(text.starts_with("c: its private key can't be opened (error 0x"));
+    CHECK(text.ends_with("); at a console, run elevated, which a machine key needs"));
     CHECK(text.find("LocalSystem") == std::string::npos);
-    CHECK(text.find("elevated") == std::string::npos);
     CHECK(private_key_refusal("c", static_cast<unsigned long>(CRYPT_E_NO_KEY_PROPERTY)) ==
           "c: the certificate has no private key");
     using rp::cert_export_detail::private_key_failure;

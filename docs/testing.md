@@ -1612,7 +1612,15 @@ python -m unittest discover -s worker/tools -p "test_*.py"
   Veeam's recorded answers, a test TSA (`tests/tsa_lab.hpp`), a Cloud answering `/v1/version`,
   and Graph's recorded targets with a token built by the test (a JWT whose payload carries the
   roles, signed with zeros, never a real token); the `--json` file validated against
-  `shared/schemas/doctor.v1.json`; `--record`. The exe tests (`rpworker doctor ...`) check only
+  `shared/schemas/doctor.v1.json`; `--record`; the code review's cases (a run record owned by
+  the service's SID, a queued run dated by its manifest, an organisation by any case and one
+  whose ID isn't a UUID, this machine by its full name or address, the clock read as the token
+  comes back with the fake clock answering by call). One case reads the real
+  `rp::this_machine_names` (the DNS host name first, each name once, no IPv6 zone); it asks
+  Windows for the names and addresses it has and sends nothing. A run record the test writes is
+  owned by the test's account, which the owner rule passes anyway, so the service-SID case
+  shows the record read and the held run said, not that the old rule refused it. The exe tests
+  (`rpworker doctor ...`) check only
   what is refused before anything is read (usage, `--json`), since an elevated `ctest` would
   otherwise read the machine.
 - **The machine reads**, `worker/tests/machine_reads_test.cpp` (`[machine_reads]`): the real

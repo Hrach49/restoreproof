@@ -1,4 +1,4 @@
-# The Cloud's answers (W5.1)
+# The Cloud's answers (W5.1, W7.3)
 
 Recorded once from the local Compose stack through its HTTPS front (Caddy,
 `https://localhost:8443`) by `docs/api/cloud-lab/w5.1-record/record_cloud.py`
@@ -16,3 +16,5 @@ the Cloud's own; the key is RFC 8032's test key 1, never a secret.
 - `results/`: 202 and 202 again, 400 (a signature that fails), 401, 409 (`run_id:
   not dispatched`), 415, 502 (Caddy's own).
 - `heartbeat/`: 204, 401, 422. `version/`: 200.
+- `revoke/` (W7.3, `POST /v1/workers/self/revoke`): 401 (a token no Worker has),
+  204 (the registered Worker's token, once), 401-revoked (the same token again).

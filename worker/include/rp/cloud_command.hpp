@@ -1,7 +1,8 @@
 #pragma once
 
 // `rpworker cloud register` (W5.1, docs/decisions.md 2026-10-15, "W5.1
-// (#66)", points 2 and 3): the Worker's first start. The install token the
+// (#66)", points 2 and 3) and `rpworker cloud revoke` (W7.3): the Worker's
+// first start and its last word to the Cloud. Registration: The install token the
 // operator put in the vault (`rpworker vault set cloud_install_token`) is
 // sent once with the signing key's public half to POST
 // <cloud_url>/v1/workers/register; the API token the Cloud answers with goes
@@ -119,8 +120,45 @@ int register_worker(const RegisterRequest& request, std::ostream& out, std::ostr
 int first_start(const std::filesystem::path& config, const std::filesystem::path& vault,
                 std::ostream& out, std::ostream& err, const CloudCommandEnv& env);
 
+// What one revoke is given (W7.3).
+struct RevokeRequest {
+    std::filesystem::path config;
+    std::filesystem::path vault;
+    // --record <dir>.
+    std::optional<std::string_view> record;
+};
+
+// `rpworker cloud revoke` (W7.3, docs/decisions.md 2026-10-19, "W7.3 (#82)
+// and W7.4 (#83)", point 5): the uninstall's call. The config; the vault read;
+// no API token ("config error: cloud_api_token is not in the vault; this
+// Worker is not registered", 1); the vault written back unchanged ("vault
+// error: <what()>", 1); the recording opened; then one POST to
+// <cloud_url>/v1/workers/self/revoke with the token as the bearer and no
+// body. The answers:
+//   a 2xx with the contract header: the token removed from the vault in one
+//       write; "revoked worker <id>" on `out` (the id from state\worker.json
+//       when it reads, else "revoked this Worker"), 0; worker.json is left;
+//   a 2xx without the header: "cloud revoke: the answer is not a RestoreProof
+//       Cloud's (no X-RestoreProof-API: 1)", 4 (with another value "(X-
+//       RestoreProof-API: <text>)"); nothing removed;
+//   401: "cloud revoke: the Cloud doesn't know this token (revoked already, or
+//       never this Cloud's); it was removed from the vault", the token
+//       removed, 2;
+//   5xx, a timeout, no connection, a TLS failure: "cloud revoke: the Cloud
+//       couldn't be reached (<word>); run it again, or revoke the Worker in
+//       the Cloud (manage.py revoke-worker)", 3, the token kept;
+//   any other status: "cloud revoke: refused (http_<status>)", 4, kept.
+// A vault that can't take the removal after the 2xx: "cloud revoke: the Cloud
+// revoked this Worker, but the API token couldn't be removed from the vault
+// (rpworker vault remove cloud_api_token)", 1; after the 401 the 401's line
+// ending "; it couldn't be removed from the vault (rpworker vault remove
+// cloud_api_token)", 1. The token reaches no stream, log line or recording.
+int revoke_worker(const RevokeRequest& request, std::ostream& out, std::ostream& err,
+                  const CloudCommandEnv& env);
+
 // `rpworker cloud ...`. `args` is what follows "cloud", in UTF-8: `register
-// [--config <path>] [--vault <file>] [--name <worker name>] [--record <dir>]`.
+// [--config <path>] [--vault <file>] [--name <worker name>] [--record <dir>]`
+// or `revoke [--config <path>] [--vault <file>] [--record <dir>]`.
 // 64 with rp::kCliUsage on `err` for anything else (no subcommand, an unknown
 // one, an option twice, without its value or with an empty one).
 int run_cloud_command(std::span<const std::string_view> args, std::ostream& out,

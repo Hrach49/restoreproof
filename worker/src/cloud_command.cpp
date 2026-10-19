@@ -11,6 +11,7 @@
 
 #include "atomic_file.hpp"
 #include "command_config.hpp"
+#include "file_read.hpp"
 #include "host_name.hpp"
 #include "http_exchange.hpp"
 
@@ -23,6 +24,7 @@ namespace rp {
 namespace {
 
 constexpr std::string_view kRegister = "register";
+constexpr std::string_view kRevoke = "revoke";
 
 // Wipes the string it names when it goes.
 struct Wiped {
@@ -273,12 +275,145 @@ int first_start(const std::filesystem::path& config, const std::filesystem::path
     return register_worker({config, vault, std::nullopt, std::nullopt}, out, err, env);
 }
 
+namespace {
+
+// state\worker.json's worker_id, when it reads (as the service names itself).
+std::optional<std::string> recorded_worker_id(const CloudCommandEnv& env)
+{
+    const std::filesystem::path state =
+        env.default_state_dir ? env.default_state_dir() : default_state_dir();
+    const FileRead file = read_whole_file(state / std::string{kWorkerFileName}, 64u * 1024u);
+    if (file.state != FileState::read) {
+        return std::nullopt;
+    }
+    const std::optional<WorkerRecord> record = parse_worker_record(file.bytes);
+    return record ? std::optional<std::string>{record->worker_id} : std::nullopt;
+}
+
+// The token taken out of the vault in one write (point 5): nullopt when it
+// went, else the vault's own message.
+std::optional<std::string> remove_token(WipedSecrets& held, const std::filesystem::path& vault,
+                                        const CloudCommandEnv& env)
+{
+    secure_wipe(*held.secrets.cloud_api_token);
+    held.secrets.cloud_api_token.reset();
+    return config_problem([&] { write_secrets(vault, held.secrets, env); });
+}
+
+constexpr std::string_view kRemoveLine = " (rpworker vault remove cloud_api_token)\n";
+
+// The answer's line and code (point 5).
+int revoked(const HttpResponse& answer, WipedSecrets& held, const std::filesystem::path& vault,
+            std::ostream& out, std::ostream& err, const CloudCommandEnv& env)
+{
+    const int status = answer.status;
+    if (status == 401) {
+        err << "cloud revoke: the Cloud doesn't know this token (revoked already, or never this "
+               "Cloud's); it ";
+        if (remove_token(held, vault, env)) {
+            err << "couldn't be removed from the vault" << kRemoveLine;
+            return exit_code::config;
+        }
+        err << "was removed from the vault\n";
+        return exit_code::auth;
+    }
+    if (status >= 500) {
+        err << "cloud revoke: the Cloud couldn't be reached (" << status_word(status)
+            << "); run it again, or revoke the Worker in the Cloud (manage.py revoke-worker)\n";
+        return exit_code::transient;
+    }
+    if (status < 200 || status >= 300) {
+        err << "cloud revoke: refused (" << status_word(status) << ")\n";
+        return exit_code::service;
+    }
+    const CloudAnswerKind kind = cloud_answer_kind(answer);
+    if (kind != CloudAnswerKind::cloud) {
+        err << "cloud revoke: the answer is not a RestoreProof Cloud's ("
+            << (kind == CloudAnswerKind::not_cloud
+                    ? std::string{"no X-RestoreProof-API: 1"}
+                    : std::string{kCloudApiHeader} + ": " + other_contract_text(answer))
+            << ")\n";
+        return exit_code::service;
+    }
+    if (remove_token(held, vault, env)) {
+        err << "cloud revoke: the Cloud revoked this Worker, but the API token couldn't be removed "
+               "from the vault"
+            << kRemoveLine;
+        return exit_code::config;
+    }
+    const std::optional<std::string> id = recorded_worker_id(env);
+    if (id) {
+        out << "revoked worker " << *id << '\n';
+    } else {
+        out << "revoked this Worker\n";
+    }
+    return exit_code::ok;
+}
+
+} // namespace
+
+int revoke_worker(const RevokeRequest& request, std::ostream& out, std::ostream& err,
+                  const CloudCommandEnv& env)
+{
+    Config config;
+    WipedSecrets held;
+    std::shared_ptr<FixtureRecorder> recorder;
+    if (const std::optional<std::string> problem = config_problem([&] {
+            config = env.load_config ? env.load_config(request.config) : load_config(request.config);
+            held.secrets = read_secrets(request.vault, env);
+        })) {
+        err << "config error: " << *problem << '\n';
+        return exit_code::config;
+    }
+    if (!is_set(held.secrets.cloud_api_token)) {
+        err << "config error: cloud_api_token is not in the vault; this Worker is not registered\n";
+        return exit_code::config;
+    }
+    // The vault as it is, written back before the request: a vault this
+    // account can't write is found before the Cloud is told anything.
+    if (const std::optional<std::string> unwritten =
+            config_problem([&] { write_secrets(request.vault, held.secrets, env); })) {
+        err << "vault error: " << *unwritten << '\n';
+        return exit_code::config;
+    }
+    if (const std::optional<std::string> refused_record = config_problem(
+            [&] { recorder = open_recording(request.record, "cloud revoke", held.secrets); })) {
+        err << "config error: " << *refused_record << '\n';
+        return exit_code::config;
+    }
+    const std::unique_ptr<IHttpClient> http = recorded(
+        env.make_cloud_http ? env.make_cloud_http(config) : make_cloud_http_client(config), recorder,
+        "cloud");
+
+    HttpRequest post;
+    post.method = HttpMethod::post;
+    post.url = cloud_endpoint(config.cloud_url, kRevokePath);
+    post.headers["Authorization"] = bearer(*held.secrets.cloud_api_token);
+    Wiped header{post.headers["Authorization"]};
+    post.timeout = kRegisterTimeout;
+    post.retry_on_status = false;
+    post.max_attempts = 1;
+    post.max_body_bytes = kMaxRegisterAnswerBytes;
+    const Exchange answer = exchange(*http, post);
+    int code = exit_code::transient;
+    if (!answer.response) {
+        err << "cloud revoke: the Cloud couldn't be reached (" << answer.word
+            << "); run it again, or revoke the Worker in the Cloud (manage.py revoke-worker)\n";
+    } else {
+        code = revoked(*answer.response, held, request.vault, out, err, env);
+    }
+    return finish_recording(recorder.get(), out, err, code);
+}
+
 int run_cloud_command(std::span<const std::string_view> args, std::ostream& out,
                       std::ostream& err, const CloudCommandEnv& env)
 {
     std::optional<CommandOptions> options;
+    const bool revoke = !args.empty() && args[0] == kRevoke;
     if (!args.empty() && args[0] == kRegister) {
         options = parse_options(args.subspan(1), {"--config", "--vault", "--name", "--record"});
+    } else if (revoke) {
+        options = parse_options(args.subspan(1), {"--config", "--vault", "--record"});
     }
     const bool empty_value =
         options && std::ranges::any_of(options->values, [](const auto& v) { return v.second.empty(); });
@@ -286,22 +421,26 @@ int run_cloud_command(std::span<const std::string_view> args, std::ostream& out,
         err << kCliUsage;
         return exit_code::usage;
     }
-    RegisterRequest request;
+    std::filesystem::path config;
+    std::filesystem::path vault;
     if (const std::optional<std::string> problem = config_problem([&] {
-            request.config = command_config_path(
+            config = command_config_path(
                 options->value("--config"),
                 env.default_config_path ? env.default_config_path : default_config_path);
-            request.vault = command_vault_path(
+            vault = command_vault_path(
                 options->value("--vault"),
                 env.default_vault_path ? env.default_vault_path : default_vault_path);
         })) {
         err << "config error: " << *problem << '\n';
         return exit_code::config;
     }
+    if (revoke) {
+        return revoke_worker({config, vault, options->value("--record")}, out, err, env);
+    }
+    RegisterRequest request{config, vault, std::nullopt, options->value("--record")};
     if (const std::optional<std::string_view> name = options->value("--name")) {
         request.name = std::string{*name};
     }
-    request.record = options->value("--record");
     return register_worker(request, out, err, env);
 }
 

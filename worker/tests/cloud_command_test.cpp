@@ -658,3 +658,423 @@ TEST_CASE("cloud register: a --config or --vault path that isn't UTF-8 is a conf
     CHECK_THAT(run.err, Catch::Matchers::StartsWith("config error: the " + option));
     CHECK(lab.cloud.requests().empty());
 }
+
+// --- W7.3 (docs/decisions.md 2026-10-19, "W7.3 (#82) and W7.4 (#83)", point 5): -----------
+// `rpworker cloud revoke`, the uninstall's call: the vault's API token sent once
+// to POST /v1/workers/self/revoke; the token is removed on a 204 and on a 401
+// (worthless either way), kept when the Cloud wasn't reached. Failures first.
+
+namespace {
+
+const std::string kRevokeUrl = "https://cloud.example.invalid/v1/workers/self/revoke";
+
+struct RevokeLab : Lab {
+    RevokeLab()
+    {
+        secrets.cloud_install_token.reset();
+        secrets.cloud_api_token = kIssued;
+        cloud.on(HttpMethod::post, kRevokeUrl, {rp::test::cloud_answer(204)});
+    }
+
+    // `cloud revoke --config <config> --vault <vault>` and `more`.
+    Run rev(Args more = {})
+    {
+        const std::string config_arg = config.string();
+        const std::string vault_arg = vault.string();
+        Args args{"revoke", "--config", config_arg, "--vault", vault_arg};
+        args.insert(args.end(), more.begin(), more.end());
+        return run(args);
+    }
+
+    void answer(HttpResponse response) { cloud.on(HttpMethod::post, kRevokeUrl, {std::move(response)}); }
+
+    // state\worker.json as `cloud register` wrote it; its text.
+    std::string write_record()
+    {
+        std::filesystem::create_directories(state);
+        const std::string text = rp::worker_record_text(
+            {kWorkerId, kKeyId, "https://cloud.example.invalid", "2026-10-15T12:40:20Z"});
+        std::ofstream file(worker_file(), std::ios::binary);
+        file << text;
+        return text;
+    }
+
+    std::string record_text() const
+    {
+        std::ifstream file(worker_file(), std::ios::binary);
+        return {std::istreambuf_iterator<char>(file), {}};
+    }
+};
+
+// The one write the command made was the vault as it was (the check write).
+void only_the_check_write(const RevokeLab& lab)
+{
+    REQUIRE(lab.writes.size() == 1);
+    CHECK(lab.writes[0].cloud_api_token == kIssued);
+    CHECK(lab.secrets.cloud_api_token == kIssued);
+}
+
+// The check write, then the one that took the token out and nothing else.
+void token_removed(const RevokeLab& lab)
+{
+    REQUIRE(lab.writes.size() == 2);
+    CHECK(lab.writes[0].cloud_api_token == kIssued);
+    CHECK_FALSE(lab.writes[1].cloud_api_token);
+    CHECK_FALSE(lab.writes[1].cloud_install_token);
+    CHECK(lab.writes[1].signing_key_base64 == std::string{rp::test::kSigningKey1Base64});
+    CHECK(lab.writes[1].veeam_username == "rp-veeam");
+    CHECK(lab.writes[1].veeam_password == "pw-w51");
+    CHECK_FALSE(lab.secrets.cloud_api_token);
+}
+
+} // namespace
+
+TEST_CASE("cloud revoke: a command line it doesn't take is usage, nothing read or sent", "[cloud_command]")
+{
+    const Args args = GENERATE(Args{"Revoke"}, Args{"revoke", "extra"}, Args{"revoke", "--name", "x"},
+                               Args{"revoke", "--vault"}, Args{"revoke", "--vault", ""},
+                               Args{"revoke", "--config", "a", "--config", "b"},
+                               Args{"revoke", "--record"}, Args{"revoke", "--outbox", "x"});
+    CAPTURE(args);
+    RevokeLab lab;
+
+    const Run run = lab.run(args);
+    CHECK(run.code == rp::exit_code::usage);
+    CHECK(run.out.empty());
+    CHECK(run.err == kUsage);
+    CHECK(lab.cloud.requests().empty());
+    CHECK(lab.writes.empty());
+    CHECK(lab.default_config_calls == 0);
+}
+
+TEST_CASE("cloud revoke: without an API token nothing is sent and nothing written", "[cloud_command]")
+{
+    RevokeLab lab;
+    SECTION("no API token") { lab.secrets.cloud_api_token.reset(); }
+    SECTION("an empty API token") { lab.secrets.cloud_api_token = ""; }
+    SECTION("an install token alone")
+    {
+        lab.secrets.cloud_api_token.reset();
+        lab.secrets.cloud_install_token = kInstall;
+    }
+
+    const Run run = lab.rev();
+    CHECK(run.code == rp::exit_code::config);
+    CHECK(run.out.empty());
+    CHECK(run.err == "config error: cloud_api_token is not in the vault; this Worker is not registered\n");
+    CHECK(lab.cloud.requests().empty());
+    CHECK(lab.writes.empty());
+    no_token_in(run);
+}
+
+TEST_CASE("cloud revoke: a vault that can't be read or a config that doesn't load sends nothing",
+          "[cloud_command]")
+{
+    RevokeLab lab;
+    std::string expected;
+    SECTION("a vault that can't be read")
+    {
+        lab.read_fails = true;
+        expected = "config error: " + lab.vault.string() + ": the vault file can't be read\n";
+    }
+    SECTION("a config that doesn't load")
+    {
+        lab.config = lab.dir.write("broken.json", "{");
+        expected = "config error: ";
+    }
+
+    const Run run = lab.rev();
+    CHECK(run.code == rp::exit_code::config);
+    CHECK_THAT(run.err, Catch::Matchers::StartsWith(expected));
+    CHECK(lab.cloud.requests().empty());
+    CHECK(lab.writes.empty());
+}
+
+TEST_CASE("cloud revoke: a vault this account can't write is found before anything is sent",
+          "[cloud_command]")
+{
+    RevokeLab lab;
+    lab.failing_write = 1;
+
+    const Run run = lab.rev();
+    CHECK(run.code == rp::exit_code::config);
+    CHECK(run.out.empty());
+    CHECK(run.err == "vault error: " + lab.vault.string() + ": the vault file couldn't be written\n");
+    CHECK(lab.cloud.requests().empty());
+    REQUIRE(lab.writes.size() == 1);
+    CHECK(lab.writes[0].cloud_api_token == kIssued);
+    no_token_in(run);
+}
+
+TEST_CASE("cloud revoke: a 401 is a token the Cloud doesn't know, removed from the vault", "[cloud_command]")
+{
+    RevokeLab lab;
+    lab.answer(rp::test::cloud_answer(401, R"({"detail":"not authenticated"})"));
+    const std::string record = lab.write_record();
+
+    const Run run = lab.rev();
+    CHECK(run.code == rp::exit_code::auth);
+    CHECK(run.out.empty());
+    CHECK(run.err == "cloud revoke: the Cloud doesn't know this token (revoked already, or never this "
+                     "Cloud's); it was removed from the vault\n");
+    token_removed(lab);
+    CHECK(lab.record_text() == record);
+    no_token_in(run);
+}
+
+TEST_CASE("cloud revoke: a 5xx is the Cloud not reached, the token kept", "[cloud_command]")
+{
+    const int status = GENERATE(500, 502, 503, 504);
+    CAPTURE(status);
+    RevokeLab lab;
+    lab.answer(rp::test::make_response(status, "<html>gateway</html>", "text/html"));
+
+    const Run run = lab.rev();
+    CHECK(run.code == rp::exit_code::transient);
+    CHECK(run.out.empty());
+    CHECK(run.err == "cloud revoke: the Cloud couldn't be reached (http_" + std::to_string(status) +
+                         "); run it again, or revoke the Worker in the Cloud (manage.py revoke-worker)\n");
+    only_the_check_write(lab);
+    no_token_in(run);
+}
+
+TEST_CASE("cloud revoke: any other status is a refusal, the token kept", "[cloud_command]")
+{
+    const int status = GENERATE(400, 404, 405, 409, 413, 422);
+    CAPTURE(status);
+    RevokeLab lab;
+    lab.answer(rp::test::cloud_answer(status, R"({"detail":"no"})"));
+
+    const Run run = lab.rev();
+    CHECK(run.code == rp::exit_code::service);
+    CHECK(run.out.empty());
+    CHECK(run.err == "cloud revoke: refused (http_" + std::to_string(status) + ")\n");
+    only_the_check_write(lab);
+    no_token_in(run);
+}
+
+TEST_CASE("cloud revoke: a request that got no answer keeps the token for another try", "[cloud_command]")
+{
+    const auto [error, word] = GENERATE(table<rp::TransportError, std::string>({
+        {rp::TransportError::timeout, "timeout"},
+        {rp::TransportError::connect, "unreachable"},
+        {rp::TransportError::dropped, "unreachable"},
+        {rp::TransportError::handshake, "unreachable"},
+        {rp::TransportError::tls, "unreachable"},
+        {rp::TransportError::other, "internal"},
+    }));
+    CAPTURE(word);
+    RevokeLab lab;
+    lab.cloud.on(HttpMethod::post, kRevokeUrl, [error](const rp::HttpRequest&) -> HttpResponse {
+        throw rp::HttpError("test", error, 0, 1);
+    });
+
+    const Run run = lab.rev();
+    CHECK(run.code == rp::exit_code::transient);
+    CHECK(run.out.empty());
+    CHECK(run.err == "cloud revoke: the Cloud couldn't be reached (" + word +
+                         "); run it again, or revoke the Worker in the Cloud (manage.py revoke-worker)\n");
+    only_the_check_write(lab);
+}
+
+TEST_CASE("cloud revoke: a client that throws a status has that status's line", "[cloud_command]")
+{
+    RevokeLab lab;
+    lab.cloud.on(HttpMethod::post, kRevokeUrl, [](const rp::HttpRequest&) -> HttpResponse {
+        throw rp::HttpError("test", rp::TransportError::none, 503, 1);
+    });
+    CHECK(lab.rev().err == "cloud revoke: the Cloud couldn't be reached (http_503); run it again, or "
+                           "revoke the Worker in the Cloud (manage.py revoke-worker)\n");
+    only_the_check_write(lab);
+
+    RevokeLab other;
+    other.cloud.on(HttpMethod::post, kRevokeUrl,
+                   [](const rp::HttpRequest&) -> HttpResponse { throw std::runtime_error("no"); });
+    CHECK(other.rev().err == "cloud revoke: the Cloud couldn't be reached (internal); run it again, or "
+                             "revoke the Worker in the Cloud (manage.py revoke-worker)\n");
+    only_the_check_write(other);
+}
+
+TEST_CASE("cloud revoke: a 2xx that isn't the Cloud's removes nothing", "[cloud_command]")
+{
+    RevokeLab lab;
+    std::string expected;
+    SECTION("no contract header")
+    {
+        lab.answer(rp::test::make_response(204));
+        expected = "cloud revoke: the answer is not a RestoreProof Cloud's (no X-RestoreProof-API: 1)\n";
+    }
+    SECTION("another contract")
+    {
+        HttpResponse answer = rp::test::cloud_answer(204);
+        answer.headers["X-RestoreProof-API"] = "2";
+        lab.answer(answer);
+        expected = "cloud revoke: the answer is not a RestoreProof Cloud's (X-RestoreProof-API: 2)\n";
+    }
+
+    const Run run = lab.rev();
+    CHECK(run.code == rp::exit_code::service);
+    CHECK(run.out.empty());
+    CHECK(run.err == expected);
+    only_the_check_write(lab);
+    no_token_in(run);
+}
+
+TEST_CASE("cloud revoke: the Cloud's 204 removes the API token in one write and names the Worker",
+          "[cloud_command]")
+{
+    RevokeLab lab;
+    std::string line = "revoked this Worker\n";
+    std::string record;
+    SECTION("no worker.json") {}
+    SECTION("worker.json there, left as it was")
+    {
+        record = lab.write_record();
+        line = "revoked worker " + kWorkerId + "\n";
+    }
+    SECTION("a worker.json that isn't one")
+    {
+        std::filesystem::create_directories(lab.state);
+        lab.dir.write("state/worker.json", "{\"worker_id\":\"x\"}");
+        record = "{\"worker_id\":\"x\"}";
+    }
+    SECTION("a 200 with the header is the Cloud's too") { lab.answer(rp::test::cloud_answer(200)); }
+
+    const Run run = lab.rev();
+    CHECK(run.code == rp::exit_code::ok);
+    CHECK(run.out == line);
+    CHECK(run.err.empty());
+    no_token_in(run);
+    token_removed(lab);
+    if (!record.empty()) {
+        CHECK(lab.record_text() == record);
+    } else {
+        CHECK_FALSE(std::filesystem::exists(lab.worker_file()));
+    }
+
+    // The one request: the token as the bearer, no body, sent once.
+    const std::vector<rp::HttpRequest> sent = lab.cloud.requests();
+    REQUIRE(sent.size() == 1);
+    const rp::HttpRequest& request = sent[0];
+    CHECK(request.method == HttpMethod::post);
+    CHECK(request.url == kRevokeUrl);
+    CHECK(request.body.empty());
+    CHECK(request.max_attempts == 1);
+    CHECK_FALSE(request.retry_on_status);
+    CHECK(request.timeout == rp::kRegisterTimeout);
+    CHECK(request.max_body_bytes == rp::kMaxRegisterAnswerBytes);
+    REQUIRE(request.headers.size() == 1);
+    CHECK(request.headers.at("Authorization") == rp::bearer(kIssued));
+}
+
+TEST_CASE("cloud revoke: a vault that can't take the removal says what to do", "[cloud_command]")
+{
+    RevokeLab lab;
+    lab.failing_write = 2;
+    std::string line = "cloud revoke: the Cloud revoked this Worker, but the API token couldn't be removed "
+                       "from the vault (rpworker vault remove cloud_api_token)\n";
+    SECTION("after the 204") {}
+    SECTION("after a 401")
+    {
+        lab.answer(rp::test::cloud_answer(401, R"({"detail":"not authenticated"})"));
+        line = "cloud revoke: the Cloud doesn't know this token (revoked already, or never this "
+               "Cloud's); it couldn't be removed from the vault (rpworker vault remove cloud_api_token)\n";
+    }
+
+    const Run run = lab.rev();
+    CHECK(run.code == rp::exit_code::config);
+    CHECK(run.out.empty());
+    CHECK(run.err == line);
+    REQUIRE(lab.writes.size() == 2);
+    CHECK_FALSE(lab.writes[1].cloud_api_token);
+    no_token_in(run);
+}
+
+TEST_CASE("cloud revoke: without --config and --vault the defaults are read", "[cloud_command]")
+{
+    RevokeLab lab;
+    std::ostringstream out;
+    std::ostringstream err;
+    const Args args{"revoke"};
+
+    CHECK(rp::run_cloud_command(args, out, err, lab.env()) == rp::exit_code::ok);
+    CHECK(lab.default_config_calls == 1);
+    CHECK(lab.default_vault_calls == 1);
+}
+
+TEST_CASE("cloud revoke --record writes the exchange with no token", "[cloud_command]")
+{
+    RevokeLab lab;
+    const std::filesystem::path recording = lab.dir.path() / "rec";
+    const std::string recording_arg = recording.string();
+
+    const Run run = lab.rev({"--record", recording_arg});
+    CHECK(run.code == rp::exit_code::ok);
+    CHECK(run.out == "revoked this Worker\nrecorded 1 exchange(s) in " + recording_arg + "\n");
+    std::size_t files = 0;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(recording)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        ++files;
+        std::ifstream file(entry.path(), std::ios::binary);
+        const std::string text{std::istreambuf_iterator<char>(file), {}};
+        CHECK_THAT(text, !ContainsSubstring(kIssued));
+        CHECK_THAT(text, ContainsSubstring("X-RestoreProof-API"));
+        CHECK_THAT(text, ContainsSubstring("/v1/workers/self/revoke"));
+        CHECK(entry.path().parent_path().filename() == "cloud");
+    }
+    CHECK(files == 1);
+}
+
+TEST_CASE("cloud revoke: a --record folder that isn't new or empty records nothing and sends nothing",
+          "[cloud_command]")
+{
+    RevokeLab lab;
+    std::filesystem::create_directories(lab.dir.path() / "rec");
+    lab.dir.write("rec/already.json", "{}");
+    const std::string recording_arg = (lab.dir.path() / "rec").string();
+
+    const Run run = lab.rev({"--record", recording_arg});
+    CHECK(run.code == rp::exit_code::config);
+    CHECK_THAT(run.err, Catch::Matchers::StartsWith("config error: "));
+    CHECK(lab.cloud.requests().empty());
+    only_the_check_write(lab);
+}
+
+TEST_CASE("cloud revoke: a --config or --vault path that isn't UTF-8 is a config error", "[cloud_command]")
+{
+    const std::string option = GENERATE(std::string{"--config"}, std::string{"--vault"});
+    RevokeLab lab;
+    const std::string bad = "\xff";
+
+    const Run run = lab.run({"revoke", option, bad});
+    CHECK(run.code == rp::exit_code::config);
+    CHECK_THAT(run.err, Catch::Matchers::StartsWith("config error: the " + option));
+    CHECK(lab.cloud.requests().empty());
+}
+
+TEST_CASE("cloud revoke: the Cloud's recorded answers, as the stack gave them", "[cloud_command]")
+{
+    const auto [fixture, code, removed, line] = GENERATE(table<std::string, int, bool, std::string>({
+        {"revoke/204", rp::exit_code::ok, true, ""},
+        {"revoke/401", rp::exit_code::auth, true,
+         "cloud revoke: the Cloud doesn't know this token (revoked already, or never this Cloud's); it "
+         "was removed from the vault"},
+        {"revoke/401-revoked", rp::exit_code::auth, true,
+         "cloud revoke: the Cloud doesn't know this token (revoked already, or never this Cloud's); it "
+         "was removed from the vault"},
+    }));
+    CAPTURE(fixture);
+    RevokeLab lab;
+    lab.answer(load_fixture("cloud", fixture));
+
+    const Run run = lab.rev();
+    CHECK(run.code == code);
+    CHECK(run.out == (code == rp::exit_code::ok ? std::string{"revoked this Worker\n"} : std::string{}));
+    CHECK(run.err == (line.empty() ? std::string{} : line + "\n"));
+    if (removed) {
+        token_removed(lab);
+    }
+    no_token_in(run);
+}

@@ -959,6 +959,76 @@ TEST_CASE("secret audit M: cloud register --record, a 201 stored; service start'
     CHECK(lab.outputs.has_output("temp/rec-cloud/"));
 }
 
+// --- W7.3: cloud revoke, the uninstall's call (docs/decisions.md 2026-10-19, point 5) ----
+
+TEST_CASE("secret audit O: cloud revoke --record, a 204 taken and a 401 taken; the token in the "
+          "request's bearer alone",
+          "[secret_audit]")
+{
+    AuditLab lab;
+    const std::filesystem::path vault_path = lab.dir.path() / "vault.bin";
+    const auto fresh_vault = [&] { rp::write_vault(vault_path, audit::secrets()); };
+    rp::test::FakeHttpClient cloud;
+    const std::string url = "https://cloud.example.invalid/v1/workers/self/revoke";
+    cloud.on(rp::HttpMethod::post, url,
+             {rp::test::cloud_answer(204), rp::test::cloud_answer(401, R"({"detail":"not authenticated"})"),
+              rp::test::make_response(502, "<html>bad gateway</html>", "text/html")});
+    rp::CloudCommandEnv env;
+    env.make_cloud_http = [&](const rp::Config&) -> std::unique_ptr<rp::IHttpClient> {
+        return std::make_unique<rp::test::ForwardingHttpClient>(cloud);
+    };
+    env.default_state_dir = [&] { return lab.dir.path() / "state"; };
+    const std::string config = utf8(lab.config_path);
+    const std::string vault = utf8(vault_path);
+    const std::string record = utf8(lab.dir.path() / "rec-revoke");
+    const auto cli = [&](const Args& args) {
+        std::ostringstream out;
+        std::ostringstream err;
+        const int code = rp::run_cloud_command(args, out, err, env);
+        return Run{code, out.str(), err.str()};
+    };
+
+    fresh_vault();
+    const Run revoked = cli({"revoke", "--config", config, "--vault", vault, "--record", record});
+    REQUIRE(revoked.exit_code == rp::exit_code::ok);
+    REQUIRE_THAT(revoked.out, ContainsSubstring("revoked this Worker"));
+    REQUIRE_THAT(revoked.out, ContainsSubstring("recorded 1 exchange(s)"));
+    REQUIRE_FALSE(rp::read_vault(vault_path).cloud_api_token);
+    lab.collect("cloud revoke --record", revoked);
+
+    fresh_vault();
+    const Run unknown = cli({"revoke", "--config", config, "--vault", vault});
+    REQUIRE(unknown.exit_code == rp::exit_code::auth);
+    REQUIRE_FALSE(rp::read_vault(vault_path).cloud_api_token);
+    lab.collect("cloud revoke 401", unknown);
+
+    fresh_vault();
+    const Run unreached = cli({"revoke", "--config", config, "--vault", vault});
+    REQUIRE(unreached.exit_code == rp::exit_code::transient);
+    REQUIRE(rp::read_vault(vault_path).cloud_api_token == std::string{audit::kApiToken});
+    lab.collect("cloud revoke 502", unreached);
+
+    // The request carries the API token as its bearer and nowhere else: the
+    // header is checked and taken out before the search; the body is empty.
+    std::size_t n = 0;
+    for (const rp::HttpRequest& request : cloud.requests()) {
+        const std::string prefix = "cloud request " + std::to_string(++n);
+        lab.outputs.add(prefix + " url", request.url);
+        REQUIRE(request.body.empty());
+        for (const auto& [name, value] : request.headers) {
+            if (name == "Authorization") {
+                REQUIRE(value == rp::bearer(audit::kApiToken));
+                continue;
+            }
+            lab.outputs.add(prefix + " header " + name, value);
+        }
+    }
+    CHECK(n == 3);
+
+    lab.finish();
+    CHECK(lab.outputs.has_output("temp/rec-revoke/"));
+}
+
 // --- W7.2: doctor's lines and its --json, a new kind of output (W4.9's Open) -----------
 
 namespace {

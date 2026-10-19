@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(restoreproof_worker VERSION 0.1.0 LANGUAGES CXX)
+project(restoreproof_worker VERSION 0.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -353,7 +353,7 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph certificate [--vault <file>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] [--record <dir>] | rpworker signer public-key [--vault <file>] | rpworker signer new-key [--vault <file>] [--replace] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>] | rpworker doctor [--config <path>] [--vault <file>] [--client <profile file>]... [--json <file>] [--record <dir>]")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph certificate [--vault <file>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] [--record <dir>] | rpworker cloud revoke [--config <path>] [--vault <file>] [--record <dir>] | rpworker signer public-key [--vault <file>] | rpworker signer new-key [--vault <file>] [--replace] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>] | rpworker doctor [--config <path>] [--vault <file>] [--client <profile file>]... [--json <file>] [--record <dir>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
     ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"
@@ -407,6 +407,14 @@ set(RP_VAULT_FULL ${RP_EXE_VAULTS}/full.bin)       # those, graph_cert_pfx_base6
 set(RP_VAULT_EMPTY ${RP_EXE_VAULTS}/empty.bin)     # nothing
 set(RP_VAULT_TOKEN ${RP_EXE_VAULTS}/token.bin)     # cloud_api_token
 set(RP_VAULT_MISSING ${RP_EXE_VAULTS}/no-such-vault.bin)
+# W7.3: cloud revoke's refusals before anything is sent (the Catch2 tests hold the rest).
+rp_add_exe_test("rpworker cloud revoke rejects an option it doesn't take"
+    ARGS cloud revoke --name x EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker cloud revoke --vault needs a file"
+    ARGS cloud revoke --vault EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker cloud revoke reports a missing config file"
+    ARGS cloud revoke --config no-such-config.json --vault ${RP_VAULT_MISSING}
+    EXIT_CODE 1 STDOUT "" STDERR "config error: no-such-config.json: cannot read config file")
 function(rp_add_vault_setup name vault secret)
     cmake_parse_arguments(PARSE_ARGV 3 T "" "AFTER" "")
     rp_add_exe_test("${name}"

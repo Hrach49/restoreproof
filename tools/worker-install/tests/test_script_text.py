@@ -2,7 +2,7 @@
 
 import re
 
-from pwsh import FAKE_MACHINE, MACHINE_MODULE, MODULE, SCRIPT
+from pwsh import FAKE_MACHINE, MACHINE_MODULE, MODULE, SCRIPT, UNINSTALL_SCRIPT
 
 
 def text(path) -> str:
@@ -27,19 +27,34 @@ def test_a_secret_goes_to_the_worker_on_stdin_and_never_as_an_argument():
         assert word not in script, word
 
 
-def test_the_script_never_undoes_a_step_and_names_what_is_w73_and_w74():
+def test_the_script_never_undoes_a_step_and_names_the_uninstall_script():
     script = text(SCRIPT)
     assert "service uninstall" not in script.replace("rpworker service stop; rpworker service uninstall", "")
-    assert "Remove-Item" not in script
-    assert "W7.3" in script
+    # The one thing the installer removes: the previous version's files, on an upgrade (W7.4 point 3).
+    assert script.count("Remove-Item") == 1 and "Remove-Item -LiteralPath $previous -Recurse -Force" in script
+    assert "Uninstall-RestoreProofWorker.ps1 (W7.3)" in script
+
+
+def test_the_uninstall_script_is_strict_asks_nothing_and_holds_no_secret():
+    script = text(UNINSTALL_SCRIPT)
+    assert "#Requires -Version 7.4" in script and "Set-StrictMode -Version Latest" in script
+    assert "$ErrorActionPreference = 'Stop'" in script and "[CmdletBinding(SupportsShouldProcess)]" in script
+    for word in ("Read-Host", "-Stdin", "vault set", "ConvertTo-SecureString", "Set-Content", "Out-File", "Start-Transcript", "Get-Acl", "Set-Acl", "icacls.exe"):
+        assert word not in script, word
+    assert "Set-Location $env:SystemRoot" in script, "never in the folder it removes"
+    # Nothing is removed before the service is uninstalled: every removal comes after step 8.
+    assert script.index("rpworker service uninstall") < script.index("Remove-FileOverwritten")
+    assert script.index("rpworker service uninstall") < script.index("Remove-Item -LiteralPath $ProgramDir")
+    assert "securely" not in script.lower()
 
 
 def test_the_fake_machine_exports_what_the_real_one_does():
     pattern = re.compile(r"Export-ModuleMember -Function (.+)")
     real = sorted(name.strip() for name in pattern.search(text(MACHINE_MODULE)).group(1).split(","))
     fake = sorted(name.strip() for name in pattern.search(text(FAKE_MACHINE)).group(1).split(","))
-    assert real == fake == ["Get-CertificateKeyFile", "Get-InstalledService", "Get-MachineFacts", "Get-RemoteCertificate",
-                            "Test-IsElevated", "Test-VeeamOnThisMachine"]
+    assert real == fake == ["Get-CertificateKeyFile", "Get-InstalledService", "Get-MachineFacts", "Get-PwshPath", "Get-RemoteCertificate",
+                            "Get-RunRecord", "Get-UninstallEntry", "Get-WorkerVersion", "Remove-FileOverwritten", "Remove-UninstallEntry",
+                            "Set-UninstallEntry", "Test-IsElevated", "Test-VeeamOnThisMachine"]
 
 
 def test_the_rules_module_reads_nothing_of_the_machine():

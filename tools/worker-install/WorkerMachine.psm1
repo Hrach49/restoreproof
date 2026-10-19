@@ -1,8 +1,10 @@
 <#
     What Install-RestoreProofWorker.ps1 reads of the machine it runs on (W7.1): whether the shell
     is elevated, the installed service, Veeam's REST service, the certificate veeam_url presents,
-    a certificate's private key file. Nothing here decides anything (RestoreProofWorker.psm1
-    does) and nothing here writes. The script takes this module by path (-MachineModule) so the
+    a certificate's private key file; since W7.3 and W7.4 an exe's version, the run record, the
+    Apps & features entry and the overwrite-then-delete of a file. Nothing here decides anything
+    (RestoreProofWorker.psm1 does); what writes (the entry, the overwrite) is called by the scripts
+    once a rule said to. The script takes this module by path (-MachineModule) so the
     tests give it tests/FakeMachine.psm1 instead; every function here has a fake of the same
     name and shape there. It imports nothing: Get-KeyFileCandidates comes from the rules module
     the script imported, found through the global scope (an Import-Module -Force from inside a
@@ -95,4 +97,95 @@ function Get-CertificateKeyFile([Parameter(Mandatory)][string]$Thumbprint) {
     $null
 }
 
-Export-ModuleMember -Function Test-IsElevated, Get-MachineFacts, Get-InstalledService, Test-VeeamOnThisMachine, Get-RemoteCertificate, Get-CertificateKeyFile
+
+# --- W7.3 and W7.4 (decision 2026-10-19): the upgrade and the uninstall ------------------
+
+<#
+.SYNOPSIS
+    What `Exe --version` prints, held to a version's shape; throws with the exe's first line
+    when it isn't one or the exe can't be run.
+#>
+function Get-WorkerVersion([Parameter(Mandatory)][string]$Exe) {
+    $lines = @(& $Exe --version 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -ne '' })
+    $first = if ($lines.Count) { $lines[0].Trim() } else { '(no output)' }
+    if ($LASTEXITCODE -ne 0 -or $first -notmatch '^\d+\.\d+\.\d+$') { throw "$Exe --version failed: $first" }
+    $first
+}
+
+<#
+.SYNOPSIS
+    The run the service has taken, from state\running.json under `Root` (W4.8: written ahead of
+    every step of a run, deleted after the run and its hold): $null when no record is there,
+    else its run_id ('?' when the file can't be read as the record). Nothing else of it is read.
+#>
+function Get-RunRecord([Parameter(Mandatory)][string]$Root) {
+    $path = Join-Path $Root 'state\running.json'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    try {
+        $record = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        $id = if ($record.PSObject.Properties['run_id']) { [string]$record.run_id } else { '' }
+        if ($id -notmatch '^[A-Za-z0-9._-]{1,128}$') { $id = '?' }
+    } catch { $id = '?' }
+    [pscustomobject]@{ RunId = $id }
+}
+
+# The pwsh running this, for the Apps entry's UninstallString.
+function Get-PwshPath { (Get-Process -Id $PID).Path }
+
+$script:UninstallKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+
+<#
+.SYNOPSIS
+    The Apps & features entry's values as a hashtable (name to value), or $null when there is
+    none.
+#>
+function Get-UninstallEntry([Parameter(Mandatory)][string]$Name) {
+    $key = Join-Path $script:UninstallKey $Name
+    if (-not (Test-Path -LiteralPath $key)) { return $null }
+    $item = Get-ItemProperty -LiteralPath $key
+    $values = @{}
+    foreach ($property in $item.PSObject.Properties) {
+        if ($property.Name -in 'PSPath', 'PSParentPath', 'PSChildName', 'PSDrive', 'PSProvider') { continue }
+        $values[$property.Name] = $property.Value
+    }
+    $values
+}
+
+function Set-UninstallEntry([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)]$Values) {
+    $key = Join-Path $script:UninstallKey $Name
+    if (-not (Test-Path -LiteralPath $key)) { $null = New-Item -Path $key -Force }
+    foreach ($entry in $Values.GetEnumerator()) {
+        $type = if ($entry.Value -is [int]) { 'DWord' } else { 'String' }
+        $null = New-ItemProperty -LiteralPath $key -Name $entry.Key -Value $entry.Value -PropertyType $type -Force
+    }
+}
+
+function Remove-UninstallEntry([Parameter(Mandatory)][string]$Name) {
+    $key = Join-Path $script:UninstallKey $Name
+    if (Test-Path -LiteralPath $key) { Remove-Item -LiteralPath $key -Recurse -Force }
+}
+
+<#
+.SYNOPSIS
+    The file's bytes overwritten once in place with random ones through one handle, flushed to
+    the disk, then the file deleted (W7.3 point 6: it defeats an undelete tool; it guarantees no
+    erasure on an SSD or inside a volume snapshot). -KeepFile leaves the overwritten file for a
+    test to read. Throws when the file can't be opened (held by someone, or no right).
+#>
+function Remove-FileOverwritten([Parameter(Mandatory)][string]$Path, [switch]$KeepFile) {
+    $stream = [IO.FileStream]::new($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try {
+        $length = $stream.Length
+        $left = $length
+        while ($left -gt 0) {
+            $n = [int][Math]::Min(65536, $left)
+            $chunk = [Security.Cryptography.RandomNumberGenerator]::GetBytes($n)
+            $stream.Write($chunk, 0, $n)
+            $left -= $n
+        }
+        $stream.Flush($true)
+    } finally { $stream.Dispose() }
+    if (-not $KeepFile) { [IO.File]::Delete($Path) }
+}
+
+Export-ModuleMember -Function Test-IsElevated, Get-MachineFacts, Get-InstalledService, Test-VeeamOnThisMachine, Get-RemoteCertificate, Get-CertificateKeyFile, Get-WorkerVersion, Get-RunRecord, Get-PwshPath, Get-UninstallEntry, Set-UninstallEntry, Remove-UninstallEntry, Remove-FileOverwritten

@@ -19,7 +19,11 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
-from pwsh import FAKE_MACHINE, SCRIPT, TESTS_DIR, ps_string, run
+from pwsh import CERT_SCRIPT, FAKE_MACHINE, SCRIPT, SETUP_DIR, TESTS_DIR, UNINSTALL_SCRIPT, ps_string, run
+
+# What the package carries beside the exe and the DLLs (W7.3 point 2: copied into the program folder).
+SCRIPTS = ("Install-RestoreProofWorker.ps1", "Uninstall-RestoreProofWorker.ps1", "RestoreProofWorker.psm1",
+           "WorkerMachine.psm1", "New-WorkerGraphCertificate.ps1")
 
 SERVICE = "rp-test-w71-no-such-service"
 PASSWORD = "Sentinel-Veeam-Password-7f3a"
@@ -62,7 +66,8 @@ def sha1_hex(der: bytes) -> str:
 class InstallLab:
     def __init__(self, folder: Path, *, veeam_here: bool = True, elevated: bool = True, ps_version: str = "7.4.0",
                  installed_service: dict | None = None, remote: dict | None = "own", key_files: dict | None = None,
-                 vault: dict | None = None, flags: tuple[str, ...] = ()):
+                 vault: dict | None = None, flags: tuple[str, ...] = (), version: str = "0.1.0",
+                 run_in_progress: bool | int = False):
         self.folder = folder
         self.fake = folder / "fake"
         self.package = folder / "package"
@@ -72,9 +77,7 @@ class InstallLab:
             sub.mkdir()
         self.cmd = self.fake / "rpworker.cmd"
         self.cmd.write_text(f'@"{sys.executable}" "{TESTS_DIR / "fake_rpworker.py"}" %*\r\n', encoding="ascii")
-        (self.package / "rpworker.exe").write_bytes(b"MZ fake worker " + os.urandom(16))
-        (self.package / "fake.dll").write_bytes(b"MZ fake dll " + os.urandom(16))
-        (self.package / "README.txt").write_text("not copied", encoding="ascii")
+        self.write_package(self.package, version)
         self.veeam_der = self_signed("Veeam Software")
         if remote == "own":
             remote = {"derBase64": "", "inLocalStoreWithKey": True, "chainsToStore": False, "namesHost": False}
@@ -93,6 +96,9 @@ class InstallLab:
             "installedService": installed_service,
             "remote": remote,
             "keyFiles": key_files,
+            # W7.3/W7.4: a run in progress for ever (True) or for the first n reads of the record.
+            "runInProgress": run_in_progress is True,
+            "runInProgressPolls": run_in_progress if isinstance(run_in_progress, int) and run_in_progress is not True else 0,
         }
         self.write_machine()
         if vault is not None:
@@ -101,6 +107,31 @@ class InstallLab:
             self.flag("missing-vault")
         for flag in flags:
             self.flag(flag)
+
+    @staticmethod
+    def write_package(folder: Path, version: str):
+        """A package folder as the zip unpacks: a dummy exe carrying its version in its bytes
+        (the fake machine's Get-WorkerVersion reads it), a DLL, the five scripts, a file that
+        is never copied."""
+        folder.mkdir(exist_ok=True)
+        (folder / "rpworker.exe").write_bytes(f"MZ fake worker {version} ".encode("ascii") + os.urandom(16))
+        (folder / "fake.dll").write_bytes(f"MZ fake dll {version} ".encode("ascii") + os.urandom(16))
+        (folder / "README.txt").write_text("not copied", encoding="ascii")
+        for name in SCRIPTS:
+            (folder / name).write_bytes((SETUP_DIR / name).read_bytes() if (SETUP_DIR / name).exists() else (CERT_SCRIPT).read_bytes())
+
+    def installed(self, *, state: str = "Running"):
+        """The machine as it is once the installer ran: the service installed from the program folder."""
+        self.machine["installedService"] = {"pathName": f'"{self.program / "rpworker.exe"}" service run', "state": state}
+        self.write_machine()
+
+    def entry(self) -> dict | None:
+        path = self.fake / "uninstall-entry.json"
+        return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+    def overwritten(self) -> list[str]:
+        log = self.fake / "overwritten.log"
+        return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
 
     def write_machine(self):
         (self.fake / "machine.json").write_text(json.dumps(self.machine), encoding="utf-8")
@@ -138,9 +169,10 @@ class InstallLab:
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
     def run(self, *extra: str, answers: dict | None = ANSWERS, urls: bool = True, whatif: bool = False,
-            worker_name: str = "fake-host-worker", timeout: int = 240) -> subprocess.CompletedProcess:
+            worker_name: str = "fake-host-worker", timeout: int = 240, package: Path | None = None) -> subprocess.CompletedProcess:
         params = [
-            f"-Package {ps_string(self.package)}",
+            f"-Package {ps_string(package or self.package)}",
+            "-PollSeconds 1",
             f"-ProgramDir {ps_string(self.program)}",
             f"-Root {ps_string(self.root)}",
             f"-Worker {ps_string(self.cmd)}",
@@ -164,6 +196,28 @@ class InstallLab:
             f"$env:RP_FAKE_DIR = {ps_string(self.fake)}\n"
             f"try {{ & {ps_string(SCRIPT)} {' '.join(params)} }}\n"
             "catch { [Console]::Error.WriteLine($_.Exception.Message); [Console]::Error.WriteLine($_.ScriptStackTrace); throw }\n"
+        )
+        return run(command, timeout=timeout)
+
+    def uninstall(self, *extra: str, whatif: bool = False, timeout: int = 240, worker: Path | None = None) -> subprocess.CompletedProcess:
+        """Uninstall-RestoreProofWorker.ps1 on the same folders and fakes (W7.3)."""
+        params = [
+            f"-ProgramDir {ps_string(self.program)}",
+            f"-Root {ps_string(self.root)}",
+            f"-Worker {ps_string(worker or self.cmd)}",
+            f"-ServiceName {ps_string(SERVICE)}",
+            f"-MachineModule {ps_string(FAKE_MACHINE)}",
+            "-PollSeconds 1",
+        ]
+        if whatif:
+            params.append("-WhatIf")
+        params += list(extra)
+        command = (
+            f"$env:RP_FAKE_DIR = {ps_string(self.fake)}\n"
+            f"try {{ & {ps_string(UNINSTALL_SCRIPT)} {' '.join(params)} }}\n"
+            "catch { [Console]::Error.WriteLine($_.Exception.Message); [Console]::Error.WriteLine($_.ScriptStackTrace); throw }\n"
+            # The script's own `exit 1` (a file that couldn't be removed) is the process's.
+            "exit $(if (Test-Path variable:LASTEXITCODE) { $LASTEXITCODE } else { 0 })\n"
         )
         return run(command, timeout=timeout)
 

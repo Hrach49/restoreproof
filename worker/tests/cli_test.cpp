@@ -34,7 +34,7 @@ const std::string kUsage =
     "rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] | "
     "rpworker outbox list [--outbox <root>] | "
     "rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] "
-    "[--record <dir>] | "
+    "[--record <dir>] | rpworker cloud revoke [--config <path>] [--vault <file>] [--record <dir>] | "
     "rpworker signer public-key [--vault <file>] | rpworker signer new-key [--vault <file>] [--replace] | "
     "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | "
     "rpworker service install [--config <path>] | rpworker service uninstall|start|stop | "

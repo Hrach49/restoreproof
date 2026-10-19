@@ -8,6 +8,8 @@ it (one line, the newline dropped), and every other command's effect is a marker
 that folder change the answers: `missing-vault` makes `vault list` answer as for a vault that
 isn't there yet, `fail-<command words joined by ->` makes that command fail with one line and
 the Worker's exit code, `register-401` makes `cloud register` answer as for a refused token,
+`revoke-401` and `revoke-503` the same for `cloud revoke` (W7.3), `outbox-list.txt` is what
+`outbox list` prints (its runs are "sent" by the next `outbox flush`),
 `register-503` as for a Cloud that wasn't reached, `cloud-holds-key` as for a Cloud that took
 this Worker's key in a registration whose answer was lost (409 for that key, the key it held
 kept in cloud-held-key.txt, 201 for any other). `config check` answers as the real one does
@@ -158,9 +160,62 @@ def main() -> int:
         print('installed RestoreProof: "C:\\Program Files\\RestoreProof\\rpworker.exe" service run')
         print("account NT SERVICE\\RestoreProof, automatic start, restart after 60 s up to 3 times; not started: run rpworker service start")
         return 0
+    if args == ["service", "uninstall"]:
+        if (folder / "service-started").exists():
+            print("service error: the service RestoreProof is running; stop it first (rpworker service stop)", file=sys.stderr)
+            return 1
+        if not (folder / "service-installed").exists():
+            print("service error: the service RestoreProof is not installed", file=sys.stderr)
+            return 1
+        if fails("service", "uninstall"):
+            print("service error: the service RestoreProof is marked for deletion; it goes when services.msc and any other tool that has it open are closed", file=sys.stderr)
+            return 3
+        (folder / "service-installed").unlink()
+        print("uninstalled RestoreProof")
+        return 0
+    if args[:2] == ["outbox", "flush"]:
+        if "cloud_api_token" not in vault:
+            print("outbox error: cloud_api_token is not in the vault; nothing was sent (rpworker cloud register)", file=sys.stderr)
+            return 1
+        if fails("outbox", "flush"):
+            print("kept fake-run-2: upload_unreachable; attempt 1, next at 2026-10-19T12:00:00Z")
+            print("1 queued, 0 sent, 0 failed")
+            return 3
+        listing = folder / "outbox-list.txt"
+        if listing.exists():
+            # Every queued run of the listing is sent by the flush, so the list after it is empty.
+            for run in [line.split()[0] for line in listing.read_text(encoding="utf-8").splitlines()[1:] if line and not line[0].isdigit()]:
+                print(f"sent {run}")
+            listing.unlink()
+            print("0 queued, 1 sent, 0 failed")
+            return 0
+        print("0 queued, 0 sent, 0 failed")
+        return 0
+    if args[:2] == ["outbox", "list"]:
+        listing = folder / "outbox-list.txt"
+        sys.stdout.write(listing.read_text(encoding="utf-8") if listing.exists() else "0 queued, 0 sent, 0 failed\n")
+        return 0
+    if args[:2] == ["cloud", "revoke"]:
+        if "cloud_api_token" not in vault:
+            print("config error: cloud_api_token is not in the vault; this Worker is not registered", file=sys.stderr)
+            return 1
+        if (folder / "revoke-503").exists():
+            print("cloud revoke: the Cloud couldn't be reached (http_503); run it again, or revoke the Worker in the Cloud (manage.py revoke-worker)", file=sys.stderr)
+            return 3
+        if (folder / "revoke-401").exists():
+            del vault["cloud_api_token"]
+            save()
+            print("cloud revoke: the Cloud doesn't know this token (revoked already, or never this Cloud's); it was removed from the vault", file=sys.stderr)
+            return 2
+        del vault["cloud_api_token"]
+        save()
+        mark("revoked")
+        print(f"revoked worker {WORKER_ID}")
+        return 0
     if args == ["service", "stop"]:
         if (folder / "service-started").exists():
             (folder / "service-started").unlink()
+            mark("service-stopped-once")
             print("stopped RestoreProof in 0.4 s")
         else:
             print("RestoreProof is already stopped")

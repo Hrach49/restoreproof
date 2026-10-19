@@ -2076,12 +2076,14 @@ without the server's `root_path`, so it stays exempt behind `uvicorn --root-path
 header check reads no byte and the counter counts only what the app pulls, so a heartbeat without
 a token is still the one 401 with nothing of its body read (C5.8); a 413 on the header before the
 401 tells a caller nothing of any token. The two routes that take a body, registration and the
-heartbeat, name the 413 in the document; a `GET` with a body gets it as the server's answer, like
+heartbeat, name the 413 in the document, and so does the Worker's revoke (W7.3), a `POST` a
+caller may put a body on; a `GET` with a body gets it as the server's answer, like
 the 404. Nothing else in the stack bounds a JSON body, and the Compose stack has no proxy; a
 deployment's proxy (C5.12) is the second line, not the first.
 
 **The security scheme.** The document's `components.securitySchemes.workerToken` (`http`,
-`bearer`) and the `security` entry on `GET /v1/jobs`, `POST /v1/results` and `POST /v1/heartbeat`
+`bearer`) and the `security` entry on `GET /v1/jobs`, `POST /v1/results`, `POST /v1/heartbeat` and
+`POST /v1/workers/self/revoke` (W7.3)
 come from `current_worker` itself, which depends on FastAPI's `HTTPBearer(auto_error=False)` for
 the document alone: a route that depends on `current_worker` is documented as taking the token
 with no second edit, and a test holds the document's secured operations equal to the routes
@@ -2177,6 +2179,29 @@ the token.
 warning once and the heartbeat keeps going (it is the Cloud's only word of a Worker whose token
 was revoked); 422 the Worker's `http_422` word (the two sides disagree on the body, which an
 upgrade fixes); 5xx, a timeout, no connection: the next interval is the retry, as today.
+
+## The Cloud revokes a Worker at its own word (W7.3)
+
+`POST /v1/workers/self/revoke` is the Cloud's side of `rpworker cloud revoke`, which the
+uninstall runs (`docs/upgrade.md`). The decision is `docs/decisions.md` 2026-10-19, "W7.3 (#82)
+and W7.4 (#83)", point 5; the code is the route in `cloud/app/routers/workers.py` over
+`onboarding.revoke_worker`, the CLI's (`manage.py revoke-worker`) and the `/workers` page's one
+function; the tests `cloud/tests/test_workers_self_revoke.py`.
+
+**What is written** is what the admin's revoke writes: `revoked_at` set once on the token's
+Worker's row (`WorkerRepo.revoke`, `WHERE msp_id AND id AND revoked_at IS NULL`) and one
+`audit_log` row `worker.revoke` `worker:<id>` with the Worker's address as the server saw it and
+no user, in the request's one transaction. No body is read, whatever is sent, and nothing of the
+request but the token decides anything.
+
+**What is answered:** 204 with no body and no `Content-Type`, with the contract header. No
+header, another scheme, an unknown token and a revoked Worker are `current_worker`'s one 401
+`{"detail": "not authenticated"}` with `WWW-Authenticate: Bearer` after its one lookup, before
+anything is written; so a Worker revoked already, by the admin or by itself, gets the 401 and
+not a second answer, and from the commit on its heartbeat, its poll, its upload and a second
+revoke are that 401. The Worker reads the 204 as `revoked worker <id>` and the 401 as "the
+Cloud doesn't know this token"; both end with the API token out of the vault. The log holds
+the request line and nothing of the token.
 
 ## The Worker reaches the Cloud (W5.1)
 

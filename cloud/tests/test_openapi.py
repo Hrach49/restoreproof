@@ -21,6 +21,8 @@ from tests.conftest import CLOUD_DIR, make_settings
 
 DOCUMENT = CLOUD_DIR.parent / "docs" / "api" / "openapi-v1.json"
 TOOL = CLOUD_DIR / "tools" / "dump_openapi.py"
+# The routes that take the Worker's bearer token (C5.11; W7.3 added the revoke).
+SECURED = {("/v1/jobs", "get"), ("/v1/results", "post"), ("/v1/heartbeat", "post"), ("/v1/workers/self/revoke", "post")}
 
 
 def load_tool():
@@ -58,10 +60,12 @@ def test_the_document_is_sorted_two_space_lf_with_a_final_newline():
     assert raw == (json.dumps(document, sort_keys=True, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def test_the_document_holds_the_five_routes_and_not_healthz():
+def test_the_document_holds_the_six_routes_and_not_healthz():
     document = json.loads(DOCUMENT.read_bytes().decode("utf-8"))
 
-    assert set(document["paths"]) == {"/v1/workers/register", "/v1/jobs", "/v1/results", "/v1/heartbeat", "/v1/version"}
+    assert set(document["paths"]) == {
+        "/v1/workers/register", "/v1/jobs", "/v1/results", "/v1/heartbeat", "/v1/version", "/v1/workers/self/revoke",
+    }
     assert "/healthz" not in document["paths"]
     register = document["paths"]["/v1/workers/register"]["post"]
     # The review's finding 3: every refusal the routes make is in the contract.
@@ -119,6 +123,16 @@ def test_the_document_holds_the_five_routes_and_not_healthz():
     assert {"type": "null"} in body["properties"]["last_error_at"]["anyOf"]
     for name in ("outbox_depth", "uptime_s"):
         assert (body["properties"][name]["type"], body["properties"][name]["minimum"], body["properties"][name]["maximum"]) == ("integer", 0, 2**53 - 1)
+    # W7.3: the Worker's own revoke, 204 without content, no body, the 401 and
+    # the cap's 413 as ErrorBody.
+    revoke = document["paths"]["/v1/workers/self/revoke"]
+    assert list(revoke) == ["post"]
+    assert set(revoke["post"]["responses"]) == {"204", "401", "413"}
+    assert "content" not in revoke["post"]["responses"]["204"]
+    assert "requestBody" not in revoke["post"]
+    for status in ("401", "413"):
+        assert revoke["post"]["responses"][status]["content"]["application/json"]["schema"] == error
+    assert revoke["post"]["responses"]["401"]["headers"]["WWW-Authenticate"]
 
 
 # --- C5.11 (docs/decisions.md 2026-10-12, points 2 and 3) ------------------------------------
@@ -138,7 +152,7 @@ def test_the_version_route_is_in_the_document_with_its_200_alone():
     assert body["properties"]["api"] == {"const": 1, "title": "Api", "type": "integer"}
 
 
-def test_the_bearer_scheme_is_on_the_three_routes_that_take_the_token():
+def test_the_bearer_scheme_is_on_the_four_routes_that_take_the_token():
     document = json.loads(DOCUMENT.read_bytes().decode("utf-8"))
 
     scheme = document["components"]["securitySchemes"]
@@ -148,7 +162,7 @@ def test_the_bearer_scheme_is_on_the_three_routes_that_take_the_token():
     secured = {
         (path, method) for path, operations in document["paths"].items() for method, operation in operations.items() if "security" in operation
     }
-    assert secured == {("/v1/jobs", "get"), ("/v1/results", "post"), ("/v1/heartbeat", "post")}
+    assert secured == SECURED
     for path, method in secured:
         assert document["paths"][path][method]["security"] == [{"workerToken": []}]
     # Registration takes the install token in its body, never as a bearer.
@@ -183,7 +197,7 @@ def test_the_secured_operations_are_the_routes_that_depend_on_current_worker():
         (path, method) for path, operations in document["paths"].items() for method, operation in operations.items() if "security" in operation
     }
 
-    assert by_code == by_document == {("/v1/jobs", "get"), ("/v1/results", "post"), ("/v1/heartbeat", "post")}
+    assert by_code == by_document == SECURED
 
 
 def test_the_tool_writes_the_same_bytes_to_a_path_of_the_caller_s(tmp_path):

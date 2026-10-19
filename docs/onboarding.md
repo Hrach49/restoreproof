@@ -170,6 +170,12 @@ grants, the check, and the profile file step 4 takes.
    revoked_at 2026-10-11T12:00:30Z
    ```
 
+   The same from the Worker's side (W7.3): `Uninstall-RestoreProofWorker.ps1` runs `rpworker
+   cloud revoke` (`POST /v1/workers/self/revoke` under the Worker's own token; one
+   `worker.revoke` audit row with no user and the Worker's address) and prints this command's
+   line when the Cloud wasn't reached; the `/workers` page's Revoke is the admin's way for a
+   Worker whose machine is already gone (`docs/upgrade.md`).
+
 7. **The users** (C6.1), who sign in at `/login` (`docs/verification.md` "The Cloud's pages").
    The address is trimmed, must hold one `@` with something on each side and no space, is
    stored as typed and is one across the whole Cloud whatever its case. The role is `admin`

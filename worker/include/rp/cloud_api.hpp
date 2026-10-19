@@ -18,6 +18,9 @@
 namespace rp {
 
 inline constexpr std::string_view kRegisterPath = "/v1/workers/register";
+// W7.3: the Worker revoking itself at its uninstall (rp/cloud_command.hpp,
+// `rpworker cloud revoke`), under the API token.
+inline constexpr std::string_view kRevokePath = "/v1/workers/self/revoke";
 inline constexpr std::string_view kJobsPath = "/v1/jobs";
 
 // The contract header (C5.11): every answer the Cloud's app sends carries it,

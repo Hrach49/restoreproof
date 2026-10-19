@@ -17,6 +17,7 @@ REPO_DIR = SETUP_DIR.parent.parent
 MODULE = SETUP_DIR / "RestoreProofWorker.psm1"
 MACHINE_MODULE = SETUP_DIR / "WorkerMachine.psm1"
 SCRIPT = SETUP_DIR / "Install-RestoreProofWorker.ps1"
+UNINSTALL_SCRIPT = SETUP_DIR / "Uninstall-RestoreProofWorker.ps1"
 CERT_SCRIPT = REPO_DIR / "tools" / "tenant-setup" / "New-WorkerGraphCertificate.ps1"
 FAKE_MACHINE = TESTS_DIR / "FakeMachine.psm1"
 WORKER_EXE = REPO_DIR / "worker" / "build" / "dev" / "rpworker.exe"

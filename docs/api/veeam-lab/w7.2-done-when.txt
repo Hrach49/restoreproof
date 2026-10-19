@@ -1,0 +1,452 @@
+W7.2 (#81) Done-when, live, on this laptop (the Veeam server): rpworker doctor on a Worker W7.1's installer installed; one fault at a time, each one problem line whose fix, run as printed, makes doctor clean again; the Graph permission by the lab app's consent. 2026-10-19T09:18:31Z, commit cf886df, branch w7.2-doctor
+Windows, PowerShell 7.4.21; 0.1.0 at C:\Program Files\RestoreProof\rpworker.exe; sc showsid RestoreProof: S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396
+
+== 1. doctor on the Worker as installed ==
+-- 2026-10-19T09:18:45Z doctor (as installed): exit 0; problems: 
+ok: doctor: rpworker 0.1.0, C:\Program Files\RestoreProof\rpworker.exe, elevated
+ok: config: C:\ProgramData\RestoreProof\config.json, owned by SYSTEM or Administrators, the folder's entries alone
+ok: config: C:\ProgramData\RestoreProof\config.json loads
+ok: folders: C:\ProgramData\RestoreProof: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\state: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\runs: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\outbox: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\sent: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\failed: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\logs: as the installer sets it
+ok: outbox: 0 queued, 2 sent, 1 failed
+warning: outbox: 1 run(s) the Cloud refused for good are in failed\ (fix: rpworker outbox list)
+ok: disk: 31.6 GiB free on C:\ProgramData\RestoreProof's volume
+ok: log: C:\ProgramData\RestoreProof\logs\worker.log 0 MiB, 0 MiB with the rotated files
+ok: vault: C:\ProgramData\RestoreProof\vault.bin: entries for NT SERVICE\RestoreProof, NT AUTHORITY\SYSTEM, BUILTIN\Administrators, OWNER RIGHTS, nothing else
+ok: vault: NT SERVICE\RestoreProof can read it, by Windows' own check
+ok: vault: C:\ProgramData\RestoreProof\vault.bin decrypts on this machine
+ok: vault: holds veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64, cloud_api_token
+ok: signing key: key_id 26e5f91efb9bdf7d75bc7ced751ee81a2515d57bea0e91162bdd90a5927982e7
+ok: signing key: the one registered as worker 0c82793e-9df6-4eff-b759-fa7f70397b3a
+ok: service: RestoreProof runs as NT SERVICE\RestoreProof
+ok: service: starts automatically
+ok: service: runs "C:\Program Files\RestoreProof\rpworker.exe" service run
+ok: service: restarts after 60 s three times, then nothing
+ok: service: running
+ok: service: NT SERVICE\RestoreProof may log on as a service
+ok: service: NT SERVICE\RestoreProof can read and run C:\Program Files\RestoreProof\rpworker.exe, and only SYSTEM, Administrators and TrustedInstaller can change it
+ok: service: no run in progress
+ok: cloud: worker 0c82793e-9df6-4eff-b759-fa7f70397b3a, registered 2026-10-19T09:12:41Z with https://localhost:8443
+ok: cloud: RestoreProof Cloud 0.0.0, API 1
+ok: tsa: http://timestamp.digicert.com answered, token verified
+ok: clock: 58 s from the TSA's time
+ok: veeam: https://localhost:4443 is this machine
+ok: veeam: Veeam.Archiver.REST.Service is running
+ok: veeam: signed in
+ok: veeam: RestoreProofLab.onmicrosoft.com: newest restore point 2026-10-18T23:14:52.6156081Z
+ok: veeam: RestoreProofLab.onmicrosoft.com: certificate AC3220B58A2B4C438DA13816C2DD1E25D1F783A7 exports (in memory, discarded), valid to 2028-09-25T18:53:36Z
+ok: veeam: RestoreProofLab.onmicrosoft.com: NT SERVICE\RestoreProof can read the key file C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file>
+ok: graph: the Worker's certificate B56D2BD39945BAB1484A53F6C78C059A369EDBB3, valid to 2027-09-27T15:12:16Z
+ok: client 1: RestoreProofLab.onmicrosoft.com, tenant bcd6bd1a-ea42-489d-aa28-2c19a44ad146, app de8d4348-08a9-48ee-a04a-47c7189c5006
+ok: client 1: Veeam's organisation RestoreProofLab.onmicrosoft.com is this tenant's
+ok: client 1: graph: the app's token carries Files.SelectedOperations.Selected
+ok: client 1: graph: the app's token carries Lists.SelectedOperations.Selected
+ok: client 1: graph: the app's token carries Sites.Selected
+ok: client 1: graph: restoretest@RestoreProofLab.onmicrosoft.com's Inbox read, 0 item(s)
+ok: client 1: graph: the RestoreTarget library read, 0 item(s)
+ok: client 1: graph: the OneDrive RestoreTarget folder read, 0 item(s)
+skip: client 1: graph: the write grants on the RestoreTarget list and folder (needs a role the app must never hold; the next run's clean shows them)
+doctor: 46 ok, 1 warning(s), 0 problem(s), 1 skipped
+
+== 2. the service's entry taken off Veeam's key file ==
+icacls <the key file of certificate AC3220B58A2B4C438DA13816C2DD1E25D1F783A7> /remove:g *S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396
+-- 2026-10-19T09:18:58Z doctor (key file entry removed): exit 5; problems: veeam.org[1].cert[1].key_file missing_ace
+ok: doctor: rpworker 0.1.0, C:\Program Files\RestoreProof\rpworker.exe, elevated
+ok: config: C:\ProgramData\RestoreProof\config.json, owned by SYSTEM or Administrators, the folder's entries alone
+ok: config: C:\ProgramData\RestoreProof\config.json loads
+ok: folders: C:\ProgramData\RestoreProof: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\state: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\runs: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\outbox: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\sent: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\failed: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\logs: as the installer sets it
+ok: outbox: 0 queued, 2 sent, 1 failed
+warning: outbox: 1 run(s) the Cloud refused for good are in failed\ (fix: rpworker outbox list)
+ok: disk: 31.6 GiB free on C:\ProgramData\RestoreProof's volume
+ok: log: C:\ProgramData\RestoreProof\logs\worker.log 0 MiB, 0 MiB with the rotated files
+ok: vault: C:\ProgramData\RestoreProof\vault.bin: entries for NT SERVICE\RestoreProof, NT AUTHORITY\SYSTEM, BUILTIN\Administrators, OWNER RIGHTS, nothing else
+ok: vault: NT SERVICE\RestoreProof can read it, by Windows' own check
+ok: vault: C:\ProgramData\RestoreProof\vault.bin decrypts on this machine
+ok: vault: holds veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64, cloud_api_token
+ok: signing key: key_id 26e5f91efb9bdf7d75bc7ced751ee81a2515d57bea0e91162bdd90a5927982e7
+ok: signing key: the one registered as worker 0c82793e-9df6-4eff-b759-fa7f70397b3a
+ok: service: RestoreProof runs as NT SERVICE\RestoreProof
+ok: service: starts automatically
+ok: service: runs "C:\Program Files\RestoreProof\rpworker.exe" service run
+ok: service: restarts after 60 s three times, then nothing
+ok: service: running
+ok: service: NT SERVICE\RestoreProof may log on as a service
+ok: service: NT SERVICE\RestoreProof can read and run C:\Program Files\RestoreProof\rpworker.exe, and only SYSTEM, Administrators and TrustedInstaller can change it
+ok: service: no run in progress
+ok: cloud: worker 0c82793e-9df6-4eff-b759-fa7f70397b3a, registered 2026-10-19T09:12:41Z with https://localhost:8443
+ok: cloud: RestoreProof Cloud 0.0.0, API 1
+ok: tsa: http://timestamp.digicert.com answered, token verified
+ok: clock: 58 s from the TSA's time
+ok: veeam: https://localhost:4443 is this machine
+ok: veeam: Veeam.Archiver.REST.Service is running
+ok: veeam: signed in
+ok: veeam: RestoreProofLab.onmicrosoft.com: newest restore point 2026-10-18T23:14:52.6156081Z
+ok: veeam: RestoreProofLab.onmicrosoft.com: certificate AC3220B58A2B4C438DA13816C2DD1E25D1F783A7 exports (in memory, discarded), valid to 2028-09-25T18:53:36Z
+problem: veeam: RestoreProofLab.onmicrosoft.com: NT SERVICE\RestoreProof can't read the key file of certificate AC3220B58A2B4C438DA13816C2DD1E25D1F783A7 (fix: icacls "C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file>" /grant "*S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396:(R)")
+ok: graph: the Worker's certificate B56D2BD39945BAB1484A53F6C78C059A369EDBB3, valid to 2027-09-27T15:12:16Z
+ok: client 1: RestoreProofLab.onmicrosoft.com, tenant bcd6bd1a-ea42-489d-aa28-2c19a44ad146, app de8d4348-08a9-48ee-a04a-47c7189c5006
+ok: client 1: Veeam's organisation RestoreProofLab.onmicrosoft.com is this tenant's
+ok: client 1: graph: the app's token carries Files.SelectedOperations.Selected
+ok: client 1: graph: the app's token carries Lists.SelectedOperations.Selected
+ok: client 1: graph: the app's token carries Sites.Selected
+ok: client 1: graph: restoretest@RestoreProofLab.onmicrosoft.com's Inbox read, 0 item(s)
+ok: client 1: graph: the RestoreTarget library read, 0 item(s)
+ok: client 1: graph: the OneDrive RestoreTarget folder read, 0 item(s)
+skip: client 1: graph: the write grants on the RestoreTarget list and folder (needs a role the app must never hold; the next run's clean shows them)
+doctor: 45 ok, 1 warning(s), 1 problem(s), 1 skipped
+the fix, run as printed: icacls "C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file>" /grant "*S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396:(R)"
+-- 2026-10-19T09:19:09Z doctor (key file entry granted again): exit 0; problems: 
+ok: doctor: rpworker 0.1.0, C:\Program Files\RestoreProof\rpworker.exe, elevated
+ok: config: C:\ProgramData\RestoreProof\config.json, owned by SYSTEM or Administrators, the folder's entries alone
+ok: config: C:\ProgramData\RestoreProof\config.json loads
+ok: folders: C:\ProgramData\RestoreProof: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\state: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\runs: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\outbox: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\sent: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\failed: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\logs: as the installer sets it
+ok: outbox: 0 queued, 2 sent, 1 failed
+warning: outbox: 1 run(s) the Cloud refused for good are in failed\ (fix: rpworker outbox list)
+ok: disk: 31.6 GiB free on C:\ProgramData\RestoreProof's volume
+ok: log: C:\ProgramData\RestoreProof\logs\worker.log 0 MiB, 0 MiB with the rotated files
+ok: vault: C:\ProgramData\RestoreProof\vault.bin: entries for NT SERVICE\RestoreProof, NT AUTHORITY\SYSTEM, BUILTIN\Administrators, OWNER RIGHTS, nothing else
+ok: vault: NT SERVICE\RestoreProof can read it, by Windows' own check
+ok: vault: C:\ProgramData\RestoreProof\vault.bin decrypts on this machine
+ok: vault: holds veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64, cloud_api_token
+ok: signing key: key_id 26e5f91efb9bdf7d75bc7ced751ee81a2515d57bea0e91162bdd90a5927982e7
+ok: signing key: the one registered as worker 0c82793e-9df6-4eff-b759-fa7f70397b3a
+ok: service: RestoreProof runs as NT SERVICE\RestoreProof
+ok: service: starts automatically
+ok: service: runs "C:\Program Files\RestoreProof\rpworker.exe" service run
+ok: service: restarts after 60 s three times, then nothing
+ok: service: running
+ok: service: NT SERVICE\RestoreProof may log on as a service
+ok: service: NT SERVICE\RestoreProof can read and run C:\Program Files\RestoreProof\rpworker.exe, and only SYSTEM, Administrators and TrustedInstaller can change it
+ok: service: no run in progress
+ok: cloud: worker 0c82793e-9df6-4eff-b759-fa7f70397b3a, registered 2026-10-19T09:12:41Z with https://localhost:8443
+ok: cloud: RestoreProof Cloud 0.0.0, API 1
+ok: tsa: http://timestamp.digicert.com answered, token verified
+ok: clock: 58 s from the TSA's time
+ok: veeam: https://localhost:4443 is this machine
+ok: veeam: Veeam.Archiver.REST.Service is running
+ok: veeam: signed in
+ok: veeam: RestoreProofLab.onmicrosoft.com: newest restore point 2026-10-18T23:14:52.6156081Z
+ok: veeam: RestoreProofLab.onmicrosoft.com: certificate AC3220B58A2B4C438DA13816C2DD1E25D1F783A7 exports (in memory, discarded), valid to 2028-09-25T18:53:36Z
+ok: veeam: RestoreProofLab.onmicrosoft.com: NT SERVICE\RestoreProof can read the key file C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file>
+ok: graph: the Worker's certificate B56D2BD39945BAB1484A53F6C78C059A369EDBB3, valid to 2027-09-27T15:12:16Z
+ok: client 1: RestoreProofLab.onmicrosoft.com, tenant bcd6bd1a-ea42-489d-aa28-2c19a44ad146, app de8d4348-08a9-48ee-a04a-47c7189c5006
+ok: client 1: Veeam's organisation RestoreProofLab.onmicrosoft.com is this tenant's
+ok: client 1: graph: the app's token carries Files.SelectedOperations.Selected
+ok: client 1: graph: the app's token carries Lists.SelectedOperations.Selected
+ok: client 1: graph: the app's token carries Sites.Selected
+ok: client 1: graph: restoretest@RestoreProofLab.onmicrosoft.com's Inbox read, 0 item(s)
+ok: client 1: graph: the RestoreTarget library read, 0 item(s)
+ok: client 1: graph: the OneDrive RestoreTarget folder read, 0 item(s)
+skip: client 1: graph: the write grants on the RestoreTarget list and folder (needs a role the app must never hold; the next run's clean shows them)
+doctor: 46 ok, 1 warning(s), 0 problem(s), 1 skipped
+
+== 3. the service's entry taken off the vault ==
+icacls C:\ProgramData\RestoreProof\vault.bin /remove:g *S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396
+-- 2026-10-19T09:19:20Z doctor (vault entry removed): exit 5; problems: vault.acl no_service_read
+ok: doctor: rpworker 0.1.0, C:\Program Files\RestoreProof\rpworker.exe, elevated
+ok: config: C:\ProgramData\RestoreProof\config.json, owned by SYSTEM or Administrators, the folder's entries alone
+ok: config: C:\ProgramData\RestoreProof\config.json loads
+ok: folders: C:\ProgramData\RestoreProof: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\state: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\runs: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\outbox: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\sent: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\failed: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\logs: as the installer sets it
+ok: outbox: 0 queued, 2 sent, 1 failed
+warning: outbox: 1 run(s) the Cloud refused for good are in failed\ (fix: rpworker outbox list)
+ok: disk: 31.6 GiB free on C:\ProgramData\RestoreProof's volume
+ok: log: C:\ProgramData\RestoreProof\logs\worker.log 0 MiB, 0 MiB with the rotated files
+problem: vault: C:\ProgramData\RestoreProof\vault.bin: NT SERVICE\RestoreProof can't read it (fix: rpworker vault grant "NT SERVICE\RestoreProof")
+skip: vault: NT SERVICE\RestoreProof's read, by Windows' own check (needs vault.acl)
+ok: vault: C:\ProgramData\RestoreProof\vault.bin decrypts on this machine
+ok: vault: holds veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64, cloud_api_token
+ok: signing key: key_id 26e5f91efb9bdf7d75bc7ced751ee81a2515d57bea0e91162bdd90a5927982e7
+ok: signing key: the one registered as worker 0c82793e-9df6-4eff-b759-fa7f70397b3a
+ok: service: RestoreProof runs as NT SERVICE\RestoreProof
+ok: service: starts automatically
+ok: service: runs "C:\Program Files\RestoreProof\rpworker.exe" service run
+ok: service: restarts after 60 s three times, then nothing
+ok: service: running
+ok: service: NT SERVICE\RestoreProof may log on as a service
+ok: service: NT SERVICE\RestoreProof can read and run C:\Program Files\RestoreProof\rpworker.exe, and only SYSTEM, Administrators and TrustedInstaller can change it
+ok: service: no run in progress
+ok: cloud: worker 0c82793e-9df6-4eff-b759-fa7f70397b3a, registered 2026-10-19T09:12:41Z with https://localhost:8443
+ok: cloud: RestoreProof Cloud 0.0.0, API 1
+ok: tsa: http://timestamp.digicert.com answered, token verified
+ok: clock: 57 s from the TSA's time
+ok: veeam: https://localhost:4443 is this machine
+ok: veeam: Veeam.Archiver.REST.Service is running
+ok: veeam: signed in
+ok: veeam: RestoreProofLab.onmicrosoft.com: newest restore point 2026-10-18T23:14:52.6156081Z
+ok: veeam: RestoreProofLab.onmicrosoft.com: certificate AC3220B58A2B4C438DA13816C2DD1E25D1F783A7 exports (in memory, discarded), valid to 2028-09-25T18:53:36Z
+ok: veeam: RestoreProofLab.onmicrosoft.com: NT SERVICE\RestoreProof can read the key file C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file>
+ok: graph: the Worker's certificate B56D2BD39945BAB1484A53F6C78C059A369EDBB3, valid to 2027-09-27T15:12:16Z
+ok: client 1: RestoreProofLab.onmicrosoft.com, tenant bcd6bd1a-ea42-489d-aa28-2c19a44ad146, app de8d4348-08a9-48ee-a04a-47c7189c5006
+ok: client 1: Veeam's organisation RestoreProofLab.onmicrosoft.com is this tenant's
+ok: client 1: graph: the app's token carries Files.SelectedOperations.Selected
+ok: client 1: graph: the app's token carries Lists.SelectedOperations.Selected
+ok: client 1: graph: the app's token carries Sites.Selected
+ok: client 1: graph: restoretest@RestoreProofLab.onmicrosoft.com's Inbox read, 0 item(s)
+ok: client 1: graph: the RestoreTarget library read, 0 item(s)
+ok: client 1: graph: the OneDrive RestoreTarget folder read, 0 item(s)
+skip: client 1: graph: the write grants on the RestoreTarget list and folder (needs a role the app must never hold; the next run's clean shows them)
+doctor: 44 ok, 1 warning(s), 1 problem(s), 2 skipped
+the fix, run as printed (rpworker being C:\Program Files\RestoreProof\rpworker.exe): rpworker vault grant "NT SERVICE\RestoreProof"
+-- 2026-10-19T09:19:31Z doctor (vault entry granted again): exit 0; problems: 
+ok: doctor: rpworker 0.1.0, C:\Program Files\RestoreProof\rpworker.exe, elevated
+ok: config: C:\ProgramData\RestoreProof\config.json, owned by SYSTEM or Administrators, the folder's entries alone
+ok: config: C:\ProgramData\RestoreProof\config.json loads
+ok: folders: C:\ProgramData\RestoreProof: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\state: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\runs: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\outbox: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\sent: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\failed: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\logs: as the installer sets it
+ok: outbox: 0 queued, 2 sent, 1 failed
+warning: outbox: 1 run(s) the Cloud refused for good are in failed\ (fix: rpworker outbox list)
+ok: disk: 31.6 GiB free on C:\ProgramData\RestoreProof's volume
+ok: log: C:\ProgramData\RestoreProof\logs\worker.log 0 MiB, 0 MiB with the rotated files
+ok: vault: C:\ProgramData\RestoreProof\vault.bin: entries for NT SERVICE\RestoreProof, NT AUTHORITY\SYSTEM, BUILTIN\Administrators, OWNER RIGHTS, nothing else
+ok: vault: NT SERVICE\RestoreProof can read it, by Windows' own check
+ok: vault: C:\ProgramData\RestoreProof\vault.bin decrypts on this machine
+ok: vault: holds veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64, cloud_api_token
+ok: signing key: key_id 26e5f91efb9bdf7d75bc7ced751ee81a2515d57bea0e91162bdd90a5927982e7
+ok: signing key: the one registered as worker 0c82793e-9df6-4eff-b759-fa7f70397b3a
+ok: service: RestoreProof runs as NT SERVICE\RestoreProof
+ok: service: starts automatically
+ok: service: runs "C:\Program Files\RestoreProof\rpworker.exe" service run
+ok: service: restarts after 60 s three times, then nothing
+ok: service: running
+ok: service: NT SERVICE\RestoreProof may log on as a service
+ok: service: NT SERVICE\RestoreProof can read and run C:\Program Files\RestoreProof\rpworker.exe, and only SYSTEM, Administrators and TrustedInstaller can change it
+ok: service: no run in progress
+ok: cloud: worker 0c82793e-9df6-4eff-b759-fa7f70397b3a, registered 2026-10-19T09:12:41Z with https://localhost:8443
+ok: cloud: RestoreProof Cloud 0.0.0, API 1
+ok: tsa: http://timestamp.digicert.com answered, token verified
+ok: clock: 57 s from the TSA's time
+ok: veeam: https://localhost:4443 is this machine
+ok: veeam: Veeam.Archiver.REST.Service is running
+ok: veeam: signed in
+ok: veeam: RestoreProofLab.onmicrosoft.com: newest restore point 2026-10-18T23:14:52.6156081Z
+ok: veeam: RestoreProofLab.onmicrosoft.com: certificate AC3220B58A2B4C438DA13816C2DD1E25D1F783A7 exports (in memory, discarded), valid to 2028-09-25T18:53:36Z
+ok: veeam: RestoreProofLab.onmicrosoft.com: NT SERVICE\RestoreProof can read the key file C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file>
+ok: graph: the Worker's certificate B56D2BD39945BAB1484A53F6C78C059A369EDBB3, valid to 2027-09-27T15:12:16Z
+ok: client 1: RestoreProofLab.onmicrosoft.com, tenant bcd6bd1a-ea42-489d-aa28-2c19a44ad146, app de8d4348-08a9-48ee-a04a-47c7189c5006
+ok: client 1: Veeam's organisation RestoreProofLab.onmicrosoft.com is this tenant's
+ok: client 1: graph: the app's token carries Files.SelectedOperations.Selected
+ok: client 1: graph: the app's token carries Lists.SelectedOperations.Selected
+ok: client 1: graph: the app's token carries Sites.Selected
+ok: client 1: graph: restoretest@RestoreProofLab.onmicrosoft.com's Inbox read, 0 item(s)
+ok: client 1: graph: the RestoreTarget library read, 0 item(s)
+ok: client 1: graph: the OneDrive RestoreTarget folder read, 0 item(s)
+skip: client 1: graph: the write grants on the RestoreTarget list and folder (needs a role the app must never hold; the next run's clean shows them)
+doctor: 46 ok, 1 warning(s), 0 problem(s), 1 skipped
+
+== 4. the lab app's Lists.SelectedOperations.Selected consent deleted ==
+2026-10-19T09:19:37Z DELETE the app's appRoleAssignment of Lists.SelectedOperations.Selected (role 23c5a9bd-d900-4ecf-be26-a0689755d9e5)
+2026-10-19T09:19:47Z attempt 1: exit 5, problems: client[1].graph.role.Lists.SelectedOperations.Selected role_missing
+Entra issued a token without it 10 s after the DELETE
+-- 2026-10-19T09:19:48Z doctor (the consent removed, attempt 1): exit 5; problems: client[1].graph.role.Lists.SelectedOperations.Selected role_missing
+ok: doctor: rpworker 0.1.0, C:\Program Files\RestoreProof\rpworker.exe, elevated
+ok: config: C:\ProgramData\RestoreProof\config.json, owned by SYSTEM or Administrators, the folder's entries alone
+ok: config: C:\ProgramData\RestoreProof\config.json loads
+ok: folders: C:\ProgramData\RestoreProof: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\state: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\runs: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\outbox: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\sent: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\failed: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\logs: as the installer sets it
+ok: outbox: 0 queued, 2 sent, 1 failed
+warning: outbox: 1 run(s) the Cloud refused for good are in failed\ (fix: rpworker outbox list)
+ok: disk: 31.6 GiB free on C:\ProgramData\RestoreProof's volume
+ok: log: C:\ProgramData\RestoreProof\logs\worker.log 0 MiB, 0 MiB with the rotated files
+ok: vault: C:\ProgramData\RestoreProof\vault.bin: entries for NT SERVICE\RestoreProof, NT AUTHORITY\SYSTEM, BUILTIN\Administrators, OWNER RIGHTS, nothing else
+ok: vault: NT SERVICE\RestoreProof can read it, by Windows' own check
+ok: vault: C:\ProgramData\RestoreProof\vault.bin decrypts on this machine
+ok: vault: holds veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64, cloud_api_token
+ok: signing key: key_id 26e5f91efb9bdf7d75bc7ced751ee81a2515d57bea0e91162bdd90a5927982e7
+ok: signing key: the one registered as worker 0c82793e-9df6-4eff-b759-fa7f70397b3a
+ok: service: RestoreProof runs as NT SERVICE\RestoreProof
+ok: service: starts automatically
+ok: service: runs "C:\Program Files\RestoreProof\rpworker.exe" service run
+ok: service: restarts after 60 s three times, then nothing
+ok: service: running
+ok: service: NT SERVICE\RestoreProof may log on as a service
+ok: service: NT SERVICE\RestoreProof can read and run C:\Program Files\RestoreProof\rpworker.exe, and only SYSTEM, Administrators and TrustedInstaller can change it
+ok: service: no run in progress
+ok: cloud: worker 0c82793e-9df6-4eff-b759-fa7f70397b3a, registered 2026-10-19T09:12:41Z with https://localhost:8443
+ok: cloud: RestoreProof Cloud 0.0.0, API 1
+ok: tsa: http://timestamp.digicert.com answered, token verified
+ok: clock: 57 s from the TSA's time
+ok: veeam: https://localhost:4443 is this machine
+ok: veeam: Veeam.Archiver.REST.Service is running
+ok: veeam: signed in
+ok: veeam: RestoreProofLab.onmicrosoft.com: newest restore point 2026-10-18T23:14:52.6156081Z
+ok: veeam: RestoreProofLab.onmicrosoft.com: certificate AC3220B58A2B4C438DA13816C2DD1E25D1F783A7 exports (in memory, discarded), valid to 2028-09-25T18:53:36Z
+ok: veeam: RestoreProofLab.onmicrosoft.com: NT SERVICE\RestoreProof can read the key file C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file>
+ok: graph: the Worker's certificate B56D2BD39945BAB1484A53F6C78C059A369EDBB3, valid to 2027-09-27T15:12:16Z
+ok: client 1: RestoreProofLab.onmicrosoft.com, tenant bcd6bd1a-ea42-489d-aa28-2c19a44ad146, app de8d4348-08a9-48ee-a04a-47c7189c5006
+ok: client 1: Veeam's organisation RestoreProofLab.onmicrosoft.com is this tenant's
+ok: client 1: graph: the app's token carries Files.SelectedOperations.Selected
+problem: client 1: graph: the app's token lacks Lists.SelectedOperations.Selected (fix: the client's admin runs Initialize-RestoreProofTenant.ps1 -TenantId bcd6bd1a-ea42-489d-aa28-2c19a44ad146 -SiteUrl <...> -OneDriveUser <...> -WorkerCertificateFile <...> -ProfileFile <...>, which consents it again)
+ok: client 1: graph: the app's token carries Sites.Selected
+ok: client 1: graph: restoretest@RestoreProofLab.onmicrosoft.com's Inbox read, 0 item(s)
+skip: client 1: graph: the RestoreTarget library (needs client[1].graph.role.Lists.SelectedOperations.Selected)
+ok: client 1: graph: the OneDrive RestoreTarget folder read, 0 item(s)
+skip: client 1: graph: the write grants on the RestoreTarget list and folder (needs a role the app must never hold; the next run's clean shows them)
+doctor: 44 ok, 1 warning(s), 1 problem(s), 2 skipped
+
+-- Initialize-RestoreProofTenant.ps1, as w70-live.ps1 runs it (sign in as the lab's admin)
+ok: the Worker's certificate B56D2BD39945BAB1484A53F6C78C059A369EDBB3, expires 2027-09-27
+ok: tenant bcd6bd1a-ea42-489d-aa28-2c19a44ad146, signed in as HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com
+ok: the mailbox restoretest@RestoreProofLab.onmicrosoft.com
+note: the Worker app will read the site's library 'Dokumenty' too (read on the whole site)
+note: the Worker app will read the site's library 'RestoreTest' too (read on the whole site)
+ok: the RestoreTarget library in https://restoreprooflab.sharepoint.com/sites/RestoreTest
+ok: the /RestoreTarget folder in alice@RestoreProofLab.onmicrosoft.com's OneDrive
+ok: the app registration 'RestoreProof Worker'
+ok: the service principal cdefbf49-c21e-4ce6-93a7-85e5e0fc0a2d
+change: consent Lists.SelectedOperations.Selected
+ok: read on the site
+ok: write on the RestoreTarget list
+ok: write on the /RestoreTarget folder
+ok: 'Application Mail.ReadWrite' on restoretest@RestoreProofLab.onmicrosoft.com alone
+grants: ok
+profile:
+{
+  "format": "restoreproof.client-profile.v1",
+  "graph_client_id": "de8d4348-08a9-48ee-a04a-47c7189c5006",
+  "graph_tenant_id": "bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+  "test_library_id": "b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5okL098pI5L8SauHogWnV_iW",
+  "test_mailbox": "restoretest@RestoreProofLab.onmicrosoft.com",
+  "test_onedrive_drive_id": "b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3",
+  "test_onedrive_folder_id": "01ZK75LGEIWSMV5NCPERHJYGWANJI7YUFB",
+  "test_site_id": "restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+  "veeam_org_name": "RestoreProofLab.onmicrosoft.com"
+}
+profile written to C:\Users\minas\AppData\Local\RestoreProof\lab\w7.2-20261019T131821\setup-profile.json
+changes: 1
+Exchange can take 30 minutes to 2 hours to apply the mail role everywhere; Test-ServicePrincipalAuthorization above reads it at once.
+2026-10-19T09:20:55Z attempt 1: exit 0
+-- 2026-10-19T09:20:55Z doctor (the consent made again, attempt 1): exit 0; problems: 
+ok: doctor: rpworker 0.1.0, C:\Program Files\RestoreProof\rpworker.exe, elevated
+ok: config: C:\ProgramData\RestoreProof\config.json, owned by SYSTEM or Administrators, the folder's entries alone
+ok: config: C:\ProgramData\RestoreProof\config.json loads
+ok: folders: C:\ProgramData\RestoreProof: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\state: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\runs: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\outbox: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\sent: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\failed: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\logs: as the installer sets it
+ok: outbox: 0 queued, 2 sent, 1 failed
+warning: outbox: 1 run(s) the Cloud refused for good are in failed\ (fix: rpworker outbox list)
+ok: disk: 31.6 GiB free on C:\ProgramData\RestoreProof's volume
+ok: log: C:\ProgramData\RestoreProof\logs\worker.log 0 MiB, 0 MiB with the rotated files
+ok: vault: C:\ProgramData\RestoreProof\vault.bin: entries for NT SERVICE\RestoreProof, NT AUTHORITY\SYSTEM, BUILTIN\Administrators, OWNER RIGHTS, nothing else
+ok: vault: NT SERVICE\RestoreProof can read it, by Windows' own check
+ok: vault: C:\ProgramData\RestoreProof\vault.bin decrypts on this machine
+ok: vault: holds veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64, cloud_api_token
+ok: signing key: key_id 26e5f91efb9bdf7d75bc7ced751ee81a2515d57bea0e91162bdd90a5927982e7
+ok: signing key: the one registered as worker 0c82793e-9df6-4eff-b759-fa7f70397b3a
+ok: service: RestoreProof runs as NT SERVICE\RestoreProof
+ok: service: starts automatically
+ok: service: runs "C:\Program Files\RestoreProof\rpworker.exe" service run
+ok: service: restarts after 60 s three times, then nothing
+ok: service: running
+ok: service: NT SERVICE\RestoreProof may log on as a service
+ok: service: NT SERVICE\RestoreProof can read and run C:\Program Files\RestoreProof\rpworker.exe, and only SYSTEM, Administrators and TrustedInstaller can change it
+ok: service: no run in progress
+ok: cloud: worker 0c82793e-9df6-4eff-b759-fa7f70397b3a, registered 2026-10-19T09:12:41Z with https://localhost:8443
+ok: cloud: RestoreProof Cloud 0.0.0, API 1
+ok: tsa: http://timestamp.digicert.com answered, token verified
+ok: clock: 58 s from the TSA's time
+ok: veeam: https://localhost:4443 is this machine
+ok: veeam: Veeam.Archiver.REST.Service is running
+ok: veeam: signed in
+ok: veeam: RestoreProofLab.onmicrosoft.com: newest restore point 2026-10-18T23:14:52.6156081Z
+ok: veeam: RestoreProofLab.onmicrosoft.com: certificate AC3220B58A2B4C438DA13816C2DD1E25D1F783A7 exports (in memory, discarded), valid to 2028-09-25T18:53:36Z
+ok: veeam: RestoreProofLab.onmicrosoft.com: NT SERVICE\RestoreProof can read the key file C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file>
+ok: graph: the Worker's certificate B56D2BD39945BAB1484A53F6C78C059A369EDBB3, valid to 2027-09-27T15:12:16Z
+ok: client 1: RestoreProofLab.onmicrosoft.com, tenant bcd6bd1a-ea42-489d-aa28-2c19a44ad146, app de8d4348-08a9-48ee-a04a-47c7189c5006
+ok: client 1: Veeam's organisation RestoreProofLab.onmicrosoft.com is this tenant's
+ok: client 1: graph: the app's token carries Files.SelectedOperations.Selected
+ok: client 1: graph: the app's token carries Lists.SelectedOperations.Selected
+ok: client 1: graph: the app's token carries Sites.Selected
+ok: client 1: graph: restoretest@RestoreProofLab.onmicrosoft.com's Inbox read, 0 item(s)
+ok: client 1: graph: the RestoreTarget library read, 0 item(s)
+ok: client 1: graph: the OneDrive RestoreTarget folder read, 0 item(s)
+skip: client 1: graph: the write grants on the RestoreTarget list and folder (needs a role the app must never hold; the next run's clean shows them)
+doctor: 46 ok, 1 warning(s), 0 problem(s), 1 skipped
+
+== put back ==
+-- 2026-10-19T09:21:09Z doctor (at the end): exit 0; problems: 
+ok: doctor: rpworker 0.1.0, C:\Program Files\RestoreProof\rpworker.exe, elevated
+ok: config: C:\ProgramData\RestoreProof\config.json, owned by SYSTEM or Administrators, the folder's entries alone
+ok: config: C:\ProgramData\RestoreProof\config.json loads
+ok: folders: C:\ProgramData\RestoreProof: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\state: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\runs: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\outbox: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\sent: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\failed: as the installer sets it
+ok: folders: C:\ProgramData\RestoreProof\logs: as the installer sets it
+ok: outbox: 0 queued, 2 sent, 1 failed
+warning: outbox: 1 run(s) the Cloud refused for good are in failed\ (fix: rpworker outbox list)
+ok: disk: 31.6 GiB free on C:\ProgramData\RestoreProof's volume
+ok: log: C:\ProgramData\RestoreProof\logs\worker.log 0 MiB, 0 MiB with the rotated files
+ok: vault: C:\ProgramData\RestoreProof\vault.bin: entries for NT SERVICE\RestoreProof, NT AUTHORITY\SYSTEM, BUILTIN\Administrators, OWNER RIGHTS, nothing else
+ok: vault: NT SERVICE\RestoreProof can read it, by Windows' own check
+ok: vault: C:\ProgramData\RestoreProof\vault.bin decrypts on this machine
+ok: vault: holds veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64, cloud_api_token
+ok: signing key: key_id 26e5f91efb9bdf7d75bc7ced751ee81a2515d57bea0e91162bdd90a5927982e7
+ok: signing key: the one registered as worker 0c82793e-9df6-4eff-b759-fa7f70397b3a
+ok: service: RestoreProof runs as NT SERVICE\RestoreProof
+ok: service: starts automatically
+ok: service: runs "C:\Program Files\RestoreProof\rpworker.exe" service run
+ok: service: restarts after 60 s three times, then nothing
+ok: service: running
+ok: service: NT SERVICE\RestoreProof may log on as a service
+ok: service: NT SERVICE\RestoreProof can read and run C:\Program Files\RestoreProof\rpworker.exe, and only SYSTEM, Administrators and TrustedInstaller can change it
+ok: service: no run in progress
+ok: cloud: worker 0c82793e-9df6-4eff-b759-fa7f70397b3a, registered 2026-10-19T09:12:41Z with https://localhost:8443
+ok: cloud: RestoreProof Cloud 0.0.0, API 1
+ok: tsa: http://timestamp.digicert.com answered, token verified
+ok: clock: 57 s from the TSA's time
+ok: veeam: https://localhost:4443 is this machine
+ok: veeam: Veeam.Archiver.REST.Service is running
+ok: veeam: signed in
+ok: veeam: RestoreProofLab.onmicrosoft.com: newest restore point 2026-10-18T23:14:52.6156081Z
+ok: veeam: RestoreProofLab.onmicrosoft.com: certificate AC3220B58A2B4C438DA13816C2DD1E25D1F783A7 exports (in memory, discarded), valid to 2028-09-25T18:53:36Z
+ok: veeam: RestoreProofLab.onmicrosoft.com: NT SERVICE\RestoreProof can read the key file C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file>
+ok: graph: the Worker's certificate B56D2BD39945BAB1484A53F6C78C059A369EDBB3, valid to 2027-09-27T15:12:16Z
+ok: client 1: RestoreProofLab.onmicrosoft.com, tenant bcd6bd1a-ea42-489d-aa28-2c19a44ad146, app de8d4348-08a9-48ee-a04a-47c7189c5006
+ok: client 1: Veeam's organisation RestoreProofLab.onmicrosoft.com is this tenant's
+ok: client 1: graph: the app's token carries Files.SelectedOperations.Selected
+ok: client 1: graph: the app's token carries Lists.SelectedOperations.Selected
+ok: client 1: graph: the app's token carries Sites.Selected
+ok: client 1: graph: restoretest@RestoreProofLab.onmicrosoft.com's Inbox read, 0 item(s)
+ok: client 1: graph: the RestoreTarget library read, 0 item(s)
+ok: client 1: graph: the OneDrive RestoreTarget folder read, 0 item(s)
+skip: client 1: graph: the write grants on the RestoreTarget list and folder (needs a role the app must never hold; the next run's clean shows them)
+doctor: 46 ok, 1 warning(s), 0 problem(s), 1 skipped

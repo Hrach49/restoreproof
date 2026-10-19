@@ -7,6 +7,20 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-19 — W7.2 (#81) live Done-when: run, every check held at the second run; the harness's Graph reads fixed between the two (proposed)
+
+Run on the Veeam server on 2026-10-19 by the owner (the lab admin's sign-ins), commit `cf886df`, `pwsh -File docs\api\veeam-lab\w7.2-harness\w72-live.ps1`, run folder `%LOCALAPPDATA%\RestoreProof\lab\w7.2-20261019T131821\`, evidence `docs/api/veeam-lab/w7.2-done-when.txt`.
+
+**The install before it.** The `ci` build of `a9cfd02` packaged by `package.ps1 -NoBuild` and installed by W7.1's installer against the Compose stack (`-CloudUrl https://localhost:8443`, Caddy's root, `-WorkerName w72-live`, a new MSP `w72-live` and its install token in memory, as `w71-live.ps1`'s steps 1 to 4): `changes: 19`, registered as worker `0c82793e-…`. The Cloud already held the vault's signing key from W7.1's run, so the installer made a new one (`signer new-key --replace`, its 409 rule) and named the old Worker as unused. **Doctor's first run found a real fault:** the vault carried an entry for the owner's own account (left by earlier lab work), `vault.acl`'s `problem:` line; its fix, run as printed (`icacls … /remove:g *S-1-5-21-…-1001`), made doctor clean (46 ok, 1 warning, 0 problems, 1 skipped). The installer's `vault grant` step said `ok` with that entry there: it adds the service's entry and never removes another (for the code review).
+
+**The first run** (`w7.2-20261019T131513`): steps 1 to 3 held; step 4 stopped before its DELETE with `The property 'id' cannot be found`: `Invoke-MgGraphRequest` answers hashtables by default and `Where-Object value -eq` reads no key of one, so no role was found (nothing was removed; doctor clean at the end). Fixed by `-OutputType PSObject` on the three reads (`cf886df`).
+
+**The second run, every check held:** (1) doctor as installed exit 0; (2) the service's entry taken off Veeam's key file: one problem, `veeam.org[1].cert[1].key_file missing_ace`, its `icacls … /grant "*S-1-5-80-…:(R)"` run as printed, exit 0; (3) the service's entry taken off the vault: one problem, `vault.acl no_service_read`, `rpworker vault grant "NT SERVICE\RestoreProof"` run as printed, exit 0; (4) the lab app's `Lists.SelectedOperations.Selected` appRoleAssignment deleted at 09:19:37Z: doctor's first attempt, 10 s later, already had exactly one problem, `client[1].graph.role.Lists.SelectedOperations.Selected role_missing`, the line naming the role; `Initialize-RestoreProofTenant.ps1` (`change: consent Lists.SelectedOperations.Selected`, `grants: ok`, `changes: 1`) and doctor exit 0 at its first attempt; doctor at the end exit 0. The one warning throughout is a run in `failed\` from earlier lab work. **W7.2's Done-when is met** for the role the entry named; the other two roles and Exchange's scope stay unshown live, as the entry said. `audit-evidence.ps1` 0 hits on the file, `fixture_secret_scan.py` 0 findings.
+
+**Left on the machine:** the Worker installed and running as `w72-live` (the harness does not uninstall; the next harness or W7.4 removes it), the stack's MSP `w72-live`, the W7.1 run's Worker on the Cloud with the old key.
+
+---
+
 ## 2026-10-19 — W7.2 (#81) build notes: built as the entry says, on the branch `w7.2-doctor`; the secret audit found `--record` recording nothing (fixed); the TSA asked once through the timestamper's stop hook; the newest restore point shown as Veeam's text; the strict files at 100% line in a focused coverage run; a W7.1 test left on the old `veeam list` table found by the full `ctest` and fixed; the live reads run on this laptop, the live Done-when not yet run (proposed)
 
 Built from the entry (`docs/decisions.md` 2026-10-18, "W7.2 (#81)", approved as written). Where the build left the entry:

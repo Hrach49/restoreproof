@@ -29,10 +29,11 @@ from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from app import audit, onboarding
-from app.auth.dependency import current_worker
+from app.auth.dependency import current_worker, not_authenticated
 from app.auth.registration import register_worker
 from app.db import SessionDep
 from app.models import Worker
+from app.repo.errors import RepoError
 from app.routers.errors import BODY_OVER_THE_CAP, NOT_AUTHENTICATED, refusal
 
 router = APIRouter()
@@ -101,7 +102,14 @@ async def register(body: RegisterBody, request: Request, session: SessionDep) ->
 async def revoke_self(
     request: Request, worker: Annotated[Worker, Depends(current_worker)], session: SessionDep
 ) -> Response:
-    await onboarding.revoke_worker(
-        session, worker.msp_id, worker_id=worker.id, user_id=None, ip=audit.client_ip(request)
-    )
+    try:
+        await onboarding.revoke_worker(
+            session, worker.msp_id, worker_id=worker.id, user_id=None, ip=audit.client_ip(request)
+        )
+    except RepoError:
+        # A revoke that landed between `current_worker`'s lookup and this
+        # request's UPDATE (the admin's, a second uninstall): 0 rows, so the
+        # Worker is revoked already, and the answer is the one 401, as the
+        # heartbeat's for the same race, never a 500.
+        raise not_authenticated() from None
     return Response(status_code=204)

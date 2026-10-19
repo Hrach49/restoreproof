@@ -307,6 +307,13 @@ int revoked(const HttpResponse& answer, WipedSecrets& held, const std::filesyste
             std::ostream& out, std::ostream& err, const CloudCommandEnv& env)
 {
     const int status = answer.status;
+    // A 401 takes the token out of the vault, so it must be the Cloud's own (the header), not
+    // a proxy's or a captive page's: the W7.3 review's finding 1.
+    if (status == 401 && cloud_answer_kind(answer) != CloudAnswerKind::cloud) {
+        err << "cloud revoke: the answer is not a RestoreProof Cloud's (no X-RestoreProof-API: 1 "
+               "on its 401); the token is kept\n";
+        return exit_code::service;
+    }
     if (status == 401) {
         err << "cloud revoke: the Cloud doesn't know this token (revoked already, or never this "
                "Cloud's); it ";

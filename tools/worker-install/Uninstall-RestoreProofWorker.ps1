@@ -6,17 +6,17 @@
 
 .DESCRIPTION
     Run it elevated: from Apps & features, from the unpacked package, or from
-    %ProgramFiles%\RestoreProof. It asks nothing. Nothing is removed before step 6: every stop
-    before it leaves the Worker installed (stopped from step 3 on; `rpworker service start`
-    brings it back).
+    %ProgramFiles%\RestoreProof. It asks nothing. Nothing is removed and nothing is told before
+    the service is uninstalled (step 6): every stop before that leaves the Worker installed
+    (stopped from step 3 on; `rpworker service start` brings it back).
 
     In order: the checks (a service installed from another exe is refused); the wait for a run
     in progress (state\running.json, up to -WaitMinutes); `rpworker service stop`; a record
     still there after the stop makes one `service start`, the wait again and one more stop, so
     the service's own recovery cleans the restore targets (no restore is ever cut in half);
     one `rpworker outbox flush`, then the runs that never reached the Cloud named; `rpworker
-    cloud revoke`; the service account's Read entry taken off each organisation certificate's
-    key file (`rpworker veeam list`); `rpworker service uninstall`; vault.bin and every file
+    service uninstall`; `rpworker cloud revoke`; the service account's Read entry taken off
+    each organisation certificate's key file (`rpworker veeam list`); vault.bin and every file
     under state\, runs\, outbox\, sent\ and failed\ overwritten once and deleted (no erasure is
     guaranteed on an SSD or inside a volume snapshot: the secrets are worthless once the Worker
     is revoked); config.json and the two PEM files deleted; %ProgramFiles%\RestoreProof and the
@@ -81,7 +81,7 @@ function Say([string]$Line) { Write-Output $Line }
 function Changed([string]$What) { $script:Changes++; Say "change: $What" }
 function Would([string]$What) { Say "would: $What" }
 function Problem([string]$What) { $script:ProblemCount++; Say "problem: $What" }
-function Stop-Uninstall([string]$Why) { throw "problem: $Why Nothing was removed; the Worker is installed as it was." }
+function Stop-Uninstall([string]$Why) { throw "problem: $Why Nothing was removed; the Worker is installed as it was (stopped, when this ran past step 3: rpworker service start brings it back)." }
 
 # As the installer's: the Worker run with `Arguments`, both streams merged and told apart by
 # kind; nothing of its output touches a file.
@@ -173,6 +173,8 @@ try {
     $haveWorker = Test-Path -LiteralPath $Worker -PathType Leaf
     if ($haveWorker) {
         try { Say "ok: rpworker $(Get-WorkerVersion -Exe $Exe) at $Exe" } catch { Say "note: $($_.Exception.Message); the files are removed all the same" }
+    } elseif ($serviceState -eq 'ok') {
+        Stop-Uninstall "the service $ServiceName is installed from $Exe, which is gone, so rpworker can't stop or uninstall it: sc stop $ServiceName, then sc delete $ServiceName, then run this again."
     } else {
         Say "note: no rpworker at ${Worker}: the Cloud isn't told, the outbox isn't sent and the key-file entries stay; the files are removed"
     }
@@ -220,7 +222,16 @@ try {
         } else { Say "note: rpworker outbox list: $(Get-FirstLine ($list.Err + $list.Out))" }
     }
 
-    # -- 6. the Cloud told ---------------------------------------------------------------------
+    # -- 6. the service ------------------------------------------------------------------------
+    if ($serviceState -eq 'ok') {
+        if ($PSCmdlet.ShouldProcess($ServiceName, 'rpworker service uninstall')) {
+            $gone = Invoke-Worker @('service', 'uninstall')
+            if ($gone.Code -ne 0) { Stop-Uninstall "rpworker service uninstall failed: $(Get-FirstLine ($gone.Err + $gone.Out))" }
+            Changed "rpworker service uninstall ($(Get-FirstLine $gone.Out))"
+        } else { Would 'rpworker service uninstall' }
+    } else { Say "ok: no service $ServiceName to uninstall" }
+
+    # -- 7. the Cloud told ---------------------------------------------------------------------
     $workerId = '<worker id>'
     $recordPath = Join-Path $Root 'state\worker.json'
     if (Test-Path -LiteralPath $recordPath -PathType Leaf) {
@@ -240,7 +251,7 @@ try {
         } else { Would 'rpworker cloud revoke' }
     } elseif ($haveWorker) { Say "note: no API token in the vault: the Cloud isn't told; $revokeByHand" }
 
-    # -- 7. the key files ----------------------------------------------------------------------
+    # -- 8. the key files ----------------------------------------------------------------------
     if ($haveWorker -and (Test-Path -LiteralPath $ConfigPath -PathType Leaf) -and $held -ccontains 'veeam_username') {
         $list = Invoke-Worker @('veeam', 'list', '--config', $ConfigPath)
         if ($list.Code -ne 0) {
@@ -259,15 +270,6 @@ try {
             }
         }
     } elseif ($haveWorker) { Say "note: no config or no Veeam account in the vault: the account's entries on the organisation certificates' key files stay" }
-
-    # -- 8. the service ------------------------------------------------------------------------
-    if ($serviceState -eq 'ok') {
-        if ($PSCmdlet.ShouldProcess($ServiceName, 'rpworker service uninstall')) {
-            $gone = Invoke-Worker @('service', 'uninstall')
-            if ($gone.Code -ne 0) { Stop-Uninstall "rpworker service uninstall failed: $(Get-FirstLine ($gone.Err + $gone.Out))" }
-            Changed "rpworker service uninstall ($(Get-FirstLine $gone.Out))"
-        } else { Would 'rpworker service uninstall' }
-    } else { Say "ok: no service $ServiceName to uninstall" }
 
     # -- 9. the data ---------------------------------------------------------------------------
     $present = @()
@@ -330,3 +332,6 @@ try {
 } finally {
     $held = $null
 }
+# Said, so the last native command's code (a `veeam list` that failed, a 401 of the revoke) is
+# never the script's.
+exit 0

@@ -822,6 +822,23 @@ TEST_CASE("cloud revoke: a 401 is a token the Cloud doesn't know, removed from t
     no_token_in(run);
 }
 
+TEST_CASE("cloud revoke: a 401 without the contract header keeps the token", "[cloud_command]")
+{
+    // A proxy's or a captive page's 401 is nobody's word on the token (the W7.3 review's finding 1).
+    RevokeLab lab;
+    lab.answer(rp::test::make_response(401, "<html>Proxy Authentication Required</html>", "text/html"));
+    const std::string record = lab.write_record();
+
+    const Run run = lab.rev();
+    CHECK(run.code == rp::exit_code::service);
+    CHECK(run.out.empty());
+    CHECK(run.err == "cloud revoke: the answer is not a RestoreProof Cloud's (no X-RestoreProof-API: 1 "
+                     "on its 401); the token is kept\n");
+    CHECK(lab.writes.size() == 1); // the write-back before the request alone
+    CHECK(lab.record_text() == record);
+    no_token_in(run);
+}
+
 TEST_CASE("cloud revoke: a 5xx is the Cloud not reached, the token kept", "[cloud_command]")
 {
     const int status = GENERATE(500, 502, 503, 504);

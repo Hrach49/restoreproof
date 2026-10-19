@@ -354,6 +354,17 @@ public:
     //    for a file, is the PermissionError with no GET.
     RemoveOutcome remove(const ListedItem& item);
 
+    // The application roles (the `roles` claim) of the token this client
+    // holds, a token fetched first when there is none or it is due (W7.2,
+    // rpworker doctor: "the token's roles from the Worker's side"). Read from
+    // the payload of the JWT Entra just issued over TLS and never verified:
+    // the Worker is not its audience's verifier, and the roles say what Entra
+    // granted, which is the question. Only the strings of a `roles` array
+    // leave, never the token; the token's copy and the decoded payload are
+    // wiped. A token that isn't a JWT, a payload that isn't a JSON object, or
+    // no `roles` array: an empty list. Throws what a sign-in throws.
+    std::vector<std::string> token_roles();
+
 private:
     struct Token {
         std::string access;

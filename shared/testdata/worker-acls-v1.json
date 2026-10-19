@@ -1,0 +1,111 @@
+{
+  "format": "restoreproof.worker-acls.v1",
+  "description": "What %ProgramData%\\RestoreProof and its six folders, and the vault in it, must hold for the Worker's service account (docs/decisions.md 2026-10-16 W7.1 point 7, 2026-10-18 W7.2 point 1). Written by hand. tools/worker-install's Get-WantedAcls (folders) and rpworker doctor (folders and vault) are held to it by their own tests. \"service\" stands for the service account's SID, S-1-5-80-... of the service name. Every folder rule is an explicit Allow inherited by files and folders, (OI)(CI); the vault's rules apply to the file alone. A folder that is not protected inherits the root's rules besides its own.",
+  "service_sid": "service",
+  "trusted_owners": [
+    "S-1-5-18",
+    "S-1-5-32-544"
+  ],
+  "folders": [
+    {
+      "path": "",
+      "protected": true,
+      "rules": [
+        {
+          "sid": "S-1-5-18",
+          "rights": "FullControl"
+        },
+        {
+          "sid": "S-1-5-32-544",
+          "rights": "FullControl"
+        },
+        {
+          "sid": "service",
+          "rights": "ReadAndExecute"
+        }
+      ]
+    },
+    {
+      "path": "state",
+      "protected": false,
+      "rules": [
+        {
+          "sid": "service",
+          "rights": "Modify"
+        }
+      ]
+    },
+    {
+      "path": "runs",
+      "protected": false,
+      "rules": [
+        {
+          "sid": "service",
+          "rights": "Modify"
+        }
+      ]
+    },
+    {
+      "path": "outbox",
+      "protected": false,
+      "rules": [
+        {
+          "sid": "service",
+          "rights": "Modify"
+        }
+      ]
+    },
+    {
+      "path": "sent",
+      "protected": false,
+      "rules": [
+        {
+          "sid": "service",
+          "rights": "Modify"
+        }
+      ]
+    },
+    {
+      "path": "failed",
+      "protected": false,
+      "rules": [
+        {
+          "sid": "service",
+          "rights": "Modify"
+        }
+      ]
+    },
+    {
+      "path": "logs",
+      "protected": false,
+      "rules": [
+        {
+          "sid": "service",
+          "rights": "Modify"
+        }
+      ]
+    }
+  ],
+  "vault": {
+    "file": "vault.bin",
+    "protected": true,
+    "rules": [
+      {
+        "sid": "S-1-5-18",
+        "rights": "FullControl"
+      },
+      {
+        "sid": "S-1-5-32-544",
+        "rights": "FullControl"
+      },
+      {
+        "sid": "S-1-3-4",
+        "rights": "FullControl"
+      },
+      {
+        "sid": "service",
+        "rights": "Read"
+      }
+    ]
+  }
+}

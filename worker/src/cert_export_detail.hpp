@@ -17,6 +17,7 @@
 
 #include <array>
 #include <chrono>
+#include <string>
 #include <string_view>
 
 namespace rp::cert_export_detail {
@@ -34,6 +35,16 @@ std::array<BYTE, 20> parse_thumbprint(std::string_view thumbprint);
 ExportedPfx export_from_store(HCERTSTORE store, std::string_view thumbprint,
                               std::chrono::system_clock::time_point wall_now,
                               std::string_view store_name);
+
+// What an export says of a private key this process couldn't acquire, Windows' `code` given
+// (W7.2 point 7): CRYPT_E_NO_KEY_PROPERTY is no key at all; NTE_BAD_KEYSET (0x80090016), which
+// CAPI and CNG answer both for a key file this account may not read and for no key file, names
+// both and points to rpworker doctor, which tells them apart; any other code is said as it is.
+std::string private_key_refusal(std::string_view name, unsigned long code);
+
+// The reason that goes with private_key_refusal's words: no_private_key for
+// CRYPT_E_NO_KEY_PROPERTY, key_unopenable for every other code.
+CertExportFailure private_key_failure(unsigned long code) noexcept;
 
 // A FILETIME (100 ns ticks since 1601-01-01 UTC) on the system clock.
 std::chrono::system_clock::time_point to_time_point(const FILETIME& time) noexcept;

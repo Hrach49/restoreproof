@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://restoreproof.local/schemas/doctor.v1.json",
+  "title": "RestoreProof doctor v1",
+  "description": "restoreproof.doctor.v1: what `rpworker doctor --json <file>` writes for support (W7.2, docs/decisions.md 2026-10-18, point 2). Written as canonical-json-v1 by the Worker alone. Each check by its fixed id, its result and a fixed code; never a line's text, a fix, a path, a thumbprint, an organisation's or a person's name, a tenant value, a URL or a secret: organisations and clients are named by their position. worker_id and key_id are the Cloud's and the signing key's public ids, absent when unknown. The schema uses only keywords JSON Schema draft 7 and 2020-12 read alike.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "checks",
+    "counts",
+    "elevated",
+    "format",
+    "generated_at",
+    "windows_build",
+    "worker_version"
+  ],
+  "properties": {
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "id", "result"],
+        "properties": {
+          "code": {"$ref": "#/$defs/word"},
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z_]+(\\[[0-9]{1,4}\\])?(\\.[A-Za-z_]+(\\[[0-9]{1,4}\\])?)*$",
+            "maxLength": 128
+          },
+          "result": {"enum": ["ok", "warning", "problem", "skip"]}
+        }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "problem", "skip", "warning"],
+      "properties": {
+        "ok": {"$ref": "#/$defs/count"},
+        "problem": {"$ref": "#/$defs/count"},
+        "skip": {"$ref": "#/$defs/count"},
+        "warning": {"$ref": "#/$defs/count"}
+      }
+    },
+    "elevated": {"type": "boolean"},
+    "format": {"const": "restoreproof.doctor.v1"},
+    "generated_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "key_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "windows_build": {"type": "string", "pattern": "^([0-9]{1,5}\\.[0-9]{1,5}\\.[0-9]{1,6})?$"},
+    "worker_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "worker_version": {"type": "string", "pattern": "^[0-9A-Za-z.+-]{1,64}$"}
+  },
+  "$defs": {
+    "count": {"type": "integer", "minimum": 0, "maximum": 100000},
+    "word": {"type": "string", "pattern": "^[a-z_]{1,64}$"}
+  }
+}

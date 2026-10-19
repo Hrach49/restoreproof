@@ -1179,7 +1179,9 @@ TEST_CASE("rpworker veeam list replays the lab's live recording (Q2.1's Done whe
     std::size_t at = 0;
     for (const auto& [time, id] : expected) {
         CAPTURE(time, id);
-        const std::size_t row = result.out.find("* RestoreProofLab.onmicrosoft.com  " + time, at);
+        // W7.1: the APP CERTIFICATE column sits second, on every row.
+        const std::size_t row =
+            result.out.find("* RestoreProofLab.onmicrosoft.com  " + kThumbprintCell + time, at);
         REQUIRE(row != std::string::npos);
         const std::size_t end = result.out.find('\n', row);
         CHECK(result.out.substr(row, end - row).ends_with(id));

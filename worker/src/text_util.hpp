@@ -33,6 +33,18 @@ inline std::string ascii_lower(std::string_view text)
     return out;
 }
 
+// `text` with a-z folded to A-Z and every other byte kept, as ascii_lower.
+inline std::string ascii_upper(std::string_view text)
+{
+    std::string out{text};
+    for (char& c : out) {
+        if (c >= 'a' && c <= 'z') {
+            c = static_cast<char>(c - 'a' + 'A');
+        }
+    }
+    return out;
+}
+
 // Equal but for the case of A-Z.
 inline bool ascii_iequals(std::string_view a, std::string_view b)
 {

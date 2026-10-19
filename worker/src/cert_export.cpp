@@ -90,12 +90,8 @@ void check_private_key(const CERT_CONTEXT* cert, const std::string& name)
 {
     if (!acquire_private_key(cert)) {
         const DWORD code = GetLastError();
-        if (code == static_cast<DWORD>(CRYPT_E_NO_KEY_PROPERTY)) {
-            throw CertExportError(name + ": the certificate has no private key");
-        }
-        throw CertExportError(name + ": its private key can't be opened (error " +
-                              error_code(code) +
-                              "); run elevated or as LocalSystem, which a machine key needs");
+        throw CertExportError(cert_export_detail::private_key_refusal(name, code),
+                              cert_export_detail::private_key_failure(code));
     }
 }
 
@@ -240,17 +236,43 @@ std::array<BYTE, 20> parse_thumbprint(std::string_view thumbprint)
     };
     std::array<BYTE, 20> out{};
     if (thumbprint.size() != out.size() * 2) {
-        throw CertExportError("a certificate thumbprint must be 40 hex digits");
+        throw CertExportError("a certificate thumbprint must be 40 hex digits",
+                              CertExportFailure::malformed_thumbprint);
     }
     for (std::size_t i = 0; i < out.size(); ++i) {
         const int high = hex(thumbprint[2 * i]);
         const int low = hex(thumbprint[2 * i + 1]);
         if (high < 0 || low < 0) {
-            throw CertExportError("a certificate thumbprint must be 40 hex digits");
+            throw CertExportError("a certificate thumbprint must be 40 hex digits",
+                              CertExportFailure::malformed_thumbprint);
         }
         out[i] = static_cast<BYTE>(high * 16 + low);
     }
     return out;
+}
+
+CertExportFailure private_key_failure(unsigned long code) noexcept
+{
+    return code == static_cast<unsigned long>(CRYPT_E_NO_KEY_PROPERTY)
+               ? CertExportFailure::no_private_key
+               : CertExportFailure::key_unopenable;
+}
+
+std::string private_key_refusal(std::string_view name, unsigned long code)
+{
+    const std::string who(name);
+    if (code == static_cast<unsigned long>(CRYPT_E_NO_KEY_PROPERTY)) {
+        return who + ": the certificate has no private key";
+    }
+    if (code == static_cast<unsigned long>(NTE_BAD_KEYSET)) {
+        return who + ": its private key can't be opened by this account (error " +
+               error_code(code) +
+               ": no read access to its key file, or no key file); at a console, run elevated, "
+               "which a machine key needs; for the service's account, rpworker doctor names the "
+               "line that grants it";
+    }
+    return who + ": its private key can't be opened (error " + error_code(code) +
+           "); at a console, run elevated, which a machine key needs";
 }
 
 std::chrono::system_clock::time_point to_time_point(const FILETIME& time) noexcept
@@ -281,15 +303,17 @@ ExportedPfx export_from_store(HCERTSTORE store, std::string_view thumbprint,
     const CertContextPtr cert(
         CertFindCertificateInStore(store, kEncoding, 0, CERT_FIND_SHA1_HASH, &blob, nullptr));
     if (!cert) {
-        throw CertExportError(name + ": not found");
+        throw CertExportError(name + ": not found", CertExportFailure::not_found);
     }
     const auto not_before = to_time_point(cert->pCertInfo->NotBefore);
     const auto not_after = to_time_point(cert->pCertInfo->NotAfter);
     if (wall_now < not_before) {
-        throw CertExportError(name + ": not valid before " + utc_text(not_before));
+        throw CertExportError(name + ": not valid before " + utc_text(not_before),
+                              CertExportFailure::not_yet_valid);
     }
     if (wall_now >= not_after) {
-        throw CertExportError(name + ": expired at " + utc_text(not_after));
+        throw CertExportError(name + ": expired at " + utc_text(not_after),
+                              CertExportFailure::expired);
     }
     check_private_key(cert.get(), name);
 
@@ -328,7 +352,8 @@ ExportedPfx export_from_store(HCERTSTORE store, std::string_view thumbprint,
                 if (code == static_cast<DWORD>(NTE_BAD_KEY_STATE) ||
                     code == static_cast<DWORD>(NTE_PERM)) {
                     throw CertExportError(name + ": its private key isn't exportable (error " +
-                                          error_code(code) + ")");
+                                              error_code(code) + ")",
+                                          CertExportFailure::not_exportable);
                 }
                 throw CertExportError(name + ": the PFX export failed (error " +
                                       error_code(code) + ")");

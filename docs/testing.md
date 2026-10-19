@@ -1463,6 +1463,7 @@ never the bytes.
 | I | the real `veeam_m365` connector over `recordings/w34-live-run1/` (`tests/replay_lab.hpp`), the fake Veeam's token answer and the exporter's credential replaced by the audit's, with `--record`: the sign-in, the Bearer header, four restore POSTs carrying the exported PFX and its password, Veeam's own words | stdout, stderr, the logger, the temp folder with the recording (the test requires the four restore POSTs' fixtures with their `request_body` and the credential's two keys in it); the test also counts the four POSTs that carried the credential to Veeam, where it belongs |
 | J1 to J7 | the service's loop on `tests/worker_body_lab.hpp`'s `BodyLab` with a real `worker.log` (`rp::make_service_logger` into the temp folder, level `trace`): one job to `sent\` and the same job skipped (J1, with `running.json` as it stood before and at the restore request), a jobs file that isn't JSON (J3), an invalid job (J4), a killed run's record held for while another session of the account is `Working` (J5: the `waiting for Veeam` line names the account, which the test counts and allows), the hold over and the recovery clean (J6), a close that fails for a vault that can't be read (J7) | the log files, every file under the temp folder (`runs\`, `box\`, `state\`, the jobs file, the config), the fake Cloud's requests (the heartbeat's body, the uploaded parts), the TSA's |
 | K | `config check`, `vault list`, `vault test`, `signer public-key` through `rp::run_cli` on a DPAPI vault of the sentinels in the temp folder; `vault set` and `vault remove` through their Env; `veeam list --record` on the recorded organisations | the same as A, the vault file (DPAPI's blob holds no plaintext) and the recording |
+| N | `rpworker doctor --client --json --record` (W7.2) on a fake machine: every area, the Veeam sign-in, the Cloud's `/v1/version`, a test TSA, Graph's token (a JWT carrying the roles and a sentinel claim, `Sentinel-Audit-Doctor-Claim-2d7f`, added to the search with the token itself) and the three targets | stdout, stderr, the `--json` file, the recording, the temp folder, every request but Veeam's sign-in and the Bearer header it gives Veeam |
 
 Not a path: `vault grant` (an ACL, no value), `service install|uninstall|start|stop` (the SCM),
 `signer verify` (reads a folder and a public key). Requests to the fake Veeam and Graph are not
@@ -1594,6 +1595,64 @@ The guard scripts' own tests (from the repo root):
 python -m pytest .github/scripts          # CI: uvx --python 3.12 pytest .github/scripts
 python -m unittest discover -s worker/tools -p "test_*.py"
 ```
+
+## The doctor (W7.2)
+
+`rpworker doctor` (`docs/worker-config.md` "`rpworker doctor`"; `docs/decisions.md` 2026-10-18
+"W7.2 (#81)") is tested at three layers, none of which touches `%ProgramData%`, the SCM or
+`LocalMachine\My` but the live ones:
+
+- **The judgement**, `worker/tests/doctor_test.cpp` (`[doctor]`): each area's facts to its
+  lines, failure paths first, every word and code; the ACL rules against
+  `shared/testdata/worker-acls-v1.json`, which the installer's `test_rules.py` holds
+  `Get-WantedAcls` to as well (change one side and the other's test fails); the Done-when's rule
+  that one missing role is one `problem:` line, for each of the three roles.
+- **The command**, `worker/tests/doctor_command_test.cpp` (`[doctor_command]`): the reads and
+  their order over a fake `DoctorEnv` in a temp folder standing for `%ProgramData%\RestoreProof`,
+  Veeam's recorded answers, a test TSA (`tests/tsa_lab.hpp`), a Cloud answering `/v1/version`,
+  and Graph's recorded targets with a token built by the test (a JWT whose payload carries the
+  roles, signed with zeros, never a real token); the `--json` file validated against
+  `shared/schemas/doctor.v1.json`; `--record`; the code review's cases (a run record owned by
+  the service's SID, a queued run dated by its manifest, an organisation by any case and one
+  whose ID isn't a UUID, this machine by its full name or address, the clock read as the token
+  comes back with the fake clock answering by call). One case reads the real
+  `rp::this_machine_names` (the DNS host name first, each name once, no IPv6 zone); it asks
+  Windows for the names and addresses it has and sends nothing. A run record the test writes is
+  owned by the test's account, which the owner rule passes anyway, so the service-SID case
+  shows the record read and the held run said, not that the old rule refused it. The exe tests
+  (`rpworker doctor ...`) check only
+  what is refused before anything is read (usage, `--json`), since an elevated `ctest` would
+  otherwise read the machine.
+- **The machine reads**, `worker/tests/machine_reads_test.cpp` (`[machine_reads]`): the real
+  ACL read and Windows' access check (`AuthzAccessCheck`) on files and folders the test makes and
+  gives a DACL, for a made-up service's SID (`rp-test-w72-no-such-service`): an entry for the SID,
+  one only for `NT SERVICE\ALL SERVICES` (reached only with the token's groups), a Deny for a
+  group; a CNG key's unique name in the user's own key store, deleted afterwards.
+
+```powershell
+.\build\dev\rptests.exe "[doctor],[doctor_command],[machine_reads]"
+ctest --preset dev -R "doctor"
+```
+
+**Live, read-only, elevated, on the Veeam server** (`worker/tests/doctor_live_test.cpp`): the
+lab's organisation certificate found, its key file resolved, the Worker's export made and
+discarded, the key file's access for `NT SERVICE\RestoreProof` and the logon rights read; and,
+tagged `[service]`, the installed service read and checked (it fails, never skips, when none is
+installed):
+
+```powershell
+$env:RP_LIVE = '1'; .\build\dev\rptests.exe "[doctor][live]"
+```
+
+**The live Done-when**, by hand: `docs/api/veeam-lab/w7.2-harness/w72-live.ps1`, elevated, on a
+Worker W7.1's installer installed, the Compose stack up. It asks first, then takes away, one at a
+time, the service's entry on Veeam's key file, its entry on the vault, and (without
+`-SkipConsent`) the lab app's `Lists.SelectedOperations.Selected` consent; after each, doctor must
+show exactly one `problem:` line (read from `--json`), the line's fix is run as printed (the
+consent is put back by `Initialize-RestoreProofTenant.ps1`), and doctor must be clean again.
+Entra issues tokens without the role a few minutes after the consent goes: doctor is run every
+30 s for up to 15 minutes. Whatever happens, the `finally` puts each grant back. The text goes to
+`docs/api/veeam-lab/w7.2-done-when.txt` only when every step held.
 
 ## The tenant setup (W7.0)
 

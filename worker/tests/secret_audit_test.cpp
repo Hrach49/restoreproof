@@ -19,6 +19,7 @@
 #include "restore_command_lab.hpp"
 #include "secret_audit_lab.hpp"
 #include "signing_lab.hpp"
+#include "tsa_lab.hpp"
 #include "veeam_restore_lab.hpp"
 #include "worker_body_lab.hpp"
 
@@ -27,6 +28,8 @@
 #include <rp/client_profile.hpp>
 #include <rp/cloud_command.hpp>
 #include <rp/connector.hpp>
+#include <rp/doctor.hpp>
+#include <rp/doctor_command.hpp>
 #include <rp/graph_command.hpp>
 #include <rp/outbox_command.hpp>
 #include <rp/service_log.hpp>
@@ -44,6 +47,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <span>
 #include <sstream>
 #include <string>
@@ -953,4 +957,150 @@ TEST_CASE("secret audit M: cloud register --record, a 201 stored; service start'
     lab.finish();
     CHECK(lab.outputs.has_output("temp/state/worker.json"));
     CHECK(lab.outputs.has_output("temp/rec-cloud/"));
+}
+
+// --- W7.2: doctor's lines and its --json, a new kind of output (W4.9's Open) -----------
+
+namespace {
+
+// A token Entra might issue: a JWT whose payload carries the roles and a claim
+// that must never be shown (the audit's sentinel), with a signature of zeros.
+std::string audit_jwt()
+{
+    const nlohmann::json payload{{"roles", {"Sites.Selected", "Files.SelectedOperations.Selected",
+                                            "Lists.SelectedOperations.Selected"}},
+                                 {"xms_audit", "Sentinel-Audit-Doctor-Claim-2d7f"}};
+    return rp::base64url_encode(std::string(R"({"alg":"RS256","typ":"JWT"})")) + "." +
+           rp::base64url_encode(payload.dump()) + "." + rp::base64url_encode(std::string(32, '\0'));
+}
+
+class AuditExporter final : public rp::CertificateExporter {
+public:
+    rp::ExportedPfx export_pfx(std::string_view) override
+    {
+        rp::ExportedPfx pfx;
+        pfx.pfx_base64 = audit::exported_pfx();
+        pfx.password = std::string{audit::kExportedPfxPassword};
+        return pfx;
+    }
+};
+
+} // namespace
+
+TEST_CASE("secret audit N: doctor through every area, --record and --json on", "[secret_audit]")
+{
+    AuditLab lab;
+    const std::filesystem::path data = lab.dir.path() / "pd";
+    for (const char* name : {"state", "runs", "outbox", "sent", "failed", "logs"}) {
+        std::filesystem::create_directories(data / name);
+    }
+    const auto write = [&](const std::string& name, const std::string& text) {
+        std::ofstream file(data / name, std::ios::binary);
+        file << text;
+    };
+    static const rp::test::TestTsa tsa;
+    write("tsa.pem", tsa.root_pem());
+    write("config.json", R"({"cloud_url": "https://cloud.example.invalid", "veeam_url": "https://veeam.audit:4443",)"
+                         R"( "tsa_url": "http://tsa.audit/", "tsa_ca_file": )" +
+                             nlohmann::json(utf8(data / "tsa.pem")).dump() + "}");
+    const std::optional<rp::SigningKey> key = rp::SigningKey::from_base64(audit::signing_key_base64());
+    REQUIRE(key);
+    write("state/worker.json", rp::worker_record_text({"65fddc39-0792-4178-8361-49d53450b29e", key->key_id(),
+                                                       "https://cloud.example.invalid", "2026-10-16T16:00:00Z"}));
+    const std::string profile = write_profile(lab);
+
+    rp::test::FakeHttpClient http;
+    const std::string veeam = "https://veeam.audit:4443";
+    http.on(rp::HttpMethod::post, veeam + "/v8/token", {audit::veeam_token_response()});
+    http.on(rp::HttpMethod::get, veeam + "/v8/Organizations?limit=1000&offset=0",
+            {rp::test::load_fixture("veeam", "organizations-200")});
+    http.on(rp::HttpMethod::get,
+            veeam + "/v8/RestorePoints?organizationId=ff96d072-29e2-4cb4-a155-2590f5473176&limit=1000&offset=0",
+            {rp::test::load_fixture("veeam", "restore-points-200")});
+    http.on(rp::HttpMethod::post, veeam + "/v8/token/logout", {rp::test::load_fixture("veeam", "logout-204")});
+    http.on(rp::HttpMethod::get, "https://cloud.example.invalid/v1/version",
+            {rp::test::cloud_answer(200, R"({"api":1,"version":"0.1.0"})")});
+    http.on(rp::HttpMethod::post, "http://tsa.audit/", [](const rp::HttpRequest& request) {
+        return rp::test::make_response(200, tsa.respond(request.body), "application/timestamp-reply");
+    });
+    nlohmann::json token = rp::test::load_fixture_json("graph", "token-200");
+    const std::string jwt = audit_jwt();
+    token["body"]["access_token"] = jwt;
+    lab.targets.graph.on(rp::HttpMethod::post, gl::kTokenUrl, {rp::test::to_response(token)});
+    lab.searched.add("doctor's graph token", jwt);
+    lab.searched.add("doctor's token claim", "Sentinel-Audit-Doctor-Claim-2d7f");
+
+    rp::DoctorEnv env;
+    env.data_dir = [&] { return data; };
+    env.program_data = [&] { return lab.dir.path(); };
+    env.installed_exe = [&] { return lab.dir.path() / "rpworker.exe"; };
+    env.own_exe = env.installed_exe;
+    env.elevated = [] { return true; };
+    env.windows_build = [] { return std::string("10.0.20348"); };
+    env.machine_names = [] { return std::vector<std::string>{"veeam.audit"}; };
+    env.now = [] { return std::chrono::system_clock::from_time_t(rp::test::kTestTsaTime); };
+    env.load_secrets = [](const std::filesystem::path&) { return audit::secrets(); };
+    env.read_security = [](const std::filesystem::path&) {
+        rp::doctor::Security s;
+        s.present = s.readable = true;
+        s.owner_sid = "S-1-5-32-544";
+        return s;
+    };
+    env.access_for = [](const std::filesystem::path&, std::string_view, const std::vector<std::string>&) {
+        return std::optional<std::uint32_t>(rp::doctor::kRightsFull);
+    };
+    env.logon_rights = [] { return rp::doctor::LogonFacts{std::vector<std::string>{"S-1-5-80-0"}, {}}; };
+    env.free_bytes = [](const std::filesystem::path&) { return std::optional<std::uint64_t>(1ull << 40); };
+    env.account_name = [](std::string_view sid) { return std::string(sid); };
+    env.machine_certificate = [](std::string_view) {
+        return rp::DoctorCertificate{true, std::nullopt, std::filesystem::path("C:\\k")};
+    };
+    env.exporter = [] { return std::make_shared<AuditExporter>(); };
+    env.read_setup = [](std::string_view, rp::ServiceSetup&) { return rp::ScmResult{1060, rp::ScmStep::service}; };
+    env.query_service = [](std::string_view, rp::ServiceStatus&) { return rp::ScmResult{}; };
+    env.make_http = [&](const rp::HttpClientOptions&) -> std::unique_ptr<rp::IHttpClient> {
+        return std::make_unique<rp::test::ForwardingHttpClient>(http);
+    };
+    env.make_graph_http = [&](std::shared_ptr<spdlog::logger>) -> std::unique_ptr<rp::IHttpClient> {
+        return std::make_unique<rp::test::ForwardingHttpClient>(lab.targets.graph);
+    };
+    env.veeam_options.sleep = [](std::chrono::milliseconds) {};
+    env.graph_options.sleep = [](std::chrono::milliseconds) {};
+    env.graph_options.now = [] { return std::chrono::steady_clock::time_point{}; };
+
+    const std::string json_file = utf8(lab.dir.path() / "doctor.json");
+    const std::string record = utf8(lab.dir.path() / "rec-doctor");
+    std::ostringstream out;
+    std::ostringstream err;
+    const int code = rp::run_doctor_command(Args{"--client", profile, "--json", json_file, "--record", record},
+                                            out, err, env);
+    const Run run{code, out.str(), err.str()};
+    INFO(run.out << " ERR: " << run.err);
+    // Every area ran: the token's roles were read, the TSA and the Cloud answered.
+    REQUIRE_THAT(run.out, ContainsSubstring("graph: the app's token carries Sites.Selected"));
+    REQUIRE_THAT(run.out, ContainsSubstring("ok: tsa: http://tsa.audit/ answered"));
+    REQUIRE_THAT(run.out, ContainsSubstring("ok: cloud: RestoreProof Cloud 0.1.0"));
+    REQUIRE_THAT(run.out, ContainsSubstring("exports (in memory, discarded)"));
+    REQUIRE_THAT(run.out, ContainsSubstring("recorded "));
+    lab.collect("doctor", run);
+    std::size_t n = 0;
+    for (const rp::HttpRequest& request : http.requests()) {
+        // Veeam's sign-in carries the account's password by design: the one place it goes.
+        if (request.url.ends_with("/v8/token")) {
+            continue;
+        }
+        const std::string prefix = "doctor request " + std::to_string(++n);
+        lab.outputs.add(prefix + " url", request.url);
+        for (const auto& [name, value] : request.headers) {
+            // Veeam's bearer token is Veeam's by design; never on any other host.
+            if (name != "Authorization" || !request.url.starts_with(veeam)) {
+                lab.outputs.add(prefix + " header " + name, value);
+            }
+        }
+        lab.outputs.add(prefix + " body", request.body);
+    }
+    CHECK(n > 3);
+    lab.finish();
+    CHECK(lab.outputs.has_output("temp/doctor.json"));
+    CHECK(lab.outputs.has_output("temp/rec-doctor/"));
 }

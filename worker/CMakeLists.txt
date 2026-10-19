@@ -48,6 +48,8 @@ add_library(rpcore STATIC
     src/command_config.cpp
     src/config.cpp
     src/config_check.cpp
+    src/doctor.cpp
+    src/doctor_command.cpp
     src/console_input.cpp
     src/connector.cpp
     src/connector_registry.cpp
@@ -66,6 +68,7 @@ add_library(rpcore STATIC
     src/graph_targets.cpp
     src/heartbeat.cpp
     src/http_client.cpp
+    src/machine_reads.cpp
     src/job_rules.cpp
     src/name_key.cpp
     src/office_v1.cpp
@@ -175,8 +178,9 @@ target_compile_options(rpcore PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/we4062>)
 # and exports a PFX (crypt32) and makes its password (bcrypt). The tests'
 # network guard (Q2.1, http_client.cpp) opens the sockets it allows (ws2_32).
 # The vault (W4.5, vault.cpp) encrypts with DPAPI (crypt32) and sets the
-# file's ACL (advapi32).
-target_link_libraries(rpcore PRIVATE shell32 ole32 crypt32 bcrypt ws2_32 advapi32)
+# file's ACL (advapi32). Doctor (W7.2, machine_reads.cpp) asks Windows' access
+# check for the service's SID (authz) and opens a CNG key's name (ncrypt).
+target_link_libraries(rpcore PRIVATE shell32 ole32 crypt32 bcrypt ws2_32 advapi32 authz ncrypt)
 
 # rpworker: the Worker exe. main() lives in app/ and only hands argv to
 # rp::run_cli; all parsing is in rpcore, where rptests can reach it
@@ -210,6 +214,9 @@ add_executable(rptests
     tests/connector_registry_test.cpp
     tests/connector_test.cpp
     tests/deps_test.cpp
+    tests/doctor_command_test.cpp
+    tests/doctor_live_test.cpp
+    tests/doctor_test.cpp
     tests/ed25519_test.cpp
     tests/evidence_builder_test.cpp
     tests/expected_set_test.cpp
@@ -230,6 +237,7 @@ add_executable(rptests
     tests/http_client_test.cpp
     tests/http_client_tls_test.cpp
     tests/live_seed_test.cpp
+    tests/machine_reads_test.cpp
     tests/name_key_test.cpp
     tests/office_v1_test.cpp
     tests/outbox_command_test.cpp
@@ -345,11 +353,21 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph certificate [--vault <file>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] [--record <dir>] | rpworker signer public-key [--vault <file>] | rpworker signer new-key [--vault <file>] [--replace] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>]")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph certificate [--vault <file>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] [--record <dir>] | rpworker signer public-key [--vault <file>] | rpworker signer new-key [--vault <file>] [--replace] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>] | rpworker doctor [--config <path>] [--vault <file>] [--client <profile file>]... [--json <file>] [--record <dir>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
     ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"
     ARGS config EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+# W7.2: doctor's refusals before anything is read. No exe test goes further: past
+# --json, doctor reads the machine (an elevated ctest would read %ProgramData% and the SCM).
+rp_add_exe_test("rpworker doctor rejects an option it doesn't take"
+    ARGS doctor --hash EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker doctor refuses a --json file that is there"
+    ARGS doctor --json CMakeCache.txt EXIT_CODE 1 STDOUT ""
+    STDERR "doctor error: --json CMakeCache.txt: the file already exists")
+rp_add_exe_test("rpworker doctor refuses a --json file in a folder that isn't there"
+    ARGS doctor --json no-such-folder/doctor.json EXIT_CODE 1 STDOUT ""
+    STDERR "doctor error: --json no-such-folder/doctor.json: the folder doesn't exist")
 # Relative to the test's working directory, the build tree, where no config is.
 rp_add_exe_test("rpworker config check reports a missing config file"
     ARGS config check --config no-such-config.json EXIT_CODE 1 STDOUT ""

@@ -9,6 +9,7 @@
 #include <rp/connector.hpp>
 #include <rp/graph_errors.hpp>
 #include <rp/graph_targets.hpp>
+#include <rp/outbox.hpp>
 #include <rp/recording_http_client.hpp>
 #include <rp/service_log.hpp>
 #include <rp/service_recovery.hpp>
@@ -18,9 +19,13 @@
 
 #include "atomic_file.hpp"
 #include "command_config.hpp"
+#include "file_read.hpp"
 #include "http_exchange.hpp"
 #include "path_utf8.hpp"
 #include "text_table.hpp"
+#include "text_util.hpp"
+#include "utf16.hpp"
+#include "uuid.hpp"
 
 #include <algorithm>
 #include <format>
@@ -194,7 +199,28 @@ struct Listing {
     std::optional<std::chrono::seconds> oldest;
 };
 
-Listing list_folders(const path& folder)
+// A queued run's time: its manifest's queued_at (the outbox rewrites
+// manifest.json in the folder at every failed upload, so the folder's own
+// time is the last attempt's, never the queueing: W7.2 review finding 2).
+// nullopt for a folder with no manifest the outbox would read.
+std::optional<std::chrono::system_clock::time_point> queued_at(const path& folder)
+{
+    // A name that isn't UTF-16 is no run ID, and no manifest names it.
+    const std::string run_id = utf16_to_utf8(folder.filename().native()).value_or("");
+    const FileRead read = read_whole_file(folder / "manifest.json", 64 * 1024);
+    const std::optional<OutboxManifest> manifest =
+        read.state == FileState::read ? parse_manifest(read.bytes, run_id) : std::nullopt;
+    if (!manifest) {
+        return std::nullopt;
+    }
+    // YYYY-MM-DDTHH:MM:SSZ, the record's time but for its milliseconds.
+    return record_time(manifest->queued_at.substr(0, 19) + ".000Z");
+}
+
+// The folders under `folder`; with `now`, the age of the oldest queued run
+// among them, by its manifest, else by the folder's time.
+Listing list_folders(const path& folder,
+                     std::optional<std::chrono::system_clock::time_point> now = std::nullopt)
 {
     Listing out;
     std::error_code ec;
@@ -209,9 +235,16 @@ Listing list_folders(const path& folder)
             continue;
         }
         ++out.folders;
-        const auto written = it->last_write_time(ec);
-        const auto age = std::chrono::floor<std::chrono::seconds>(file_now - written);
-        if (!ec && (!out.oldest || age > *out.oldest)) {
+        if (!now) {
+            continue;
+        }
+        std::optional<std::chrono::seconds> age;
+        if (const auto queued = queued_at(it->path())) {
+            age = std::chrono::floor<std::chrono::seconds>(*now - *queued);
+        } else if (const auto written = it->last_write_time(ec); !ec) {
+            age = std::chrono::floor<std::chrono::seconds>(file_now - written);
+        }
+        if (age && (!out.oldest || *age > *out.oldest)) {
             out.oldest = age;
         }
     }
@@ -242,7 +275,7 @@ void read_folders(Doctor& d)
     }
     doctor::check_folders(wanted, facts, d.report);
 
-    const Listing queued = list_folders(d.data / "outbox");
+    const Listing queued = list_folders(d.data / "outbox", d.now);
     const Listing sent = list_folders(d.data / "sent");
     const Listing failed = list_folders(d.data / "failed");
     doctor::check_outbox({text_of(d.data / "failed"), failed.listable, queued.folders, sent.folders,
@@ -339,9 +372,18 @@ void read_service(Doctor& d)
         facts.exe_access = d.access(d.env.installed_exe());
     }
     facts.log_file = text_of(d.data / "logs" / kLogFileName);
-    const TrustedFile running = read_trusted_file(d.data / "state" / kRunningFileName, kMaxRecordBytes);
-    facts.running.present = running.state != TrustedRead::absent;
-    if (running.state == TrustedRead::read) {
+    // state\running.json is the service's: NT SERVICE\RestoreProof writes it,
+    // so its owner is the service's SID, which read_trusted_file's rule
+    // (SYSTEM, Administrators, the calling account) never passes for the
+    // operator (W7.2 review finding 1). Doctor takes that owner too.
+    const path record_file = d.data / "state" / kRunningFileName;
+    std::error_code ec;
+    facts.running.present = std::filesystem::exists(record_file, ec) || ec;
+    const std::string owner = d.env.read_security(record_file).owner_sid;
+    const bool owner_ok = owner == doctor::kSidSystem || owner == doctor::kSidAdministrators ||
+                          owner == d.service_sid || check_trusted_owner(record_file) == OwnerTrust::trusted;
+    const FileRead running = read_whole_file(record_file, kMaxRecordBytes);
+    if (facts.running.present && owner_ok && running.state == FileState::read) {
         if (const std::optional<RunningRecord> record = parse_record(running.bytes)) {
             facts.running.run_id = record->run_id;
             if (const auto taken = record_time(record->taken_at)) {
@@ -415,13 +457,18 @@ void read_tsa(Doctor& d)
     facts.stamped = outcome.stamped();
     facts.error = std::string(outcome.error);
     facts.gen_time = outcome.gen_time;
-    facts.now = std::chrono::duration_cast<std::chrono::seconds>(d.now.time_since_epoch()).count();
+    // This machine's clock as the token came back, never doctor's start: the
+    // reads before it (a Cloud that times out, a slow Veeam) are no skew
+    // (W7.2 review finding 6).
+    facts.now = std::chrono::duration_cast<std::chrono::seconds>(d.env.now().time_since_epoch()).count();
     doctor::check_tsa(facts, d.report);
 }
 
 // --- 9: Veeam ------------------------------------------------------------------
 
-bool is_this_machine(std::string_view url, const std::optional<std::string>& host_name)
+// Whether `url`'s host is the loopback or one of `names` (this machine's
+// names and addresses, rp::this_machine_names), any case.
+bool is_this_machine(std::string_view url, const std::vector<std::string>& names)
 {
     std::string_view host = url;
     if (const std::size_t scheme = host.find("://"); scheme != std::string_view::npos) {
@@ -433,26 +480,11 @@ bool is_this_machine(std::string_view url, const std::optional<std::string>& hos
     } else {
         host = host.substr(0, host.find(':'));
     }
-    std::string lower(host);
-    std::transform(lower.begin(), lower.end(), lower.begin(),
-                   [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; });
+    const std::string lower = ascii_lower(host);
     if (lower == "localhost" || lower == "::1" || lower.starts_with("127.")) {
         return true;
     }
-    if (!host_name) {
-        return false;
-    }
-    std::string name = *host_name;
-    std::transform(name.begin(), name.end(), name.begin(),
-                   [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; });
-    return lower == name;
-}
-
-std::string upper(std::string text)
-{
-    std::transform(text.begin(), text.end(), text.begin(),
-                   [](char c) { return c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c; });
-    return text;
+    return std::any_of(names.begin(), names.end(), [&](const std::string& name) { return ascii_iequals(name, host); });
 }
 
 doctor::CertificateFacts read_certificate(const Doctor& d, const std::string& thumbprint)
@@ -483,12 +515,16 @@ void read_veeam(Doctor& d)
     }
     doctor::VeeamFacts facts;
     facts.url = d.config->veeam_url;
-    facts.url_local = is_this_machine(d.config->veeam_url, d.env.host_name());
+    facts.url_local = is_this_machine(d.config->veeam_url, d.env.machine_names());
     facts.rest_query = d.env.query_service(doctor::kVeeamRestService, facts.rest_status);
     facts.service_sid = d.service_sid;
     facts.now = d.now;
-    if (!has_value(d.secrets.veeam_username) || !has_value(d.secrets.veeam_password)) {
-        facts.login_error = "veeam: veeam_username or veeam_password is not in the vault";
+    // The login needs the vault's two values: without them it is a skip
+    // naming the check that already said so (W7.2 review finding 7).
+    if (!d.vault_read || !has_value(d.secrets.veeam_username) || !has_value(d.secrets.veeam_password)) {
+        facts.login_needs = !d.vault_read                           ? "vault.read"
+                            : !has_value(d.secrets.veeam_username) ? "vault.veeam_username"
+                                                                   : "vault.veeam_password";
         doctor::check_veeam(facts, d.report);
         return;
     }
@@ -504,6 +540,14 @@ void read_veeam(Doctor& d)
         for (const Organization& org : d.organisations) {
             doctor::OrganisationFacts of;
             of.name = org.name;
+            // VeeamClient refuses an ID that isn't a UUID with
+            // std::invalid_argument, as find_organization says: nothing more
+            // is asked of such an organisation (W7.2 review finding 9).
+            of.id_ok = is_uuid(org.id);
+            if (!of.id_ok) {
+                facts.organisations.push_back(std::move(of));
+                continue;
+            }
             for (const RestorePoint& point : client.list_restore_points(org.id)) {
                 if (!of.newest_point || point.backup_time > *of.newest_point) {
                     of.newest_point = point.backup_time;
@@ -512,8 +556,8 @@ void read_veeam(Doctor& d)
             std::vector<std::string> thumbprints;
             for (const std::optional<OrganizationApp>* app : {&org.exchange_app, &org.sharepoint_app}) {
                 if (*app && std::find(thumbprints.begin(), thumbprints.end(),
-                                      upper((*app)->certificate_thumbprint)) == thumbprints.end()) {
-                    thumbprints.push_back(upper((*app)->certificate_thumbprint));
+                                      ascii_upper((*app)->certificate_thumbprint)) == thumbprints.end()) {
+                    thumbprints.push_back(ascii_upper((*app)->certificate_thumbprint));
                 }
             }
             for (const std::string& thumbprint : thumbprints) {
@@ -616,11 +660,18 @@ void read_client(Doctor& d, int number, std::string_view file_arg, bool graph_re
         return;
     }
     if (d.veeam_read) {
-        const auto org = std::find_if(d.organisations.begin(), d.organisations.end(),
-                                      [&](const Organization& o) { return o.name == facts.profile.veeam_org_name; });
+        // As the pipeline finds it (veeam_explore::find_organization): by
+        // name whatever the case of A-Z, and one only.
+        const std::string name = table_cell(facts.profile.veeam_org_name);
+        const auto named = [&](const Organization& o) { return ascii_iequals(o.name, facts.profile.veeam_org_name); };
+        const auto org = std::find_if(d.organisations.begin(), d.organisations.end(), named);
+        const auto matches = std::count_if(d.organisations.begin(), d.organisations.end(), named);
         if (org == d.organisations.end()) {
-            facts.veeam_check = "Veeam has no organisation " + table_cell(facts.profile.veeam_org_name) +
-                                " (veeam_org_name)";
+            facts.veeam_check = "Veeam has no organisation " + name + " (veeam_org_name)";
+        } else if (matches > 1) {
+            facts.veeam_check = std::format("{} organisations in Veeam are named {} (veeam_org_name)", matches, name);
+        } else if (!is_uuid(org->id)) {
+            facts.veeam_check = "Veeam's ID for the organisation " + name + " isn't a UUID";
         } else {
             const std::optional<ClientMismatch> mismatch =
                 check_client(facts.profile, {org->name, org->msid, org->type, org->region});
@@ -668,6 +719,13 @@ int run(const Args& args, std::ostream& out, std::ostream& err, const DoctorEnv&
         }
     }
     Doctor d{env, out};
+    // The vault's values are wiped however doctor leaves: the --json file
+    // refused, or an exception on its way to run_doctor_command (W7.2 review
+    // finding 9).
+    struct Wipe {
+        Secrets& secrets;
+        ~Wipe() { wipe_secrets(secrets, ""); }
+    } const wipe{d.secrets};
     d.service_sid = *doctor::service_sid(kServiceName);
     d.data = env.data_dir();
     d.now = env.now();
@@ -717,7 +775,6 @@ int run(const Args& args, std::ostream& out, std::ostream& err, const DoctorEnv&
         }
     }
     out.flush();
-    wipe_secrets(d.secrets, "");
     return d.report.exit_code();
 }
 

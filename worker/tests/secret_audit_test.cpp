@@ -1037,7 +1037,7 @@ TEST_CASE("secret audit N: doctor through every area, --record and --json on", "
     env.own_exe = env.installed_exe;
     env.elevated = [] { return true; };
     env.windows_build = [] { return std::string("10.0.20348"); };
-    env.host_name = [] { return std::optional<std::string>("veeam.audit"); };
+    env.machine_names = [] { return std::vector<std::string>{"veeam.audit"}; };
     env.now = [] { return std::chrono::system_clock::from_time_t(rp::test::kTestTsaTime); };
     env.load_secrets = [](const std::filesystem::path&) { return audit::secrets(); };
     env.read_security = [](const std::filesystem::path&) {

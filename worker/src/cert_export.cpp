@@ -267,10 +267,12 @@ std::string private_key_refusal(std::string_view name, unsigned long code)
     if (code == static_cast<unsigned long>(NTE_BAD_KEYSET)) {
         return who + ": its private key can't be opened by this account (error " +
                error_code(code) +
-               ": no read access to its key file, or no key file); rpworker doctor names the "
+               ": no read access to its key file, or no key file); at a console, run elevated, "
+               "which a machine key needs; for the service's account, rpworker doctor names the "
                "line that grants it";
     }
-    return who + ": its private key can't be opened (error " + error_code(code) + ")";
+    return who + ": its private key can't be opened (error " + error_code(code) +
+           "); at a console, run elevated, which a machine key needs";
 }
 
 std::chrono::system_clock::time_point to_time_point(const FILETIME& time) noexcept

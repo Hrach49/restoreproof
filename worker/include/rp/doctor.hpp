@@ -174,10 +174,12 @@ std::optional<std::string> service_sid(std::string_view service_name);
 const std::vector<std::string>& service_token_groups();
 
 // What differs between `security` and `wanted`: a wanted rule absent as one
-// explicit Allow of exactly that mask and inheritance; every explicit Deny and
+// explicit Allow of exactly that mask and inheritance; every explicit Deny,
 // every explicit Allow for a SID the rules don't name (stricter than the
-// installer on a folder that inherits: W7.1 review finding 10), each SID and
-// kind once; the protection; an owner other than SYSTEM or Administrators.
+// installer on a folder that inherits: W7.1 review finding 10) and every
+// explicit Allow for a SID they name that isn't that SID's rule exactly (more
+// rights, other inheritance: W7.2 review finding 3), each SID and kind once;
+// the protection; an owner other than SYSTEM or Administrators.
 struct AclDifference {
     std::vector<WantedRule> missing;
     std::vector<Ace> extra;
@@ -296,10 +298,12 @@ struct LogonFacts {
     std::optional<std::vector<std::string>> allowed; // SeServiceLogonRight; nullopt: unread
     std::vector<std::string> denied;                 // SeDenyServiceLogonRight
 };
+// state\running.json, read when its owner is SYSTEM, Administrators, the
+// calling account or the service's own SID (the service writes it).
 struct RunRecordFacts {
     bool present = false;
-    std::string run_id;                      // empty when unreadable
-    std::chrono::seconds age{0};
+    std::string run_id;                      // empty when unreadable or not trusted
+    std::chrono::seconds age{0};             // 0 too when its time can't be read
 };
 inline constexpr std::chrono::hours kHeldRunAfter{6};
 struct ServiceFacts {
@@ -339,7 +343,7 @@ struct TsaFacts {
     bool stamped = false;
     std::string error;       // a timestamp_code when not stamped
     std::int64_t gen_time = 0;
-    std::int64_t now = 0;    // this machine's clock, seconds since 1970 UTC
+    std::int64_t now = 0;    // this machine's clock as the token came back, seconds since 1970 UTC
 };
 void check_tsa(const TsaFacts& facts, Report& report);
 
@@ -354,6 +358,7 @@ struct CertificateFacts {
 };
 struct OrganisationFacts {
     std::string name;
+    bool id_ok = true; // Veeam's ID for it is a UUID; false: nothing more was read
     std::optional<std::string> newest_point; // Veeam's backupTime of the newest, to the second
     std::vector<CertificateFacts> certificates; // Exchange's, then SharePoint's when another
 };
@@ -363,6 +368,9 @@ struct VeeamFacts {
     ScmResult rest_query;      // Veeam.Archiver.REST.Service
     ServiceStatus rest_status;
     std::optional<std::string> login_error; // "veeam error: ..." words; nullopt: signed in
+    // The check the login needed and that failed (vault.read,
+    // vault.veeam_username, vault.veeam_password): the login is a skip.
+    std::optional<std::string> login_needs;
     std::vector<OrganisationFacts> organisations;
     std::string service_sid;
     std::chrono::system_clock::time_point now;

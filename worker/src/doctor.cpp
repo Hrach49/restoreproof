@@ -6,6 +6,7 @@
 
 #include "strict_json.hpp"
 #include "text_table.hpp"
+#include "text_util.hpp"
 
 #include <openssl/evp.h>
 
@@ -31,17 +32,6 @@ constexpr std::string_view kRegisterAgain =
 constexpr std::string_view kRecreate =
     "re-create the organisation's application certificate in Veeam";
 
-char lower(char c) noexcept
-{
-    return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
-}
-
-bool iequals(std::string_view a, std::string_view b) noexcept
-{
-    return a.size() == b.size() &&
-           std::equal(a.begin(), a.end(), b.begin(), [](char x, char y) { return lower(x) == lower(y); });
-}
-
 std::string utc_text(std::chrono::system_clock::time_point time)
 {
     return std::format("{:%Y-%m-%dT%H:%M:%SZ}", std::chrono::floor<std::chrono::seconds>(time));
@@ -50,18 +40,6 @@ std::string utc_text(std::chrono::system_clock::time_point time)
 bool contains(const std::vector<std::string>& list, std::string_view value)
 {
     return std::find(list.begin(), list.end(), value) != list.end();
-}
-
-std::string joined(const std::vector<std::string>& parts, std::string_view separator)
-{
-    std::string out;
-    for (const std::string& part : parts) {
-        if (!out.empty()) {
-            out += separator;
-        }
-        out += part;
-    }
-    return out;
 }
 
 // Text a server or a file chose, shown only when it is plain: a version or a
@@ -77,6 +55,13 @@ bool is_trusted_owner(std::string_view sid)
     return sid == kSidSystem || sid == kSidAdministrators;
 }
 
+// Whether one of `wanted`'s rules is for `sid`.
+bool names_sid(const WantedAcl& wanted, std::string_view sid)
+{
+    return std::any_of(wanted.rules.begin(), wanted.rules.end(),
+                       [&](const WantedRule& rule) { return rule.sid == sid; });
+}
+
 // What an AclDifference amounts to, in words: "lacks *S:(OI)(CI)(M), has an
 // entry for S, ...".
 std::string difference_text(const AclDifference& d, const WantedAcl& wanted, const Security& s)
@@ -87,7 +72,11 @@ std::string difference_text(const AclDifference& d, const WantedAcl& wanted, con
                                     rule.icacls));
     }
     for (const Ace& ace : d.extra) {
-        parts.push_back(std::format("has {} for {}", ace.allow ? "an entry" : "a Deny entry", ace.sid));
+        parts.push_back(std::format("has {} for {}",
+                                    !ace.allow                   ? "a Deny entry"
+                                    : names_sid(wanted, ace.sid) ? "another entry"
+                                                                 : "an entry",
+                                    ace.sid));
     }
     if (d.protection_wrong) {
         parts.push_back(wanted.is_protected ? "inherits from its parent"
@@ -112,11 +101,6 @@ std::vector<std::string> remove_lines(std::string_view path, const std::vector<A
 bool grants(std::optional<std::uint32_t> access, std::uint32_t needed)
 {
     return !access || (*access & needed) == needed;
-}
-
-std::string run_id_text(const RunRecordFacts& running)
-{
-    return running.run_id.empty() ? std::string("(state\\running.json unreadable)") : running.run_id;
 }
 
 std::string stopped_reason(const ServiceStatus& status, std::string_view log_file)
@@ -330,19 +314,24 @@ const std::vector<std::string>& service_token_groups()
 AclDifference acl_difference(const Security& security, const WantedAcl& wanted)
 {
     AclDifference d;
-    std::vector<std::string> wanted_sids;
+    const auto is_rule = [&](const Ace& ace, const WantedRule& rule) {
+        return !ace.inherited && ace.allow && !ace.inherit_only && ace.sid == rule.sid && ace.mask == rule.mask &&
+               ace.to_children == wanted.to_children;
+    };
     for (const WantedRule& rule : wanted.rules) {
-        wanted_sids.push_back(rule.sid);
-        const auto found = std::count_if(security.aces.begin(), security.aces.end(), [&](const Ace& ace) {
-            return !ace.inherited && ace.allow && !ace.inherit_only && ace.sid == rule.sid &&
-                   ace.mask == rule.mask && ace.to_children == wanted.to_children;
-        });
+        const auto found = std::count_if(security.aces.begin(), security.aces.end(),
+                                         [&](const Ace& ace) { return is_rule(ace, rule); });
         if (found != 1) {
             d.missing.push_back(rule);
         }
     }
     for (const Ace& ace : security.aces) {
-        const bool unwanted = !ace.inherited && (!ace.allow || !contains(wanted_sids, ace.sid));
+        // An Allow for a wanted SID is extra unless it is that SID's rule
+        // exactly: a broader one (Modify where Read is wanted) is a right the
+        // account mustn't have, whatever exact entry stands beside it.
+        const bool a_rule = std::any_of(wanted.rules.begin(), wanted.rules.end(),
+                                        [&](const WantedRule& rule) { return is_rule(ace, rule); });
+        const bool unwanted = !ace.inherited && (!ace.allow || !a_rule);
         const bool listed = std::any_of(d.extra.begin(), d.extra.end(), [&](const Ace& e) {
             return e.allow == ace.allow && e.sid == ace.sid;
         });
@@ -386,7 +375,7 @@ bool check_doctor(const MachineFacts& facts, Report& report)
         return false;
     }
     report.ok("doctor.elevated", std::format("doctor: rpworker {}, {}, elevated", facts.version, facts.exe));
-    if (facts.service_exe && !iequals(*facts.service_exe, facts.exe)) {
+    if (facts.service_exe && !ascii_iequals(*facts.service_exe, facts.exe)) {
         report.warning("doctor.exe", "other_exe",
                        std::format("doctor: the service runs {}, not this exe; these answers are "
                                    "this exe's",
@@ -459,7 +448,11 @@ void check_folders(const std::vector<WantedAcl>& wanted, const std::vector<Folde
         }
         const AclDifference d = acl_difference(fact.security, want);
         if (!d.ok()) {
-            const bool only_extra = d.missing.empty() && !d.protection_wrong && !d.owner_wrong;
+            // icacls removes a SID's entries whole, so an extra one for a
+            // wanted SID takes its rule with it: the installer sets both.
+            const bool only_extra =
+                d.missing.empty() && !d.protection_wrong && !d.owner_wrong &&
+                std::none_of(d.extra.begin(), d.extra.end(), [&](const Ace& ace) { return names_sid(want, ace.sid); });
             report.problem(id, "acl",
                            std::format("folders: {}: {}", fact.path, difference_text(d, want, fact.security)),
                            only_extra ? joined(remove_lines(fact.path, d.extra), "; ")
@@ -568,11 +561,20 @@ bool check_vault(const VaultFacts& facts, Report& report)
             if (d.owner_wrong) {
                 fixes.push_back(std::format("icacls \"{}\" /setowner *{}", facts.path, kSidAdministrators));
             }
-            for (const WantedRule& rule : d.missing) {
-                fixes.push_back(std::format("icacls \"{}\" /grant \"*{}:({})\"", facts.path, rule.sid, rule.icacls));
-            }
+            // The removals first: icacls takes a SID's entries away whole, so
+            // a wanted SID's rule is granted again after its other entry goes.
             for (const std::string& line : remove_lines(facts.path, d.extra)) {
                 fixes.push_back(line);
+            }
+            for (const WantedRule& rule : want.rules) {
+                const bool missing = std::any_of(d.missing.begin(), d.missing.end(),
+                                                 [&](const WantedRule& m) { return m.sid == rule.sid; });
+                const bool removed = std::any_of(d.extra.begin(), d.extra.end(),
+                                                 [&](const Ace& ace) { return ace.allow && ace.sid == rule.sid; });
+                if (missing || removed) {
+                    fixes.push_back(
+                        std::format("icacls \"{}\" /grant \"*{}:({})\"", facts.path, rule.sid, rule.icacls));
+                }
             }
             report.problem("vault.acl", "acl",
                            std::format("vault: {}: {}", facts.path, difference_text(d, want, facts.security)),
@@ -700,7 +702,7 @@ void check_service(const ServiceFacts& facts, Report& report)
         return;
     }
     const ServiceSetup& setup = facts.setup;
-    if (iequals(setup.account, kAccount)) {
+    if (ascii_iequals(setup.account, kAccount)) {
         report.ok("service.account", std::format("service: {} runs as {}", kServiceName, kAccount));
     } else {
         report.problem("service.account", "account",
@@ -720,7 +722,7 @@ void check_service(const ServiceFacts& facts, Report& report)
     const std::string_view rest =
         std::string_view(setup.command_line).substr(std::min(setup.command_line.size(),
                                                              exe.size() + (setup.command_line.starts_with('"') ? 2 : 0)));
-    const bool command_ok = iequals(exe, facts.expected_exe) &&
+    const bool command_ok = ascii_iequals(exe, facts.expected_exe) &&
                             (rest == " service run" || rest.starts_with(" service run --config "));
     if (command_ok) {
         report.ok("service.command_line", "service: runs " + table_cell(setup.command_line));
@@ -806,16 +808,21 @@ void check_service(const ServiceFacts& facts, Report& report)
     }
     if (!facts.running.present) {
         report.ok("service.run", "service: no run in progress");
+    } else if (facts.running.run_id.empty()) {
+        report.warning("service.run", "run_unreadable",
+                       "service: state\\running.json is there and can't be read, so how long its run has "
+                       "been in progress is unknown; a restore target may hold its items",
+                       std::format("read {}", facts.log_file));
     } else if (facts.running.age >= kHeldRunAfter) {
         report.problem("service.run", "held_run",
-                       std::format("service: run {} has been in progress for {} h", run_id_text(facts.running),
+                       std::format("service: run {} has been in progress for {} h", facts.running.run_id,
                                    std::chrono::floor<std::chrono::hours>(facts.running.age).count()),
                        std::format("read {}; rpworker service stop ends it as interrupted", facts.log_file));
     } else {
         report.warning("service.run", "run_in_progress",
                        std::format("service: run {} in progress for {} min; a restore target may hold its "
                                    "items",
-                                   run_id_text(facts.running),
+                                   facts.running.run_id,
                                    std::chrono::floor<std::chrono::minutes>(facts.running.age).count()));
     }
 }
@@ -834,7 +841,7 @@ void check_cloud(const CloudFacts& facts, Report& report)
         const WorkerRecord& record = *facts.record.record;
         report.ok("cloud.registration", std::format("cloud: worker {}, registered {} with {}", record.worker_id,
                                                     record.registered_at, record.cloud_url));
-        if (!iequals(trimmed_url(record.cloud_url), trimmed_url(facts.cloud_url))) {
+        if (!ascii_iequals(trimmed_url(record.cloud_url), trimmed_url(facts.cloud_url))) {
             report.problem("cloud.url", "other_cloud",
                            std::format("cloud: registered with {}, but config.json names {}", record.cloud_url,
                                        facts.cloud_url),
@@ -957,6 +964,11 @@ void check_certificate(const VeeamFacts& facts, const std::string& org, const st
             break;
         }
         report.problem(id + ".export", code, text, fix);
+        // A key this account can't open is a key file it can't name either
+        // (its name is read through the key): one cause, one line.
+        if (*cert.export_failure == CertExportFailure::key_unopenable && !cert.key_file) {
+            key_file_skipped = true;
+        }
     } else {
         report.ok(id + ".export", who + " exports (in memory, discarded)" +
                                       (cert.not_after ? ", valid to " + utc_text(*cert.not_after) : ""));
@@ -1015,6 +1027,10 @@ void check_veeam(const VeeamFacts& facts, Report& report)
                        "run the Worker on the Veeam server");
         report.skip("veeam.rest_service", std::format("veeam: {}", kVeeamRestService), "veeam.local");
     }
+    if (facts.login_needs) {
+        report.skip("veeam.login", "veeam: the login, the organisations and their certificates", *facts.login_needs);
+        return;
+    }
     if (facts.login_error) {
         report.problem("veeam.login", "login", *facts.login_error,
                        "check veeam_username and veeam_password (rpworker vault set), the account's role "
@@ -1032,6 +1048,11 @@ void check_veeam(const VeeamFacts& facts, Report& report)
         const OrganisationFacts& org = facts.organisations[i];
         const std::string id = std::format("veeam.org[{}]", i + 1);
         const std::string name = table_cell(org.name);
+        if (!org.id_ok) {
+            report.problem(id, "bad_id", std::format("veeam: {}: Veeam's ID for it isn't a UUID", name),
+                           "check that veeam_url is Veeam Backup for Microsoft 365's REST API, v8");
+            continue;
+        }
         report.ok(id, std::format("veeam: {}: {}", name,
                                   org.newest_point ? "newest restore point " + table_cell(*org.newest_point)
                                                    : std::string("no restore point yet")));

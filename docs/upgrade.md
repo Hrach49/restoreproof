@@ -128,14 +128,15 @@ unpacked package. It asks nothing. **Nothing is removed before the service is un
    <n> run(s) never reached the Cloud and go with the folder: <ids>`. A run folder that
    outlives the Worker is nobody's: nothing is edited or re-signed, and no other Worker can
    send it.
-6. **The Cloud told**: `rpworker cloud revoke` (`docs/worker-config.md`). `revoked worker <id>`
+6. `rpworker service uninstall`. A stop here (the SCM refusing, a tool holding the service
+   open) has told and undone nothing yet: the Worker is installed as it was, stopped.
+7. **The Cloud told**: `rpworker cloud revoke` (`docs/worker-config.md`). `revoked worker <id>`
    is a change; a Cloud that no longer knows the token (revoked already) is `ok:`; a Cloud not
    reached is `note: the Cloud wasn't reached (...): revoke this Worker in the Cloud:
    manage.py revoke-worker --worker-id <id>, or the Workers page`, and the uninstall goes on.
-7. **The key files**: for every organisation `rpworker veeam list` names, the service account's
+8. **The key files**: for every organisation `rpworker veeam list` names, the service account's
    entry is taken off its certificate's private key file (`icacls "<key file>" /remove:g
    *S-1-5-80-...`, through .NET by SID as the installer grants it).
-8. `rpworker service uninstall`.
 9. **The data**: `vault.bin` and every file under `state\`, `runs\`, `outbox\`, `sent\` and
    `failed\` are each **overwritten once in place with random bytes, flushed to the disk, then
    deleted**, and those five folders removed; `config.json`, `veeam-rest.pem` and

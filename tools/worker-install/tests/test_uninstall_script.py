@@ -63,7 +63,7 @@ def test_a_service_from_another_exe_is_refused_with_nothing_removed(tmp_path):
     assert result.returncode != 0
     assert "runs \"C:\\elsewhere\\rpworker.exe\" service run, not" in result.stderr and "neither" not in result.stderr
     assert "rpworker service stop, then rpworker service uninstall by hand first" in result.stderr
-    assert "Nothing was removed; the Worker is installed as it was." in result.stderr
+    assert "Nothing was removed; the Worker is installed as it was (stopped, when this ran past step 3" in result.stderr
     assert lab.commands()[before:] == [] and (lab.root / "vault.bin").exists() and lab.program.exists() and lab.entry() is not None
 
 
@@ -106,11 +106,27 @@ def test_a_record_that_stays_after_the_restart_stops_with_the_service_stopped_an
 def test_a_service_uninstall_that_fails_stops_with_nothing_removed(tmp_path):
     lab = installed_lab(tmp_path)
     lab.flag("fail-service-uninstall")
+    before = len(lab.argv())
     result = lab.uninstall()
     assert result.returncode != 0
     assert "rpworker service uninstall failed: service error: the service RestoreProof is marked for deletion" in result.stderr
+    assert "Nothing was removed; the Worker is installed as it was (stopped" in result.stderr
     assert (lab.root / "vault.bin").exists() and lab.program.exists() and lab.overwritten() == [] and lab.entry() is not None
-    assert lab.marker("revoked"), "the Cloud was told before the service was taken away"
+    # Nothing was told or undone: the Cloud not yet, the key file's entry still there.
+    assert not lab.marker("revoked") and "cloud_api_token" in lab.vault()
+    after = " ".join(lab.commands()[before:])
+    assert "cloud revoke" not in after and "veeam list" not in after
+
+
+def test_a_service_installed_from_an_exe_that_is_gone_is_refused_with_the_sc_lines(tmp_path):
+    lab = installed_lab(tmp_path)
+    import shutil
+    shutil.rmtree(lab.program)
+    before = len(lab.argv())
+    result = lab.uninstall(worker=lab.program / "rpworker.exe")
+    assert result.returncode != 0
+    assert f"is installed from {lab.program / 'rpworker.exe'}, which is gone, so rpworker can't stop or uninstall it: sc stop {SERVICE}, then sc delete {SERVICE}, then run this again" in result.stderr
+    assert lab.commands()[before:] == [] and (lab.root / "vault.bin").exists() and lab.entry() is not None and lab.overwritten() == []
 
 
 # --- the whole, in order --------------------------------------------------------------------
@@ -125,9 +141,10 @@ def test_the_uninstall_does_the_steps_in_order_overwrites_the_data_and_leaves_th
     assert result.returncode == 0, result.stderr
     out = lines(result)
     config = lab.root / "config.json"
+    # The service goes before the Cloud is told and the key files are touched (the review's finding 4).
     assert lab.commands()[before:] == [
         "service stop", "vault list", f"outbox flush --config {config} --outbox {lab.root}", f"outbox list --outbox {lab.root}",
-        f"cloud revoke --config {config}", f"veeam list --config {config}", "service uninstall",
+        "service uninstall", f"cloud revoke --config {config}", f"veeam list --config {config}",
     ]
     assert f"ok: rpworker 0.1.0 at {lab.program / 'rpworker.exe'}" in out
     assert "change: rpworker service stop (stopped RestoreProof in 0.4 s)" in out
@@ -182,6 +199,7 @@ def test_whatif_removes_nothing_and_runs_nothing_that_writes(tmp_path):
     assert any(line.startswith("would: icacls ") and "/remove:g" in line for line in out)
     assert "would: wait for run fake-run-1 to end (before the stop)" in out and "would: rpworker service stop" in out
     assert "would: rpworker outbox flush" in out and "would: rpworker cloud revoke" in out and "would: rpworker service uninstall" in out
+    assert out.index("would: rpworker service uninstall") < out.index("would: rpworker cloud revoke")
     assert f"would: overwrite once and delete {lab.root / 'vault.bin'}" in out and f"would: remove {lab.program}" in out
     assert "would: remove the Apps & features entry" in out
     assert (lab.root / "vault.bin").exists() and lab.program.exists() and lab.entry() is not None and lab.overwritten() == []

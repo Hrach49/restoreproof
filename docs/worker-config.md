@@ -1771,7 +1771,8 @@ unchanged**, so a vault this account can't write is found before the Cloud is to
 |---|---|---|---|
 | 204 with `X-RestoreProof-API: 1` (any 2xx with the header) | `revoked worker <worker_id>` (the id from `state\worker.json`; `revoked this Worker` when the record isn't there or isn't one) | `cloud_api_token` removed | 0 |
 | a 2xx without the header (or another value) | `cloud revoke: the answer is not a RestoreProof Cloud's (no X-RestoreProof-API: 1)` | unchanged | 4 |
-| 401 | `cloud revoke: the Cloud doesn't know this token (revoked already, or never this Cloud's); it was removed from the vault` | `cloud_api_token` removed: it is worthless either way | 2 |
+| 401 with `X-RestoreProof-API: 1` | `cloud revoke: the Cloud doesn't know this token (revoked already, or never this Cloud's); it was removed from the vault` | `cloud_api_token` removed: it is worthless either way | 2 |
+| 401 without the header (a proxy's, a captive page's) | `cloud revoke: the answer is not a RestoreProof Cloud's (no X-RestoreProof-API: 1 on its 401); the token is kept` | unchanged | 4 |
 | 5xx, a timeout, no connection, a TLS failure | `cloud revoke: the Cloud couldn't be reached (<word>); run it again, or revoke the Worker in the Cloud (manage.py revoke-worker)` | unchanged | 3 |
 | any other status | `cloud revoke: refused (http_<status>)` | unchanged | 4 |
 

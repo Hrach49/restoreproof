@@ -228,6 +228,50 @@ function Test-KeyFileRead([string]$Path, [string]$Sid) {
     }).Count -gt 0
 }
 
+# The swap (W7.4 point 3 step 4). The package's files are copied into a folder of their own
+# first, so a copy that fails leaves the installed files untouched; then the installed files
+# are moved to a staging folder and the new ones in (moves on one volume), and previous\ is
+# replaced through a rename, so no step loses both copies. A failure after the move puts the
+# installed files back and says so. `Keep` names files that stay in place.
+function Invoke-Swap([object[]]$Files, [string[]]$Keep = @()) {
+    $guid = [Guid]::NewGuid().ToString('N')
+    $incoming = Join-Path $ProgramDir "incoming-$guid"
+    $staging = Join-Path $ProgramDir "previous.new-$guid"
+    $null = New-Item -ItemType Directory -Path $incoming
+    try {
+        foreach ($file in $Files) {
+            Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $incoming $file.Name) -Force
+            if ((Get-FileHash -LiteralPath (Join-Path $incoming $file.Name) -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash) { throw "$($file.Name) was not copied whole" }
+        }
+    } catch {
+        Remove-Item -LiteralPath $incoming -Recurse -Force -ErrorAction SilentlyContinue
+        throw "the package's files couldn't be copied ($($_.Exception.Message)); the installed files are untouched"
+    }
+    $null = New-Item -ItemType Directory -Path $staging
+    $moved = @()
+    try {
+        foreach ($old in @(Get-ChildItem -LiteralPath $ProgramDir -File)) {
+            if ($Keep -contains $old.Name) { continue }
+            Move-Item -LiteralPath $old.FullName -Destination (Join-Path $staging $old.Name)
+            $moved += $old.Name
+        }
+        foreach ($file in $Files) {
+            Move-Item -LiteralPath (Join-Path $incoming $file.Name) -Destination (Join-Path $ProgramDir $file.Name) -Force
+            Changed "copied $($file.Name) to $ProgramDir"
+        }
+    } catch {
+        foreach ($name in $moved) { Move-Item -LiteralPath (Join-Path $staging $name) -Destination (Join-Path $ProgramDir $name) -Force -ErrorAction SilentlyContinue }
+        Remove-Item -LiteralPath $staging, $incoming -Recurse -Force -ErrorAction SilentlyContinue
+        throw "the swap failed ($($_.Exception.Message)); the installed files were put back"
+    }
+    Remove-Item -LiteralPath $incoming -Recurse -Force
+    $retired = "$previous.old-$guid"
+    if (Test-Path -LiteralPath $previous -PathType Container) { Rename-Item -LiteralPath $previous -NewName (Split-Path -Leaf $retired) }
+    Rename-Item -LiteralPath $staging -NewName 'previous'
+    if (Test-Path -LiteralPath $retired -PathType Container) { Remove-Item -LiteralPath $retired -Recurse -Force }
+    Changed "the previous files ($installedVersion) kept as $previous"
+}
+
 # The wait for the run in progress (W7.4 point 3 step 2): the record read every PollSeconds
 # until it is gone, one line a minute; past the budget the install stops with nothing changed.
 function Wait-ForNoRun([string]$Stage) {
@@ -274,56 +318,60 @@ try {
 
     # -- 2. the exe, its DLLs and the scripts; the upgrade (W7.4 point 3) ----------------------
     $files = @(Get-ChildItem -LiteralPath $Package -File | Where-Object { $_.Name -eq 'rpworker.exe' -or $_.Extension -in '.dll', '.ps1', '.psm1' })
-    $sameFiles = $true
-    foreach ($file in $files) {
-        $target = Join-Path $ProgramDir $file.Name
-        if (-not ((Test-Path -LiteralPath $target -PathType Leaf) -and (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash)) { $sameFiles = $false }
-    }
+    # Which of the package's files differ from the installed ones (absent, or another SHA-256), hashed once.
+    try {
+        $differing = @(foreach ($file in $files) {
+            $target = Join-Path $ProgramDir $file.Name
+            if (-not ((Test-Path -LiteralPath $target -PathType Leaf) -and (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash)) { $file.Name }
+        })
+    } catch { Stop-Install "a file of the package or of $ProgramDir couldn't be read ($($_.Exception.Message)); nothing was changed." }
     try { $packageVersion = Get-WorkerVersion -Exe $packageExe } catch { Stop-Install "$($_.Exception.Message)" }
     $installedVersion = ''
     if (Test-Path -LiteralPath $Exe -PathType Leaf) { try { $installedVersion = Get-WorkerVersion -Exe $Exe } catch { $installedVersion = '' } }
-    $upgradePlan = Get-UpgradePlan -ServiceState $serviceState -InstalledVersion $installedVersion -PackageVersion $packageVersion -SameFiles $sameFiles -Upgrade $Upgrade.IsPresent
+    $upgradePlan = Get-UpgradePlan -ServiceState $serviceState -InstalledVersion $installedVersion -PackageVersion $packageVersion -SameFiles ($differing.Count -eq 0) -Upgrade $Upgrade.IsPresent
     $previous = Join-Path $ProgramDir 'previous'
     $rollback = "pwsh -File `"$(Join-Path $ProgramDir 'Install-RestoreProofWorker.ps1')`" -Upgrade -Package `"$previous`""
     $upgraded = $false
-    $staging = ''
+    $swapped = $false
     switch ($upgradePlan.Action) {
-        'stop' { Stop-Install "$ProgramDir holds rpworker $installedVersion, not the package's $packageVersion, while the service is installed from it; give -Upgrade to replace it (docs/upgrade.md)." }
+        'stop' {
+            $what = if ($differing.Count -eq 1) { "$($differing[0]) differs" } else { "$($differing -join ', ') differ" }
+            Stop-Install "$ProgramDir holds rpworker $installedVersion and the package is $packageVersion$(if ($installedVersion -eq $packageVersion) { ' with other files' }) ($what) while the service is installed from it; give -Upgrade to replace $(if ($differing.Count -eq 1) { 'it' } else { 'them' }) (docs/upgrade.md)."
+        }
         'same' { Say "ok: rpworker $packageVersion is installed already" }
         'install' { if ($Upgrade) { Say 'note: -Upgrade given and no service is installed: a plain install' } }
         'swap' {
             Say $upgradePlan.Line
             Wait-ForNoRun 'the upgrade'
+            # Scripts the package doesn't carry (a 0.1.0 package has none) stay where they are, so
+            # the Apps entry's uninstall line keeps its file.
+            $keep = @()
+            if (@($files | Where-Object { $_.Extension -in '.ps1', '.psm1' }).Count -eq 0) {
+                $keep = @(Get-ChildItem -LiteralPath $ProgramDir -File | Where-Object { $_.Extension -in '.ps1', '.psm1' } | ForEach-Object { $_.Name })
+            }
             if ($PSCmdlet.ShouldProcess($ServiceName, 'rpworker service stop')) {
                 $stop = Invoke-Worker @('service', 'stop')
                 if ($stop.Code -ne 0) { Stop-Install "rpworker service stop failed: $(Get-FirstLine ($stop.Err + $stop.Out))" }
                 if ($stop.Out -match '(?m)^stopped ') { Changed "rpworker service stop ($(Get-FirstLine $stop.Out)), for the upgrade" } else { Say "ok: $(Get-FirstLine $stop.Out)" }
                 if ($null -ne (Get-RunRecord -Root $Root)) { Say "note: a run was taken as the service stopped; the new version's first start closes it, waits for Veeam and cleans the restore targets (the service's own recovery)" }
-            } else { Would 'rpworker service stop' }
-            # The installed files go to previous\ through a staging folder, so a package that is
-            # previous\ itself (the rollback) is still there to copy from.
-            if ($PSCmdlet.ShouldProcess($previous, 'keep the installed files as previous')) {
-                $staging = Join-Path $ProgramDir ("previous.new-" + [Guid]::NewGuid().ToString('N'))
-                $null = New-Item -ItemType Directory -Path $staging
-                foreach ($old in @(Get-ChildItem -LiteralPath $ProgramDir -File)) { Move-Item -LiteralPath $old.FullName -Destination (Join-Path $staging $old.Name) }
-            } else { Would "move the installed files to $previous and copy the package's in" }
-            $upgraded = $true
+                try { Invoke-Swap -Files $files -Keep $keep } catch { Stop-Install "$($_.Exception.Message)" }
+                $upgraded = $true
+            } else {
+                Would 'rpworker service stop'
+                Would "move the installed files to $previous$(if ($keep.Count) { " (but $($keep -join ', '), which the package doesn't carry)" }) and copy the package's in: $($differing -join ', ')"
+            }
+            $swapped = $true
         }
     }
-    foreach ($file in $files) {
-        $target = Join-Path $ProgramDir $file.Name
-        if ((Test-Path -LiteralPath $target -PathType Leaf) -and (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash) {
-            Say "ok: $target"; continue
+    if (-not $swapped) {
+        foreach ($file in $files) {
+            $target = Join-Path $ProgramDir $file.Name
+            if ($file.Name -notin $differing) { Say "ok: $target"; continue }
+            if (-not $PSCmdlet.ShouldProcess($target, "copy from $($file.FullName)")) { Would "copy $($file.Name) to $ProgramDir"; continue }
+            if (-not (Test-Path -LiteralPath $ProgramDir -PathType Container)) { $null = New-Item -ItemType Directory -Path $ProgramDir }
+            Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+            Changed "copied $($file.Name) to $ProgramDir"
         }
-        if (-not $PSCmdlet.ShouldProcess($target, "copy from $($file.FullName)")) { Would "copy $($file.Name) to $ProgramDir"; continue }
-        if (-not (Test-Path -LiteralPath $ProgramDir -PathType Container)) { $null = New-Item -ItemType Directory -Path $ProgramDir }
-        Copy-Item -LiteralPath $file.FullName -Destination $target -Force
-        Changed "copied $($file.Name) to $ProgramDir"
-    }
-    if ($staging) {
-        if (Test-Path -LiteralPath $previous -PathType Container) { Remove-Item -LiteralPath $previous -Recurse -Force }
-        Rename-Item -LiteralPath $staging -NewName 'previous'
-        Changed "the previous files ($installedVersion) kept as $previous"
     }
     $version = $packageVersion
     if (Test-Path -LiteralPath $Exe -PathType Leaf) {

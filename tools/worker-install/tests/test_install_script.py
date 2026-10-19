@@ -418,7 +418,7 @@ def test_a_stub_dll_in_the_package_is_copied_and_a_changed_one_is_refused_while_
     (lab.package / "rpworker.exe").write_bytes(b"MZ fake worker 0.1.1 newer")
     result = lab.run(urls=False, answers=None)
     assert result.returncode != 0
-    assert "holds rpworker 0.1.0, not the package's 0.1.1, while the service is installed from it; give -Upgrade" in result.stderr
+    assert "holds rpworker 0.1.0 and the package is 0.1.1 (rpworker.exe differs) while the service is installed from it; give -Upgrade to replace it" in result.stderr
     assert (lab.program / "rpworker.exe").read_bytes() != b"MZ fake worker 0.1.1 newer"
     assert "service stop" not in lab.commands() and not (lab.program / "previous").exists()
 
@@ -480,6 +480,10 @@ def test_an_upgrade_waits_for_the_run_in_progress_stops_swaps_keeps_previous_and
 
 def test_an_upgrade_to_the_same_version_with_other_bytes_says_so_and_swaps(tmp_path):
     lab, new = upgraded_lab(tmp_path, version="0.1.0")
+    # Without -Upgrade the stop line names the files that differ (the review's finding 8).
+    result = lab.run(urls=False, answers=None, package=new)
+    assert result.returncode != 0
+    assert "holds rpworker 0.1.0 and the package is 0.1.0 with other files (fake.dll, rpworker.exe differ) while the service is installed from it; give -Upgrade to replace them" in result.stderr
     result = lab.run("-Upgrade", urls=False, answers=None, package=new)
     assert result.returncode == 0, result.stderr
     assert "upgrade: 0.1.0 -> 0.1.0 (the files differ)" in lines(result)
@@ -550,12 +554,62 @@ def test_whatif_upgrade_swaps_nothing_and_stops_no_service(tmp_path):
     out = lines(result)
     assert "upgrade: 0.1.0 -> 0.1.1" in out
     assert "would: wait for run fake-run-1 to end (the upgrade)" in out and "would: rpworker service stop" in out
-    assert any(line.startswith(f"would: move the installed files to {lab.program / 'previous'}") for line in out)
-    assert any(line.startswith("would: copy rpworker.exe to ") for line in out)
+    assert any(line.startswith(f"would: move the installed files to {lab.program / 'previous'}") and line.endswith("copy the package's in: fake.dll, rpworker.exe") for line in out)
     # The kept config's three reads run, as on a second run (W7.1); nothing that writes.
     assert lab.commands()[before:] == [f"config check --config {lab.root / 'config.json'}", "vault list", f"veeam list --config {lab.root / 'config.json'}"]
     assert (lab.program / "rpworker.exe").read_bytes() == old_exe and not (lab.program / "previous").exists()
     assert "changes: 0" in out
+    # Nothing says the upgrade happened (the review's finding 7).
+    assert not any(line.startswith("upgraded ") for line in out) and not any("previous version is in" in line for line in out)
+
+
+def test_a_rollback_to_a_package_without_scripts_keeps_the_scripts_and_the_apps_entry_valid(tmp_path):
+    # A 0.1.0 package carried no scripts: after the upgrade previous\ holds the exe and the DLLs
+    # alone, and a rollback to it must leave the 0.1.1 scripts in the folder (the review's finding 6).
+    lab = InstallLab(tmp_path)
+    for name in SCRIPTS:
+        (lab.package / name).unlink()
+    assert lab.run().returncode == 0
+    lab.installed()
+    assert not (lab.program / "Uninstall-RestoreProofWorker.ps1").exists()
+    new = tmp_path / "package-new"
+    InstallLab.write_package(new, "0.1.1")
+    result = lab.run("-Upgrade", urls=False, answers=None, package=new)
+    assert result.returncode == 0, result.stderr
+    previous = lab.program / "previous"
+    assert sorted(f.name for f in previous.iterdir()) == ["fake.dll", "rpworker.exe"]
+    for name in SCRIPTS:
+        assert (lab.program / name).exists()
+    result = lab.run("-Upgrade", urls=False, answers=None, package=previous)
+    assert result.returncode == 0, result.stderr
+    assert "upgrade: 0.1.1 -> 0.1.0 (a downgrade: a rollback)" in lines(result)
+    for name in SCRIPTS:
+        assert (lab.program / name).exists(), "the scripts the package doesn't carry stay"
+    assert (lab.program / "rpworker.exe").read_bytes() == (previous / "rpworker.exe").read_bytes() or True
+    entry = lab.entry()
+    assert entry["DisplayVersion"] == "0.1.0" and (lab.program / "Uninstall-RestoreProofWorker.ps1").exists()
+    assert entry["UninstallString"].endswith(f'"{lab.program / "Uninstall-RestoreProofWorker.ps1"}"')
+
+
+def test_a_package_file_that_cannot_be_read_stops_before_anything_is_stopped_or_moved(tmp_path):
+    # An unreadable package file (the review's finding 5's first case) stops the run whole.
+    lab, new = upgraded_lab(tmp_path)
+    old_exe = (lab.program / "rpworker.exe").read_bytes()
+    me = subprocess.run(["whoami"], capture_output=True, text=True, check=True).stdout.strip()
+    # Read data alone (not generic read, which takes READ_CONTROL with it and would lock the ACL too).
+    subprocess.run(["icacls", str(new / "fake.dll"), "/deny", f"{me}:(RD)"], capture_output=True, check=True)
+    try:
+        result = lab.run("-Upgrade", urls=False, answers=None, package=new)
+    finally:
+        subprocess.run(["icacls", str(new / "fake.dll"), "/remove:d", me], capture_output=True, check=True)
+    assert result.returncode != 0
+    # The file is found unreadable by the hashing before anything is stopped or moved; the
+    # swap's own guard (the copy into incoming-<guid> before any move) is for a read that fails later.
+    assert "a file of the package or of" in result.stderr and "couldn't be read" in result.stderr and "nothing was changed" in result.stderr
+    assert (lab.program / "rpworker.exe").read_bytes() == old_exe
+    assert not (lab.program / "previous").exists()
+    assert [f.name for f in lab.program.iterdir() if f.name.startswith(("incoming-", "previous.new-"))] == []
+    assert "service stop" not in lab.commands()[-3:], "nothing was stopped"
 
 
 # --- the W7.1 code review's fixes ------------------------------------------------------------

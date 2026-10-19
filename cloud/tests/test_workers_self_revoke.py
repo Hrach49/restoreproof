@@ -185,6 +185,29 @@ async def test_the_token_s_worker_is_revoked_once_with_one_audit_row(lab):
     assert await lab.audit(lab.b_msp_id) == []
 
 
+async def test_a_revoke_that_lands_between_the_lookup_and_the_update_is_the_same_401(lab, monkeypatch):
+    # The admin's Revoke on /workers (or a second uninstall) commits between
+    # `current_worker`'s lookup and this request's UPDATE: the row the
+    # dependency loaded was live, the UPDATE under `revoked_at IS NULL`
+    # touches 0 rows. The heartbeat's rule for the same race: the one 401,
+    # nothing written, never a 500. The 0 rows are made here on the repo
+    # method, the one statement that decides it.
+    before = await lab.counts()
+    audit_before = await lab.audit()
+
+    async def no_rows(self, msp_id, worker_id, at):
+        return 0
+
+    monkeypatch.setattr(WorkerRepo, "revoke", no_rows)
+    response = await lab.revoke()
+
+    assert response.status_code == 401
+    assert response.json() == REFUSED
+    assert response.headers["WWW-Authenticate"] == "Bearer"
+    assert response.headers["X-RestoreProof-API"] == "1"
+    assert await lab.counts() == before and await lab.audit() == audit_before
+
+
 async def test_from_the_commit_on_every_request_under_the_token_is_401(lab):
     assert (await lab.revoke()).status_code == 204
     audit_after = await lab.audit()

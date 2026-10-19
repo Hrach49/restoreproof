@@ -30,8 +30,10 @@ def test_a_secret_goes_to_the_worker_on_stdin_and_never_as_an_argument():
 def test_the_script_never_undoes_a_step_and_names_the_uninstall_script():
     script = text(SCRIPT)
     assert "service uninstall" not in script.replace("rpworker service stop; rpworker service uninstall", "")
-    # The one thing the installer removes: the previous version's files, on an upgrade (W7.4 point 3).
-    assert script.count("Remove-Item") == 1 and "Remove-Item -LiteralPath $previous -Recurse -Force" in script
+    # The one thing the installer removes: the previous version's files and its own staging
+    # folders, on an upgrade (W7.4 point 3), all inside Invoke-Swap.
+    swap = script[script.index("function Invoke-Swap"):script.index("# The wait for the run in progress")]
+    assert script.count("Remove-Item") == swap.count("Remove-Item") == 4
     assert "Uninstall-RestoreProofWorker.ps1 (W7.3)" in script
 
 
@@ -43,8 +45,11 @@ def test_the_uninstall_script_is_strict_asks_nothing_and_holds_no_secret():
         assert word not in script, word
     assert "Set-Location $env:SystemRoot" in script, "never in the folder it removes"
     # Nothing is removed before the service is uninstalled: every removal comes after step 8.
-    assert script.index("rpworker service uninstall") < script.index("Remove-FileOverwritten")
-    assert script.index("rpworker service uninstall") < script.index("Remove-Item -LiteralPath $ProgramDir")
+    # (the steps' own calls, not the header's words)
+    uninstall = script.index("Invoke-Worker @('service', 'uninstall')")
+    assert uninstall < script.index("Remove-FolderOverwritten $path") and uninstall < script.index("Remove-Item -LiteralPath $ProgramDir")
+    # The service goes before the Cloud is told and the key files are touched (the review's finding 4).
+    assert uninstall < script.index("Invoke-Worker @('cloud', 'revoke'") and uninstall < script.index("Remove-FileReadRule -Acl")
     assert "securely" not in script.lower()
 
 

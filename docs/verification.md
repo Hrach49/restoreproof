@@ -2199,9 +2199,11 @@ header, another scheme, an unknown token and a revoked Worker are `current_worke
 `{"detail": "not authenticated"}` with `WWW-Authenticate: Bearer` after its one lookup, before
 anything is written; so a Worker revoked already, by the admin or by itself, gets the 401 and
 not a second answer, and from the commit on its heartbeat, its poll, its upload and a second
-revoke are that 401. The Worker reads the 204 as `revoked worker <id>` and the 401 as "the
-Cloud doesn't know this token"; both end with the API token out of the vault. The log holds
-the request line and nothing of the token.
+revoke are that 401. A revoke that lands between `current_worker`'s lookup and this request's
+`UPDATE` (the admin's on `/workers`, a second uninstall) touches 0 rows and is that same 401,
+nothing written, never a 500: the heartbeat's rule for the same race. The Worker reads the 204
+as `revoked worker <id>` and the 401 as "the Cloud doesn't know this token"; both end with the
+API token out of the vault. The log holds the request line and nothing of the token.
 
 ## The Worker reaches the Cloud (W5.1)
 

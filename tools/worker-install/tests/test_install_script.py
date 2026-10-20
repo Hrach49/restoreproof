@@ -9,6 +9,7 @@ import ctypes
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,7 @@ import pytest
 from fake_rpworker import KEY_ID, THUMBPRINT, WORKER_ID
 from install_lab import (ANSWERS, PASSWORD, SCRIPTS, SERVICE, TOKEN, USERNAME, InstallLab, acl_lines, assert_no_secret,
                          assert_no_secret_argument, current_user_sid, explicit_rules, lines, self_signed, sha1_hex)
-from pwsh import ps_string, run, run_json, with_module
+from pwsh import FAKE_MACHINE, SCRIPT, ps_string, run, run_json, with_module
 
 SERVICE_SID = None
 
@@ -295,7 +296,7 @@ def test_the_first_run_does_the_twelve_steps_in_order_and_puts_no_secret_anywher
     entry = lab.entry()
     assert entry["DisplayName"] == "RestoreProof Worker" and entry["DisplayVersion"] == "0.1.0"
     assert entry["InstallLocation"] == str(lab.program) and entry["NoModify"] == 1 and entry["NoRepair"] == 1
-    assert entry["UninstallString"] == f'"C:\\fake\\pwsh\\pwsh.exe" -NoProfile -File "{lab.program / "Uninstall-RestoreProofWorker.ps1"}"'
+    assert entry["UninstallString"] == f'"C:\\fake\\pwsh\\pwsh.exe" -NoProfile -ExecutionPolicy Bypass -NoExit -File "{lab.program / "Uninstall-RestoreProofWorker.ps1"}" -Elevate'
     assert "change: Apps & features entry (RestoreProof Worker 0.1.0)" in out
     for name in ("state", "runs", "outbox", "sent", "failed", "logs"):
         assert (lab.root / name).is_dir()
@@ -464,18 +465,28 @@ def test_an_upgrade_waits_for_the_run_in_progress_stops_swaps_keeps_previous_and
     assert {f.name: f.read_bytes() for f in lab.root.iterdir() if f.is_file()} == root_files
     assert "ok: rpworker 0.1.1" in out and lab.entry()["DisplayVersion"] == "0.1.1"
     assert "change: Apps & features entry (RestoreProof Worker 0.1.1)" in out
-    assert any(line.startswith(f"upgraded 0.1.0 -> 0.1.1; the previous version is in {previous} (rollback: pwsh -File ") and f'-Upgrade -Package "{previous}"' in line for line in out)
+    assert any(line.startswith(f"upgraded 0.1.0 -> 0.1.1; the previous version is in {previous} (rollback: pwsh -ExecutionPolicy Bypass -File ") and f'-Upgrade -Package "{previous}"' in line for line in out)
     assert_no_secret(result.stdout + result.stderr)
-    # The rollback: the same path from previous\, a downgrade said as such.
+    # The rollback: the same path from previous\, a downgrade said as such; previous\ is left as
+    # it is, so the same line run again continues instead of swapping back (the review's second pass).
     before = len(lab.argv())
     result = lab.run("-Upgrade", urls=False, answers=None, package=previous)
     assert result.returncode == 0, result.stderr
     out = lines(result)
     assert "upgrade: 0.1.1 -> 0.1.0 (a downgrade: a rollback)" in out
     assert (lab.program / "rpworker.exe").read_bytes() == old_exe
-    assert (previous / "rpworker.exe").read_bytes() == (new / "rpworker.exe").read_bytes(), "previous now holds the version rolled back from"
+    assert (previous / "rpworker.exe").read_bytes() == old_exe, "previous\\ is left as it is"
+    assert f"change: the files of 0.1.1 rolled back from dropped; {previous} is left as it is (the version now installed)" in out
+    assert f"rolled back 0.1.1 -> 0.1.0; {previous} holds 0.1.0 too (to go forward again: the newer package's installer with -Upgrade)" in out
     assert lab.entry()["DisplayVersion"] == "0.1.0"
     assert lab.commands()[before:][0] == "service stop"
+    assert [f.name for f in lab.program.iterdir() if f.name.startswith(("incoming-", "previous.new-", "previous.old-"))] == []
+    # The same rollback line again: nothing to swap.
+    before = len(lab.argv())
+    result = lab.run("-Upgrade", urls=False, answers=None, package=previous)
+    assert result.returncode == 0, result.stderr
+    assert "ok: rpworker 0.1.0 is installed already" in lines(result) and "service stop" not in lab.commands()[before:]
+    assert (lab.program / "rpworker.exe").read_bytes() == old_exe
 
 
 def test_an_upgrade_to_the_same_version_with_other_bytes_says_so_and_swaps(tmp_path):
@@ -515,7 +526,8 @@ def test_an_upgrade_stops_with_nothing_changed_while_a_run_never_ends(tmp_path):
     before = len(lab.argv())
     result = lab.run("-Upgrade", "-WaitMinutes 0.05", urls=False, answers=None, package=new)
     assert result.returncode != 0
-    assert "run fake-run-1 is still in progress after 0.05 min (the upgrade)" in result.stderr and "The operator's two ways out" in result.stderr
+    assert "run fake-run-1 is still in progress after 0.05 min (the upgrade)" in result.stderr
+    assert "Give a longer -WaitMinutes, or stop the service (rpworker service stop) and run this again" in result.stderr
     assert lab.commands()[before:] == [] and (lab.program / "rpworker.exe").read_bytes() == old_exe
     assert not (lab.program / "previous").exists()
     # -WaitMinutes 0 stops at once.
@@ -541,7 +553,7 @@ def test_an_upgrade_on_a_config_the_new_version_refuses_names_the_rollback(tmp_p
     result = lab.run("-Upgrade", urls=False, answers=None, package=new)
     assert result.returncode != 0
     assert "fails rpworker config check" in result.stderr
-    assert f"The previous version is in {lab.program / 'previous'}: pwsh -File" in result.stderr
+    assert f"The service {SERVICE} is stopped, on the new files: rpworker service start starts it as it is, and the previous version is in {lab.program / 'previous'}: pwsh -ExecutionPolicy Bypass -File" in result.stderr
     assert (lab.program / "rpworker.exe").read_bytes() == (new / "rpworker.exe").read_bytes(), "the swap stays: the line says how to go back"
 
 
@@ -585,10 +597,10 @@ def test_a_rollback_to_a_package_without_scripts_keeps_the_scripts_and_the_apps_
     assert "upgrade: 0.1.1 -> 0.1.0 (a downgrade: a rollback)" in lines(result)
     for name in SCRIPTS:
         assert (lab.program / name).exists(), "the scripts the package doesn't carry stay"
-    assert (lab.program / "rpworker.exe").read_bytes() == (previous / "rpworker.exe").read_bytes() or True
+    assert (lab.program / "rpworker.exe").read_bytes() == (previous / "rpworker.exe").read_bytes(), "the rollback leaves previous\\ as it is"
     entry = lab.entry()
     assert entry["DisplayVersion"] == "0.1.0" and (lab.program / "Uninstall-RestoreProofWorker.ps1").exists()
-    assert entry["UninstallString"].endswith(f'"{lab.program / "Uninstall-RestoreProofWorker.ps1"}"')
+    assert entry["UninstallString"].endswith(f'"{lab.program / "Uninstall-RestoreProofWorker.ps1"}" -Elevate')
 
 
 def test_a_package_file_that_cannot_be_read_stops_before_anything_is_stopped_or_moved(tmp_path):
@@ -781,3 +793,118 @@ def test_a_worker_registered_with_another_cloud_stops_and_says_how_to_move(tmp_p
     assert result.returncode != 0
     assert ("this Worker is registered with https://cloud.example.invalid" in result.stderr and
             "rpworker vault remove cloud_api_token" in result.stderr)
+
+
+# --- the W7.3 review's second pass ------------------------------------------------------------
+
+
+def test_a_failure_after_the_upgrades_swap_says_the_service_is_stopped_and_how_back(tmp_path):
+    lab, new = upgraded_lab(tmp_path)
+    lab.flag("fail-veeam-list")
+    result = lab.run("-Upgrade", urls=False, answers=None, package=new)
+    assert result.returncode != 0
+    assert "rpworker veeam list failed" in result.stderr
+    assert f"The service {SERVICE} is stopped, on the new files: rpworker service start starts it as it is, and the previous version is in {lab.program / 'previous'}" in result.stderr
+
+
+def test_a_new_exe_whose_start_fails_says_how_back(tmp_path):
+    lab, new = upgraded_lab(tmp_path)
+    lab.flag("fail-service-start")
+    result = lab.run("-Upgrade", urls=False, answers=None, package=new)
+    assert result.returncode != 0
+    assert "rpworker service start failed" in result.stderr and "and the previous version is in" in result.stderr
+
+
+def test_a_veeam_that_isnt_reached_is_not_told_to_replace_the_config(tmp_path):
+    lab, new = upgraded_lab(tmp_path)
+    lab.flag("fail-veeam-list-unreachable")
+    result = lab.run("-Upgrade", urls=False, answers=None, package=new)
+    assert result.returncode != 0
+    assert "Veeam wasn't reached: run the installer again once its REST service answers" in result.stderr and "-Replace" not in result.stderr
+
+
+def test_a_missing_exe_under_an_installed_service_is_copied_in_again(tmp_path):
+    # A quarantined exe: a plain re-run repairs it, as before W7.4 (the review's second pass).
+    lab = InstallLab(tmp_path)
+    assert lab.run().returncode == 0
+    lab.installed()
+    (lab.program / "rpworker.exe").unlink()
+    before = len(lab.argv())
+    result = lab.run(urls=False, answers=None)
+    assert result.returncode == 0, result.stderr
+    out = lines(result)
+    assert f"note: rpworker.exe missing from {lab.program}: copied in again from the package" in out
+    assert f"change: copied rpworker.exe to {lab.program}" in out
+    assert (lab.program / "rpworker.exe").read_bytes() == (lab.package / "rpworker.exe").read_bytes()
+    assert "service stop" not in lab.commands()[before:] and not (lab.program / "previous").exists()
+
+
+def test_a_stopped_services_record_does_not_hold_the_upgrade(tmp_path):
+    lab, new = upgraded_lab(tmp_path, run_in_progress=True)
+    lab.installed(state="Stopped")
+    result = lab.run("-Upgrade", "-WaitMinutes 0.05", urls=False, answers=None, package=new)
+    assert result.returncode == 0, result.stderr
+    assert not any(line.startswith("waiting: ") for line in lines(result))
+    assert "note: a run was taken as the service stopped; the new version's first start closes it" in result.stdout
+
+
+def test_a_previous_folder_that_cant_be_replaced_says_where_the_replaced_files_are(tmp_path):
+    lab, new = upgraded_lab(tmp_path)
+    assert lab.run("-Upgrade", urls=False, answers=None, package=new).returncode == 0
+    newer = tmp_path / "package-newer"
+    InstallLab.write_package(newer, "0.1.2")
+    previous = lab.program / "previous"
+    window = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"], cwd=previous)
+    try:
+        result = lab.run("-Upgrade", urls=False, answers=None, package=newer)
+    finally:
+        window.kill()
+        window.wait()
+    assert result.returncode != 0
+    assert f"the new files are in place, but {previous} couldn't be replaced (" in result.stderr
+    assert "the files of 0.1.1 they replaced are in" in result.stderr and f"The service {SERVICE} is stopped, on the new files" in result.stderr
+    assert (lab.program / "rpworker.exe").read_bytes() == (newer / "rpworker.exe").read_bytes()
+    staging = [f for f in lab.program.iterdir() if f.name.startswith("previous.new-")]
+    assert len(staging) == 1 and (staging[0] / "rpworker.exe").read_bytes() == (new / "rpworker.exe").read_bytes()
+
+
+def test_a_package_without_the_uninstall_script_brings_no_script(tmp_path):
+    # 0.1.0's zip carried the installer and its modules but not the uninstall script: a rollback
+    # from it must leave the installed scripts, which the Apps entry names (the review's second pass).
+    lab, new = upgraded_lab(tmp_path)
+    assert lab.run("-Upgrade", urls=False, answers=None, package=new).returncode == 0
+    old = tmp_path / "package-0.1.0"
+    InstallLab.write_package(old, "0.1.0")
+    (old / "Uninstall-RestoreProofWorker.ps1").unlink()
+    (old / "RestoreProofWorker.psm1").write_text("# an old module", encoding="ascii")
+    result = lab.run("-Upgrade", urls=False, answers=None, package=old)
+    assert result.returncode == 0, result.stderr
+    assert (lab.program / "Uninstall-RestoreProofWorker.ps1").exists()
+    assert (lab.program / "RestoreProofWorker.psm1").read_text(encoding="utf-8") != "# an old module"
+    assert lab.entry()["UninstallString"].endswith(f'"{lab.program / "Uninstall-RestoreProofWorker.ps1"}" -Elevate')
+
+
+def test_whatif_through_pwsh_file_plans_no_acl_removal(tmp_path):
+    # `pwsh -File ... -WhatIf` gives the modules WhatIf; the member form of ForEach-Object then
+    # retrieved nothing and step 3 planned to remove every rule of the root (the review's second pass).
+    lab = InstallLab(tmp_path)
+    assert lab.run().returncode == 0
+    lab.installed()
+    import os
+    env = dict(os.environ, RP_FAKE_DIR=str(lab.fake))
+    result = subprocess.run([
+        "pwsh", "-NoProfile", "-NonInteractive", "-File", str(SCRIPT), "-Package", str(lab.package), "-PollSeconds", "1",
+        "-ProgramDir", str(lab.program), "-Root", str(lab.root), "-Worker", str(lab.cmd), "-ServiceName", SERVICE,
+        "-MachineModule", str(FAKE_MACHINE), "-AlsoFullControl", current_user_sid(), "-VeeamUsername", "FAKE-HOST\\rp-veeam", "-WhatIf",
+    ], capture_output=True, text=True, env=env, timeout=240)
+    assert result.returncode == 0, result.stderr
+    assert "/remove:g *S-1-5-18" not in result.stdout and "Retrieve the value for property" not in result.stdout
+    assert f"ok: ACL of {lab.root}" in result.stdout
+
+
+def test_the_install_date_is_written_in_the_gregorian_calendar_whatever_the_culture(tmp_path):
+    lab = InstallLab(tmp_path)
+    result = lab.run(culture="th-TH")
+    assert result.returncode == 0, result.stderr
+    date = lab.entry()["InstallDate"]
+    assert date.startswith("20"), date

@@ -217,7 +217,7 @@ try {
     # the packages
     Add-Line ("`n== the packages ==")
     $oldDir = Unpack $OldPackage 'package-0.1.0'
-    Add-Line ("old: $OldPackage (sha256 $((Get-FileHash $OldPackage -Algorithm SHA256).Hash.ToLower())), unpacked to ${oldPackage}: $((Get-ChildItem -LiteralPath $oldDir -File | Sort-Object Name | ForEach-Object Name) -join ', ')")
+    Add-Line ("old: $OldPackage (sha256 $((Get-FileHash $OldPackage -Algorithm SHA256).Hash.ToLower())), unpacked to ${oldDir}:$((Get-ChildItem -LiteralPath $oldDir -File | Sort-Object Name | ForEach-Object Name) -join ', ')")
     if (-not $NewPackage) {
         $packaged = & pwsh -NoProfile -File $Packager -Out $RunDir -NoBuild 2>&1 | ForEach-Object { "$_" }
         if ($LASTEXITCODE -ne 0) { throw "package.ps1 failed: $($packaged -join ' ')" }
@@ -344,12 +344,15 @@ try {
     if ($workerRow -notmatch '0\.1\.1') { throw '/workers does not show 0.1.1' }
     Add-Line ("-- worker.log since the upgrade`n$(Get-W48Log -Since $upgradeStarted -Match 'service running|scheduler started|interrupted run|cleanup|service stopped|stop requested|hold|closed')")
     $run2 = Wait-Pass $planId $seen -After $upgradeEnded
-    Add-Line ("run $run2 pass on 0.1.1 (dispatched after the upgrade ended at $($upgradeEnded.ToString('s'))Z): $(Invoke-Sql "SELECT 'dispatched_at ' || to_char(dispatched_at AT TIME ZONE 'UTC', 'YYYY-MM-DD""T""HH24:MI:SS""Z""') || ', worker.version ' || coalesce((SELECT version FROM worker WHERE id = worker_id), '-') FROM test_run WHERE id = '$run2'")")
+    # The statement in a single-quoted string: its "T" and "Z" inside a subexpression's own
+    # double-quoted string came out as an unterminated SQL string (the W7.3 review's second pass).
+    $versionProof = 'SELECT ''dispatched_at '' || to_char(dispatched_at AT TIME ZONE ''UTC'', ''YYYY-MM-DD"T"HH24:MI:SS"Z"'') || '', worker.version '' || coalesce((SELECT version FROM worker WHERE id = worker_id), ''-'') FROM test_run WHERE id = ''' + $run2 + ''''
+    Add-Line ("run $run2 pass on 0.1.1 (dispatched after the upgrade ended at $($upgradeEnded.ToString('s'))Z): $(Invoke-Sql $versionProof)")
 
     # 5
     Add-Line ("`n== 5. the rollback from previous\, then the upgrade again ==")
     $rollbackLines = @(& $NewInstaller -Upgrade -Package (Join-Path $ProgramDir 'previous') -WaitMinutes 20 2>&1 | ForEach-Object { "$_" })
-    Add-Line ("pwsh <ProgramDir>\Install-RestoreProofWorker.ps1 -Upgrade -Package <ProgramDir>\previous -WaitMinutes 20")
+    Add-Line ("pwsh <0.1.1 package>\Install-RestoreProofWorker.ps1 -Upgrade -Package <ProgramDir>\previous -WaitMinutes 20")
     Add-Line ($rollbackLines)
     if (-not ($rollbackLines | Where-Object { $_ -eq 'upgrade: 0.1.1 -> 0.1.0 (a downgrade: a rollback)' })) { throw 'no rollback line' }
     Add-Line ("rpworker --version at ${ProgramDir}: $((& (Join-Path $ProgramDir 'rpworker.exe') --version) -join ' ')")
@@ -372,7 +375,7 @@ try {
     $uninstallStarted = [DateTime]::UtcNow
     $uninstallLines = @(& $Uninstaller -WaitMinutes 20 2>&1 | ForEach-Object { "$_" })
     $uninstallEnded = [DateTime]::UtcNow
-    Add-Line ("pwsh <ProgramDir>\Uninstall-RestoreProofWorker.ps1 -WaitMinutes 20")
+    Add-Line ("pwsh <repo>\tools\worker-install\Uninstall-RestoreProofWorker.ps1 -WaitMinutes 20")
     Add-Line ("$($uninstallStarted.ToString('s'))Z to $($uninstallEnded.ToString('s'))Z ($([int]($uninstallEnded - $uninstallStarted).TotalSeconds) s wall clock)")
     Add-Line ($uninstallLines)
     $installed = $false
@@ -413,7 +416,12 @@ try {
     try {
         if ($installed -or (Get-CimInstance Win32_Service -Filter "Name='$script:W48Service'")) {
             Add-Line ('a step failed with the Worker installed: the uninstall script, then the library''s removal of what it left')
-            if (Test-Path -LiteralPath $Uninstaller) { Add-Line (@(& $Uninstaller -WaitMinutes 10 2>&1 | ForEach-Object { "$_" })) }
+            # The uninstaller's own stop is a throw: caught, so the service's removal below runs
+            # whatever happens (the W7.3 review's second pass).
+            if (Test-Path -LiteralPath $Uninstaller) {
+                try { Add-Line (@(& $Uninstaller -WaitMinutes 10 2>&1 | ForEach-Object { "$_" })) }
+                catch { Add-Line ("the uninstall script stopped: $($_.Exception.Message)") }
+            }
             if (Get-CimInstance Win32_Service -Filter "Name='$script:W48Service'") { Add-Line (Remove-W48Service) }
             foreach ($key in @(Get-W48KeyFile)) { icacls $key.File /remove:g "*$serviceSid" /Q | Out-Null }
             if (Test-Path -LiteralPath $ProgramDir) { Remove-Item -LiteralPath $ProgramDir -Recurse -Force; Add-Line ("$ProgramDir removed") }

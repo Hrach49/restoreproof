@@ -33,7 +33,7 @@ def test_the_script_never_undoes_a_step_and_names_the_uninstall_script():
     # The one thing the installer removes: the previous version's files and its own staging
     # folders, on an upgrade (W7.4 point 3), all inside Invoke-Swap.
     swap = script[script.index("function Invoke-Swap"):script.index("# The wait for the run in progress")]
-    assert script.count("Remove-Item") == swap.count("Remove-Item") == 4
+    assert script.count("Remove-Item") == swap.count("Remove-Item") == 6
     assert "Uninstall-RestoreProofWorker.ps1 (W7.3)" in script
 
 
@@ -59,7 +59,7 @@ def test_the_fake_machine_exports_what_the_real_one_does():
     fake = sorted(name.strip() for name in pattern.search(text(FAKE_MACHINE)).group(1).split(","))
     assert real == fake == ["Get-CertificateKeyFile", "Get-InstalledService", "Get-MachineFacts", "Get-PwshPath", "Get-RemoteCertificate",
                             "Get-RunRecord", "Get-UninstallEntry", "Get-WorkerVersion", "Remove-FileOverwritten", "Remove-UninstallEntry",
-                            "Set-UninstallEntry", "Test-IsElevated", "Test-VeeamOnThisMachine"]
+                            "Set-UninstallEntry", "Start-ElevatedUninstall", "Test-IsElevated", "Test-VeeamOnThisMachine"]
 
 
 def test_the_rules_module_reads_nothing_of_the_machine():
@@ -83,3 +83,19 @@ def test_the_acls_are_set_through_dotnet_by_sid_and_recorded_as_the_icacls_line(
     assert "Update-AclObject -Acl $acl -Wanted $Wanted -Difference $difference" in script
     assert "Set-PathAcl $keyFile (Add-FileReadRule -Acl (Get-PathAcl $keyFile) -Sid $ServiceSid)" in script
     assert "Get-IcaclsArguments -Path $Path -Wanted $Wanted -Difference $difference" in script, "the line it amounts to is the record"
+
+
+def test_no_script_uses_the_member_form_of_foreach_object():
+    # Under `pwsh -File <script> -WhatIf` the modules see WhatIf, and `ForEach-Object Sid` is then
+    # a WhatIf operation of its own that retrieves nothing: step 3 planned to remove every rule
+    # of the root (the W7.3 review's second pass). The script-block form alone.
+    for path in (SCRIPT, UNINSTALL_SCRIPT, MODULE, MACHINE_MODULE):
+        code = "\n".join(line for line in text(path).splitlines() if not line.lstrip().startswith("#"))
+        assert not re.search(r"ForEach-Object\s+(?:-MemberName\s+)?[A-Za-z_]", code), path.name
+
+
+def test_the_overwrite_is_always_given_the_root_it_stays_within():
+    script = text(UNINSTALL_SCRIPT)
+    calls = re.findall(r"Remove-FileOverwritten -[^\n;}]*", script)
+    assert calls and all("-Within $Root" in call for call in calls), calls
+    assert "Get-ChildItem -LiteralPath $Folder -File -Recurse" not in script, "the walk never follows a junction"

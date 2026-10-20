@@ -277,8 +277,8 @@ int first_start(const std::filesystem::path& config, const std::filesystem::path
 
 namespace {
 
-// state\worker.json's worker_id, when it reads (as the service names itself).
-std::optional<std::string> recorded_worker_id(const CloudCommandEnv& env)
+// state\worker.json, when it reads (as the service names itself).
+std::optional<WorkerRecord> recorded_worker(const CloudCommandEnv& env)
 {
     const std::filesystem::path state =
         env.default_state_dir ? env.default_state_dir() : default_state_dir();
@@ -286,8 +286,7 @@ std::optional<std::string> recorded_worker_id(const CloudCommandEnv& env)
     if (file.state != FileState::read) {
         return std::nullopt;
     }
-    const std::optional<WorkerRecord> record = parse_worker_record(file.bytes);
-    return record ? std::optional<std::string>{record->worker_id} : std::nullopt;
+    return parse_worker_record(file.bytes);
 }
 
 // The token taken out of the vault in one write (point 5): nullopt when it
@@ -348,9 +347,9 @@ int revoked(const HttpResponse& answer, WipedSecrets& held, const std::filesyste
             << kRemoveLine;
         return exit_code::config;
     }
-    const std::optional<std::string> id = recorded_worker_id(env);
-    if (id) {
-        out << "revoked worker " << *id << '\n';
+    const std::optional<WorkerRecord> record = recorded_worker(env);
+    if (record) {
+        out << "revoked worker " << record->worker_id << '\n';
     } else {
         out << "revoked this Worker\n";
     }
@@ -374,6 +373,17 @@ int revoke_worker(const RevokeRequest& request, std::ostream& out, std::ostream&
     }
     if (!is_set(held.secrets.cloud_api_token)) {
         err << "config error: cloud_api_token is not in the vault; this Worker is not registered\n";
+        return exit_code::config;
+    }
+    // The token is the Cloud's the Worker registered with (state\worker.json): sent to another,
+    // that Cloud's 401 would take the only copy out of the vault and leave the Worker live where
+    // it registered (the W7.3 review's second pass).
+    if (const std::optional<WorkerRecord> record = recorded_worker(env);
+        record && record->cloud_url != config.cloud_url) {
+        err << "cloud revoke: this Worker is registered with " << record->cloud_url
+            << " (state\\worker.json) and the config's cloud_url is " << config.cloud_url
+            << "; nothing was sent: put cloud_url back, or revoke the Worker in that Cloud "
+               "(manage.py revoke-worker)\n";
         return exit_code::config;
     }
     // The vault as it is, written back before the request: a vault this

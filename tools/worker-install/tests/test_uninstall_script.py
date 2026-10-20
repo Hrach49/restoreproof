@@ -4,6 +4,8 @@ refusals first, each with nothing removed; then the order of the Worker's calls,
 the list overwritten and gone, what is left and named, -Full, -WhatIf, the Cloud not reached,
 the flush failing, a held file."""
 
+import subprocess
+import sys
 from pathlib import Path
 
 from fake_rpworker import THUMBPRINT, WORKER_ID
@@ -63,7 +65,7 @@ def test_a_service_from_another_exe_is_refused_with_nothing_removed(tmp_path):
     assert result.returncode != 0
     assert "runs \"C:\\elsewhere\\rpworker.exe\" service run, not" in result.stderr and "neither" not in result.stderr
     assert "rpworker service stop, then rpworker service uninstall by hand first" in result.stderr
-    assert "Nothing was removed; the Worker is installed as it was (stopped, when this ran past step 3" in result.stderr
+    assert "Nothing was removed; the Worker is installed as it was." in result.stderr
     assert lab.commands()[before:] == [] and (lab.root / "vault.bin").exists() and lab.program.exists() and lab.entry() is not None
 
 
@@ -99,18 +101,21 @@ def test_a_record_that_stays_after_the_restart_stops_with_the_service_stopped_an
     result = lab.uninstall()
     assert result.returncode != 0
     assert "rpworker service start failed" in result.stderr and "state\\running.json is still there" in result.stderr
+    assert "Nothing was removed; the Worker is installed, its service stopped (rpworker service start brings it back)." in result.stderr
     assert lab.commands()[before:] == ["service stop", "service start"]
     assert lab.marker("service-installed") and (lab.root / "vault.bin").exists() and lab.program.exists()
 
 
-def test_a_service_uninstall_that_fails_stops_with_nothing_removed(tmp_path):
+def test_a_service_marked_for_deletion_stops_and_says_so_with_nothing_else_removed(tmp_path):
     lab = installed_lab(tmp_path)
     lab.flag("fail-service-uninstall")
     before = len(lab.argv())
     result = lab.uninstall()
     assert result.returncode != 0
-    assert "rpworker service uninstall failed: service error: the service RestoreProof is marked for deletion" in result.stderr
-    assert "Nothing was removed; the Worker is installed as it was (stopped" in result.stderr
+    # DeleteService took: the service is neither installed as it was nor startable (the review's second pass).
+    assert "problem: rpworker service uninstall: service error: the service RestoreProof is marked for deletion" in result.stderr
+    assert "Close them and run this again: the Cloud isn't told and nothing else is removed until the service is gone." in result.stderr
+    assert "installed as it was" not in result.stderr and "service start brings it back" not in result.stderr
     assert (lab.root / "vault.bin").exists() and lab.program.exists() and lab.overwritten() == [] and lab.entry() is not None
     # Nothing was told or undone: the Cloud not yet, the key file's entry still there.
     assert not lab.marker("revoked") and "cloud_api_token" in lab.vault()
@@ -143,7 +148,7 @@ def test_the_uninstall_does_the_steps_in_order_overwrites_the_data_and_leaves_th
     config = lab.root / "config.json"
     # The service goes before the Cloud is told and the key files are touched (the review's finding 4).
     assert lab.commands()[before:] == [
-        "service stop", "vault list", f"outbox flush --config {config} --outbox {lab.root}", f"outbox list --outbox {lab.root}",
+        "service stop", "vault list", f"outbox flush --now --config {config} --outbox {lab.root}", f"outbox list --outbox {lab.root}",
         "service uninstall", f"cloud revoke --config {config}", f"veeam list --config {config}",
     ]
     assert f"ok: rpworker 0.1.0 at {lab.program / 'rpworker.exe'}" in out
@@ -155,6 +160,8 @@ def test_the_uninstall_does_the_steps_in_order_overwrites_the_data_and_leaves_th
     assert "change: rpworker service uninstall (uninstalled RestoreProof)" in out and not lab.marker("service-installed")
     # The data: vault.bin and every file of the five folders overwritten (the fake records each), then gone.
     overwritten = {Path(p).relative_to(lab.root).as_posix() for p in lab.overwritten()}
+    # vault.bin first, whatever order the folder lists in (the review's second pass).
+    assert Path(lab.overwritten()[0]).name == "vault.bin"
     assert overwritten == {
         "vault.bin", "state/worker.json", "state/jobs.json",
         "runs/runs-run-1/result.json", "runs/runs-run-1/items.csv", "outbox/outbox-run-1/result.json", "outbox/outbox-run-1/items.csv",
@@ -198,7 +205,9 @@ def test_whatif_removes_nothing_and_runs_nothing_that_writes(tmp_path):
     assert lab.commands()[before:] == ["vault list", f"outbox list --outbox {lab.root}", f"veeam list --config {lab.root / 'config.json'}"]
     assert any(line.startswith("would: icacls ") and "/remove:g" in line for line in out)
     assert "would: wait for run fake-run-1 to end (before the stop)" in out and "would: rpworker service stop" in out
-    assert "would: rpworker outbox flush" in out and "would: rpworker cloud revoke" in out and "would: rpworker service uninstall" in out
+    assert "would: rpworker outbox flush --now" in out and "would: rpworker cloud revoke" in out and "would: rpworker service uninstall" in out
+    # Nothing is told under -WhatIf, by design: no "revoke by hand" line (the review's second pass).
+    assert not any(line.startswith("next: revoke this Worker") for line in out)
     assert out.index("would: rpworker service uninstall") < out.index("would: rpworker cloud revoke")
     assert f"would: overwrite once and delete {lab.root / 'vault.bin'}" in out and f"would: remove {lab.program}" in out
     assert "would: remove the Apps & features entry" in out
@@ -295,6 +304,8 @@ def test_no_service_and_no_exe_still_removes_the_files(tmp_path):
     assert lab.commands()[before:] == []
     assert any(line.startswith("note: no rpworker at ") and "the files are removed" in line for line in out)
     assert f"ok: no service {SERVICE} to uninstall" in out and f"ok: no {lab.program}" in out
+    # worker.json named the Worker and nothing could tell the Cloud: the line says how.
+    assert f"next: revoke this Worker in the Cloud: manage.py revoke-worker --worker-id {WORKER_ID}, or the Workers page" in out
     assert not (lab.root / "vault.bin").exists() and present(lab.root) == {"logs", "w48"}
 
 
@@ -314,3 +325,204 @@ def test_the_scripts_in_the_program_folder_are_the_packages(tmp_path):
         assert (lab.program / name).exists()
     assert lab.uninstall().returncode == 0
     assert not lab.program.exists()
+
+
+# --- the W7.3 review's second pass ------------------------------------------------------------
+
+
+def test_a_veeam_with_no_organisation_lets_the_uninstall_finish(tmp_path):
+    lab = installed_lab(tmp_path)
+    (lab.fake / "veeam-list.txt").write_text("no organisations in Veeam\n\n0 organisation(s), 0 restore point(s); * = veeam_org_name\n", encoding="ascii")
+    result = lab.uninstall()
+    assert result.returncode == 0, result.stderr
+    out = lines(result)
+    assert "ok: Veeam holds no organisation: no key file to take the entry off" in out
+    assert not (lab.root / "vault.bin").exists() and not lab.program.exists() and lab.entry() is None
+
+
+def test_a_veeam_table_it_cant_read_leaves_the_entries_named_and_goes_on(tmp_path):
+    lab = installed_lab(tmp_path)
+    (lab.fake / "veeam-list.txt").write_text("  ORGANIZATION   BACKUP TIME\n", encoding="ascii")
+    result = lab.uninstall()
+    assert result.returncode == 0, result.stderr
+    assert any(line.startswith("note: rpworker veeam list printed no table this script reads") for line in lines(result))
+    assert not lab.program.exists()
+
+
+def test_a_service_list_that_cant_be_read_stops_with_nothing_removed(tmp_path):
+    lab = installed_lab(tmp_path)
+    lab.machine["serviceQueryFails"] = True
+    lab.write_machine()
+    before = len(lab.argv())
+    result = lab.uninstall()
+    assert result.returncode != 0
+    assert "the installed services couldn't be read (fake: Invalid class)" in result.stderr
+    assert lab.commands()[before:] == [] and (lab.root / "vault.bin").exists() and lab.program.exists() and lab.overwritten() == []
+
+
+def test_a_stopped_services_record_is_not_waited_for_its_recovery_runs(tmp_path):
+    # A record of a service stopped mid-run: nothing moves it on, so no wait; the restart's
+    # recovery closes it (the review's second pass).
+    lab = installed_lab(tmp_path)
+    lab.installed(state="Stopped")
+    lab.machine["runSequence"] = ["stopped-run", "stopped-run"]
+    lab.write_machine()
+    before = len(lab.argv())
+    result = lab.uninstall("-WaitMinutes 0.05")
+    assert result.returncode == 0, result.stderr
+    assert not any(line.startswith("waiting: ") for line in lines(result))
+    assert lab.commands()[before:][:3] == ["service stop", "service start", "service stop"]
+
+
+def test_the_wait_ends_when_the_run_waited_for_ends_whatever_comes_after(tmp_path):
+    # Runs back to back: the first ends, the next is the stop's to catch.
+    lab = installed_lab(tmp_path)
+    lab.machine["runSequence"] = ["run-a", "run-a", "run-b", None, None]
+    lab.write_machine()
+    result = lab.uninstall("-WaitMinutes 0.05")
+    assert result.returncode == 0, result.stderr
+    assert "still in progress" not in result.stderr
+
+
+def test_a_restart_whose_wait_runs_out_says_the_service_is_running(tmp_path):
+    lab = installed_lab(tmp_path)
+    lab.machine["runSequence"] = [None] + ["run-r"] * 30
+    lab.write_machine()
+    result = lab.uninstall("-WaitMinutes 0.05")
+    assert result.returncode != 0
+    assert "run run-r is still in progress after 0.05 min (after the restart)" in result.stderr
+    assert "Nothing was removed; the Worker is installed and its service running." in result.stderr
+    assert "Give a longer -WaitMinutes, or stop the service (rpworker service stop) and run this again" in result.stderr
+    assert "The operator's two ways out" not in result.stderr
+    assert (lab.root / "vault.bin").exists()
+
+
+def test_a_run_taken_again_after_the_recovery_stops_with_the_service_stopped(tmp_path):
+    lab = installed_lab(tmp_path)
+    lab.machine["runSequence"] = [None, "run-1", None, "run-2"]
+    lab.write_machine()
+    result = lab.uninstall("-WaitMinutes 0.05")
+    assert result.returncode != 0
+    assert "the service took a run again as it stopped after its recovery; run this again" in result.stderr
+    assert "its service stopped" in result.stderr and (lab.root / "vault.bin").exists() and lab.marker("service-installed")
+
+
+def test_the_last_flush_sends_runs_in_their_backoff(tmp_path):
+    lab = installed_lab(tmp_path)
+    (lab.fake / "outbox-list.txt").write_text(OUTBOX_LIST, encoding="ascii")
+    result = lab.uninstall()
+    assert result.returncode == 0, result.stderr
+    out = lines(result)
+    # The fake keeps a listed run "waiting" unless --now (its NEXT is ahead).
+    assert "ok: rpworker outbox flush: 0 queued, 1 sent, 0 failed" in out
+    assert "ok: the outbox holds no run that never reached the Cloud" in out
+
+
+def test_a_vault_that_cant_be_read_stops_unless_force(tmp_path):
+    lab = installed_lab(tmp_path)
+    lab.flag("fail-vault-list")
+    result = lab.uninstall()
+    assert result.returncode != 0
+    assert "rpworker vault list failed (vault error:" in result.stderr and "give -Force to remove the Worker anyway" in result.stderr
+    assert (lab.root / "vault.bin").exists() and lab.marker("service-installed") and lab.program.exists()
+    result = lab.uninstall("-Force")
+    assert result.returncode == 0, result.stderr
+    assert any(line.startswith("note: rpworker vault list failed (") and "-Force" in line for line in lines(result))
+    assert not (lab.root / "vault.bin").exists() and not lab.program.exists()
+
+
+def test_a_revoke_the_vault_couldnt_record_is_still_a_revoke(tmp_path):
+    lab = installed_lab(tmp_path)
+    lab.flag("revoke-unwritable")
+    result = lab.uninstall()
+    assert result.returncode == 0, result.stderr
+    out = lines(result)
+    assert any(line.startswith("change: rpworker cloud revoke (cloud revoke: the Cloud revoked this Worker") for line in out)
+    assert not any(line.startswith("next: revoke this Worker") for line in out)
+
+
+def test_a_junction_in_a_run_folder_is_removed_and_never_followed(tmp_path):
+    lab = installed_lab(tmp_path)
+    outside = tmp_path / "outside"
+    (outside / "deep").mkdir(parents=True)
+    (outside / "system.dat").write_text("not the Worker's", encoding="ascii")
+    (outside / "deep" / "more.dat").write_text("nor this", encoding="ascii")
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(lab.root / "runs" / "evil"), str(outside)], capture_output=True, check=True)
+    result = lab.uninstall()
+    assert result.returncode == 0, result.stderr
+    out = lines(result)
+    assert f"change: {lab.root / 'runs' / 'evil'} was a link (a junction or a symbolic link): the link removed, what it points at untouched" in out
+    assert (outside / "system.dat").read_text(encoding="ascii") == "not the Worker's" and (outside / "deep" / "more.dat").exists()
+    assert not any("outside" in line for line in lab.overwritten())
+
+
+def test_a_run_folder_that_is_itself_a_junction_is_removed_as_a_link(tmp_path):
+    lab = installed_lab(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "system.dat").write_text("not the Worker's", encoding="ascii")
+    import shutil
+    shutil.rmtree(lab.root / "sent")
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(lab.root / "sent"), str(outside)], capture_output=True, check=True)
+    result = lab.uninstall()
+    assert result.returncode == 0, result.stderr
+    assert f"change: {lab.root / 'sent'} was a link (a junction or a symbolic link): the link removed, what it points at untouched" in lines(result)
+    assert (outside / "system.dat").exists() and not (lab.root / "sent").exists()
+
+
+def holding(folder: Path) -> subprocess.Popen:
+    """A process whose current folder is `folder`, as an operator's window would be."""
+    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"], cwd=folder)
+
+
+def test_a_run_folder_another_window_is_in_is_one_problem_and_the_vault_still_goes(tmp_path):
+    lab = installed_lab(tmp_path)
+    window = holding(lab.root / "runs" / "runs-run-1")
+    try:
+        result = lab.uninstall()
+    finally:
+        window.kill()
+        window.wait()
+    assert result.returncode == 1, result.stderr
+    out = lines(result)
+    assert any(line.startswith(f"problem: {lab.root / 'runs' / 'runs-run-1'} couldn't be removed") for line in out)
+    assert not (lab.root / "vault.bin").exists() and not (lab.root / "state").exists() and not (lab.root / "sent").exists()
+    assert not lab.program.exists() and lab.entry() is None and "problems: 1" in out
+
+
+def test_a_program_folder_another_window_is_in_is_one_problem_and_the_entry_still_goes(tmp_path):
+    lab = installed_lab(tmp_path)
+    window = holding(lab.program)
+    try:
+        result = lab.uninstall()
+    finally:
+        window.kill()
+        window.wait()
+    assert result.returncode == 1, result.stderr
+    out = lines(result)
+    assert any(line.startswith(f"problem: {lab.program} couldn't be removed whole (") and "close any window whose current folder it is" in line for line in out)
+    assert lab.entry() is None and "change: the Apps & features entry removed" in out
+    assert any(line.startswith("changes: ") for line in out)
+
+
+def test_from_the_apps_entry_unelevated_it_starts_itself_elevated_and_does_nothing_here(tmp_path):
+    lab = installed_lab(tmp_path)
+    lab.machine["elevated"] = False
+    lab.write_machine()
+    before = len(lab.argv())
+    result = lab.uninstall("-Elevate")
+    assert result.returncode == 0, result.stderr
+    assert "note: the uninstall goes on in the elevated window that opened; this one did nothing" in lines(result)
+    assert any(line.startswith("Start-ElevatedUninstall ") for line in lab.machine_log())
+    assert lab.commands()[before:] == [] and (lab.root / "vault.bin").exists()
+    lab.machine["elevateRefused"] = True
+    lab.write_machine()
+    result = lab.uninstall("-Elevate")
+    assert result.returncode != 0 and "the uninstall needs elevation, and it was refused" in result.stderr
+
+
+def test_a_poll_of_zero_seconds_is_refused(tmp_path):
+    lab = installed_lab(tmp_path)
+    result = lab.uninstall("-PollSeconds 0")
+    assert result.returncode != 0 and "Cannot validate argument on parameter 'PollSeconds'" in result.stderr
+    assert (lab.root / "vault.bin").exists()

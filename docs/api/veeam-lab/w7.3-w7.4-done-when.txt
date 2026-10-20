@@ -1,0 +1,470 @@
+W7.3 (#82) and W7.4 (#83) Done-when, live, on this laptop (the Veeam server): the 0.1.0 package installed, a run pass; -Upgrade to 0.1.1 keeps the vault and the registration and the service polls again, the heartbeat and /workers show 0.1.1, a run pass; the rollback from previous\ and the upgrade again; Uninstall-RestoreProofWorker.ps1 leaves no service, no program folder, no Apps entry, no key-file entry, the Worker revoked in the Cloud, logs\ and the lab's folders left and named, the targets empty. 2026-10-19T14:18:24Z, commit ad0f6c5, branch w7.3-w7.4-uninstall-upgrade
+Windows, PowerShell 7.4.21, Docker Desktop, the Compose stack on 127.0.0.1; 0.1.0 is the dev build the lab library reads the targets with
+
+== the lab's vault and folders aside ==
+vault.bin copied to the run folder (4272 bytes, names: veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64)
+runs\: 5 item(s) moved to C:\Users\minas\AppData\Local\RestoreProof\lab\w7.3-w7.4-20261019T181822\kept\runs
+sent\: 2 item(s) moved to C:\Users\minas\AppData\Local\RestoreProof\lab\w7.3-w7.4-20261019T181822\kept\sent
+failed\: 1 item(s) moved to C:\Users\minas\AppData\Local\RestoreProof\lab\w7.3-w7.4-20261019T181822\kept\failed
+state\: 1 item(s) moved to C:\Users\minas\AppData\Local\RestoreProof\lab\w7.3-w7.4-20261019T181822\kept\state
+-- icacls before
+C:\ProgramData\RestoreProof NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+                            BUILTIN\Administrators:(OI)(CI)(F)
+                            NT SERVICE\RestoreProof:(OI)(CI)(RX)
+C:\ProgramData\RestoreProof\vault.bin OWNER RIGHTS:(F)
+                                      BUILTIN\Administrators:(F)
+                                      NT AUTHORITY\SYSTEM:(F)
+C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file> NT AUTHORITY\SYSTEM:(F)
+                                                                                                                      BUILTIN\Administrators:(RX)
+service RestoreProof: not installed (sc query 1060)
+no Apps & features entry
+C:\Program Files\RestoreProof: not there
+
+== the packages ==
+old: C:\Users\minas\AppData\Local\RestoreProof\lab\packages\RestoreProof-Worker-0.1.0.zip (sha256 49e96647827856699cc779b5e2136a647a8623ee3f0009500e01be4230c7b512), unpacked to C:\Users\minas\AppData\Local\RestoreProof\lab\packages\RestoreProof-Worker-0.1.0.zip: config.example.json, cpr.dll, fmt.dll, Install-RestoreProofWorker.ps1, libcrypto-3-x64.dll, libcurl.dll, New-WorkerGraphCertificate.ps1, nlohmann_json_schema_validator.dll, RestoreProofWorker.psm1, rpworker.exe, spdlog.dll, WorkerMachine.psm1, z.dll, zip.dll
+package: C:\Users\minas\AppData\Local\RestoreProof\lab\w7.3-w7.4-20261019T181822\RestoreProof-Worker-0.1.1.zip
+version: 0.1.1
+files:
+  config.example.json  846 bytes  sha256 3666d44c9b496a766f7fb0601b74087dc2eddf469bd2621a0e83505bb53b7758
+  cpr.dll  889856 bytes  sha256 bc88186a288abc3148e634b418bf71d589f565d8d55adbc6c3b361a02784b3ac
+  fmt.dll  131584 bytes  sha256 d59e21e2faae9499e9312e3565055ed0f7fd541ef7369ce42ed9e019864b98fd
+  Install-RestoreProofWorker.ps1  40808 bytes  sha256 3e8af737b226e93bc4dc00c6b457ac8581f86aac612875c17d642dd0a19dc2f5
+  libcrypto-3-x64.dll  5352960 bytes  sha256 e927f84f8a69c22e0382bc3e53f2294c618eff67d0079a5e6bc3de2fe17f388d
+  libcurl.dll  731648 bytes  sha256 c7237e69b6fe263dfd4a82fd66fc4e912cde6fb7a321982558b3dd5a99cef891
+  libssl-3-x64.dll  873472 bytes  sha256 0342315afe186753e9da1f4914e6d44c4291d37f52eaf9f5d5346a1bc7d00f05
+  New-WorkerGraphCertificate.ps1  8180 bytes  sha256 285e882494299c8a8f8f13f9032f8bb000ee7c5dba5d7dfc0509d80ede6178e1
+  nlohmann_json_schema_validator.dll  428032 bytes  sha256 2846027a18b1c06bb57a215dcc2a861b1a2fc5fa7951c8f34c4dccefed984362
+  RestoreProofWorker.psm1  32249 bytes  sha256 dc0ea3ae0c5f31cf7d67057a4be80e9b23c919ccd8fb4874e7c61c5b599bc8bd
+  rpworker.exe  2975744 bytes  sha256 aaab5065e8e8cf1202c2e769ebcb4bd6dfc10602c5023ebf2aba9547df2fbe25
+  spdlog.dll  284672 bytes  sha256 2d5608e9804318b4e4f808b079fae501871bcce71052a4a6d4918c08c2089148
+  Uninstall-RestoreProofWorker.ps1  20320 bytes  sha256 efc9fdcd5e01ad0e29232064158a9d8eff195b4f1c62ec8cd32c85584b303334
+  WorkerMachine.psm1  9284 bytes  sha256 161c90037aad8cf564d5099b76269d57fbed8003ebbc87afb9ed2f0c6117f457
+  z.dll  91136 bytes  sha256 309d6b71f0f8946ea9c7e2886a2300c519ba9f4efc9bc3d8d691d83617ac1a1c
+  zip.dll  105984 bytes  sha256 b3b3b0e47432f93c518bed4a15c6a0dca212fa51fe954412e9e152edc4ce615d
+sha256: 61d0d938e82ffa16e387bb4251c2899c027e2ad01b1ed0833d02a79390a81daf
+new: C:\Users\minas\AppData\Local\RestoreProof\lab\w7.3-w7.4-20261019T181822\RestoreProof-Worker-0.1.1.zip (sha256 61d0d938e82ffa16e387bb4251c2899c027e2ad01b1ed0833d02a79390a81daf), unpacked to C:\Users\minas\AppData\Local\RestoreProof\lab\w7.3-w7.4-20261019T181822\package-0.1.1: config.example.json, cpr.dll, fmt.dll, Install-RestoreProofWorker.ps1, libcrypto-3-x64.dll, libcurl.dll, libssl-3-x64.dll, New-WorkerGraphCertificate.ps1, nlohmann_json_schema_validator.dll, RestoreProofWorker.psm1, rpworker.exe, spdlog.dll, Uninstall-RestoreProofWorker.ps1, WorkerMachine.psm1, z.dll, zip.dll
+rpworker --version: old 0.1.0, new 0.1.1
+
+== 0. the Worker W7.2 left, taken away with the new uninstall script ==
+no service installed: nothing to take away
+-- icacls after step 0
+C:\ProgramData\RestoreProof NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+                            BUILTIN\Administrators:(OI)(CI)(F)
+                            NT SERVICE\RestoreProof:(OI)(CI)(RX)
+C:\ProgramData\RestoreProof\vault.bin OWNER RIGHTS:(F)
+                                      BUILTIN\Administrators:(F)
+                                      NT AUTHORITY\SYSTEM:(F)
+C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file> NT AUTHORITY\SYSTEM:(F)
+                                                                                                                      BUILTIN\Administrators:(RX)
+vault.bin names: veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64
+
+== 1. the stack, re-migrated; Caddy's root; the MSP, the client, the token ==
+ Container restoreproof-minio-1 Running 
+ Container restoreproof-postgres-1 Running 
+ Container restoreproof-proxy-1 Running 
+ Container restoreproof-minio-1 Healthy 
+ Container restoreproof-minio-bucket-1 Started 
+ Container restoreproof-minio-bucket-1 Exited 
+ Container restoreproof-postgres-1 Healthy 
+ Container restoreproof-api-1 Started 
+ Container restoreproof-api-1 Healthy 
+ Container restoreproof-api-1 Healthy 
+ Container restoreproof-scheduler-1 Started 
+ Container restoreproof-proxy-1 Healthy 
+ Container restoreproof-postgres-1 Healthy 
+ Container restoreproof-minio-bucket-1 Exited 
+ Container restoreproof-api-1 Healthy 
+ Container restoreproof-minio-1 Healthy 
+ Container restoreproof-scheduler-1 Healthy 
+alembic downgrade base: exit 0
+alembic upgrade head: exit 0
+create-msp: msp_id 1cb13e04-cbe8-452f-863c-b8c87d16364d; create-client --tenant-id bcd6bd1a-ea42-489d-aa28-2c19a44ad146: client_id 4989c012-0351-4474-bd20-97f794e9eaea
+create-worker-token: exit 0; install_token (not shown; handed to the installer in memory)
+create-user --email w73@example.invalid --role admin (the password on stdin, never shown): exit 0
+
+== 2. the 0.1.0 package installed by its own installer ==
+pwsh <0.1.0>\Install-RestoreProofWorker.ps1 -Package <0.1.0> -CloudUrl https://localhost:8443 -CloudCaFile <Caddy's root> -WorkerName w73-live -Answers <the install token, in memory>
+RestoreProof Worker installer: package C:\Users\minas\AppData\Local\RestoreProof\lab\w7.3-w7.4-20261019T181822\package-0.1.0, program folder C:\Program Files\RestoreProof, data folder C:\ProgramData\RestoreProof, service RestoreProof (S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396)
+ok: Veeam Backup for Microsoft 365 is on this machine
+ok: service RestoreProof is not installed
+change: copied cpr.dll to C:\Program Files\RestoreProof
+change: copied fmt.dll to C:\Program Files\RestoreProof
+change: copied libcrypto-3-x64.dll to C:\Program Files\RestoreProof
+change: copied libcurl.dll to C:\Program Files\RestoreProof
+change: copied nlohmann_json_schema_validator.dll to C:\Program Files\RestoreProof
+change: copied rpworker.exe to C:\Program Files\RestoreProof
+change: copied spdlog.dll to C:\Program Files\RestoreProof
+change: copied z.dll to C:\Program Files\RestoreProof
+change: copied zip.dll to C:\Program Files\RestoreProof
+ok: rpworker 0.1.0
+ok: ACL of C:\ProgramData\RestoreProof
+change: ACL of C:\ProgramData\RestoreProof\state (as icacls C:\ProgramData\RestoreProof\state /grant:r *S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396:(OI)(CI)M /Q)
+change: ACL of C:\ProgramData\RestoreProof\runs (as icacls C:\ProgramData\RestoreProof\runs /grant:r *S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396:(OI)(CI)M /Q)
+change: made C:\ProgramData\RestoreProof\outbox
+change: ACL of C:\ProgramData\RestoreProof\outbox (as icacls C:\ProgramData\RestoreProof\outbox /grant:r *S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396:(OI)(CI)M /Q)
+change: ACL of C:\ProgramData\RestoreProof\sent (as icacls C:\ProgramData\RestoreProof\sent /grant:r *S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396:(OI)(CI)M /Q)
+change: ACL of C:\ProgramData\RestoreProof\failed (as icacls C:\ProgramData\RestoreProof\failed /grant:r *S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396:(OI)(CI)M /Q)
+ok: ACL of C:\ProgramData\RestoreProof\logs
+ok: Veeam is on this machine: veeam_url https://localhost:4443
+Veeam's certificate: CN=Veeam Software, O=Veeam Software, OU=Veeam Software, thumbprint 895C6325607A44D4ADB4DD425E02B3815666AD7B, SHA-256 9FB19E0E604C9BE49F83D8E508EFA8EA0986A952377C783E5035CEA2D772A213, valid to 2036-09-23T23:43:30Z
+ok: it is this machine's own (LocalMachine\My, with its key): pinned
+change: wrote C:\ProgramData\RestoreProof\veeam-rest.pem
+change: copied C:\Users\minas\AppData\Local\RestoreProof\lab\w7.3-w7.4-20261019T181822\cloud-ca.pem to C:\ProgramData\RestoreProof\cloud-ca.pem
+change: wrote C:\ProgramData\RestoreProof\config.json
+ok: rpworker config check
+change: rpworker vault set cloud_install_token
+ok: veeam_username is in the vault
+ok: veeam_password is in the vault
+ok: rpworker vault grant S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396
+ok: signing_key_base64 is in the vault
+ok: the Graph certificate is in the vault
+ok: rpworker veeam list (1 organisation(s))
+change: RestoreProofLab.onmicrosoft.com: read on the key file of AC3220B58A2B4C438DA13816C2DD1E25D1F783A7 granted to S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396
+change: rpworker service install (installed RestoreProof: "C:\Program Files\RestoreProof\rpworker.exe" service run)
+change: rpworker cloud register (worker 4bde42bf-9231-45a7-8a71-8db0e3d0865f)
+change: rpworker service start (started RestoreProof)
+changes: 23
+installed in 6 s (from the last answer typed)
+worker 4bde42bf-9231-45a7-8a71-8db0e3d0865f key 26e5f91efb9bdf7d75bc7ced751ee81a2515d57bea0e91162bdd90a5927982e7
+organisation certificates granted: AC3220B58A2B4C438DA13816C2DD1E25D1F783A7
+next: rpworker graph certificate > worker-graph.pem (the public half for each client's tenant setup); manage.py create-connector --worker-id 4bde42bf-9231-45a7-8a71-8db0e3d0865f ...
+vault.bin names: veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64, cloud_api_token
+state\worker.json: {"cloud_url":"https://localhost:8443","format":"restoreproof.worker.v1","key_id":"26e5f91efb9bdf7d75bc7ced751ee81a2515d57bea0e91162bdd90a5927982e7","registered_at":"2026-10-19T14:20:19Z","worker_id":"4bde42bf-9231-45a7-8a71-8db0e3d0865f"}
+C:\Program Files\RestoreProof:
+  cpr.dll  889856 bytes
+  fmt.dll  131584 bytes
+  libcrypto-3-x64.dll  5352960 bytes
+  libcurl.dll  731648 bytes
+  nlohmann_json_schema_validator.dll  428032 bytes
+  rpworker.exe  2969600 bytes
+  spdlog.dll  284672 bytes
+  z.dll  91136 bytes
+  zip.dll  105984 bytes
+no Apps & features entry
+-- icacls after the install
+C:\ProgramData\RestoreProof NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+                            BUILTIN\Administrators:(OI)(CI)(F)
+                            NT SERVICE\RestoreProof:(OI)(CI)(RX)
+C:\ProgramData\RestoreProof\vault.bin NT SERVICE\RestoreProof:(R)
+                                      OWNER RIGHTS:(F)
+                                      BUILTIN\Administrators:(F)
+                                      NT AUTHORITY\SYSTEM:(F)
+C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file> NT AUTHORITY\SYSTEM:(F)
+                                                                                                                      BUILTIN\Administrators:(RX)
+                                                                                                                      NT SERVICE\RestoreProof:(R)
+
+== 3. the connector, the plan, a run on 0.1.0 ==
+create-connector: connector_id ea2c0ca7-2380-4b2f-94ab-2874f2db728e; create-plan --mail 10 --sp 10 --od 10 --cron '*/15 * * * *' (a run takes about six minutes; every five, the record would never be gone for the upgrade's wait): plan_id 8e5d9376-a93c-4539-82f8-e43021e824f6, at 2026-10-19T14:20:45Z
+2026-10-19T14:34:28Z run 44e67ba8-84fb-4eae-8439-31dca5bb55f2 queued (dispatched_at -, received_at -)
+2026-10-19T14:35:22Z run 44e67ba8-84fb-4eae-8439-31dca5bb55f2 queued -> dispatched (dispatched_at 2026-10-19T14:35:19Z, received_at -)
+2026-10-19T14:41:40Z run 44e67ba8-84fb-4eae-8439-31dca5bb55f2 dispatched -> pass (dispatched_at 2026-10-19T14:35:19Z, received_at 2026-10-19T14:41:30Z)
+worker 4bde42bf-9231-45a7-8a71-8db0e3d0865f: name w73-live, version 0.1.0, last_seen_at 2026-10-19 14:35:19 UTC
+test_item of 44e67ba8-84fb-4eae-8439-31dca5bb55f2: 24 item(s), 24 matched; backup_content, fields
+
+== 4. the upgrade to 0.1.1, started while the plan's next run is in progress ==
+2026-10-19T14:51:33Z state\running.json is there: a run is in progress
+pwsh <0.1.1>\Install-RestoreProofWorker.ps1 -Upgrade -Package <0.1.1> -WaitMinutes 20
+2026-10-19T14:51:33Z to 2026-10-19T14:53:07Z (94 s wall clock)
+RestoreProof Worker installer: package C:\Users\minas\AppData\Local\RestoreProof\lab\w7.3-w7.4-20261019T181822\package-0.1.1, program folder C:\Program Files\RestoreProof, data folder C:\ProgramData\RestoreProof, service RestoreProof (S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396)
+ok: Veeam Backup for Microsoft 365 is on this machine
+ok: service RestoreProof is installed from C:\Program Files\RestoreProof\rpworker.exe
+upgrade: 0.1.0 -> 0.1.1
+waiting: run a2b0ecc9-e104-454b-a370-31a34ada289f in progress for 0 min (the upgrade; up to 20 min)
+waiting: run a2b0ecc9-e104-454b-a370-31a34ada289f in progress for 1 min (the upgrade; up to 20 min)
+change: rpworker service stop (stopped RestoreProof in 0.0 s), for the upgrade
+change: copied cpr.dll to C:\Program Files\RestoreProof
+change: copied fmt.dll to C:\Program Files\RestoreProof
+change: copied Install-RestoreProofWorker.ps1 to C:\Program Files\RestoreProof
+change: copied libcrypto-3-x64.dll to C:\Program Files\RestoreProof
+change: copied libcurl.dll to C:\Program Files\RestoreProof
+change: copied libssl-3-x64.dll to C:\Program Files\RestoreProof
+change: copied New-WorkerGraphCertificate.ps1 to C:\Program Files\RestoreProof
+change: copied nlohmann_json_schema_validator.dll to C:\Program Files\RestoreProof
+change: copied RestoreProofWorker.psm1 to C:\Program Files\RestoreProof
+change: copied rpworker.exe to C:\Program Files\RestoreProof
+change: copied spdlog.dll to C:\Program Files\RestoreProof
+change: copied Uninstall-RestoreProofWorker.ps1 to C:\Program Files\RestoreProof
+change: copied WorkerMachine.psm1 to C:\Program Files\RestoreProof
+change: copied z.dll to C:\Program Files\RestoreProof
+change: copied zip.dll to C:\Program Files\RestoreProof
+change: the previous files (0.1.0) kept as C:\Program Files\RestoreProof\previous
+ok: rpworker 0.1.1
+change: Apps & features entry (RestoreProof Worker 0.1.1)
+ok: ACL of C:\ProgramData\RestoreProof
+ok: ACL of C:\ProgramData\RestoreProof\state
+ok: ACL of C:\ProgramData\RestoreProof\runs
+ok: ACL of C:\ProgramData\RestoreProof\outbox
+ok: ACL of C:\ProgramData\RestoreProof\sent
+ok: ACL of C:\ProgramData\RestoreProof\failed
+ok: ACL of C:\ProgramData\RestoreProof\logs
+ok: C:\ProgramData\RestoreProof\config.json (kept; its values are not asked again)
+ok: veeam_username is in the vault
+ok: veeam_password is in the vault
+ok: cloud_api_token is in the vault (registered already)
+ok: rpworker vault grant S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396
+ok: signing_key_base64 is in the vault
+ok: the Graph certificate is in the vault
+ok: rpworker veeam list (1 organisation(s))
+ok: RestoreProofLab.onmicrosoft.com: read on the key file of AC3220B58A2B4C438DA13816C2DD1E25D1F783A7
+ok: rpworker service install
+ok: registered with the Cloud as worker 4bde42bf-9231-45a7-8a71-8db0e3d0865f
+change: rpworker service start (started RestoreProof)
+changes: 19
+installed in 94 s (from the last answer typed)
+upgraded 0.1.0 -> 0.1.1; the previous version is in C:\Program Files\RestoreProof\previous (rollback: pwsh -File "C:\Program Files\RestoreProof\Install-RestoreProofWorker.ps1" -Upgrade -Package "C:\Program Files\RestoreProof\previous")
+worker 4bde42bf-9231-45a7-8a71-8db0e3d0865f key 26e5f91efb9bdf7d75bc7ced751ee81a2515d57bea0e91162bdd90a5927982e7
+organisation certificates granted: AC3220B58A2B4C438DA13816C2DD1E25D1F783A7
+next: rpworker graph certificate > worker-graph.pem (the public half for each client's tenant setup); manage.py create-connector --worker-id 4bde42bf-9231-45a7-8a71-8db0e3d0865f ...
+vault.bin names after: veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64, cloud_api_token (the same)
+state\worker.json after: byte for byte the same
+config.json after: byte for byte the same
+C:\Program Files\RestoreProof:
+  cpr.dll  889856 bytes
+  fmt.dll  131584 bytes
+  Install-RestoreProofWorker.ps1  40808 bytes
+  libcrypto-3-x64.dll  5352960 bytes
+  libcurl.dll  731648 bytes
+  libssl-3-x64.dll  873472 bytes
+  New-WorkerGraphCertificate.ps1  8180 bytes
+  nlohmann_json_schema_validator.dll  428032 bytes
+  RestoreProofWorker.psm1  32249 bytes
+  rpworker.exe  2975744 bytes
+  spdlog.dll  284672 bytes
+  Uninstall-RestoreProofWorker.ps1  20320 bytes
+  WorkerMachine.psm1  9284 bytes
+  z.dll  91136 bytes
+  zip.dll  105984 bytes
+  previous\: cpr.dll, fmt.dll, libcrypto-3-x64.dll, libcurl.dll, nlohmann_json_schema_validator.dll, rpworker.exe, spdlog.dll, z.dll, zip.dll
+Apps & features: RestoreProof Worker 0.1.1, C:\Program Files\RestoreProof, uninstall: "C:\Program Files\PowerShell\7\pwsh.exe" -NoProfile -File "C:\Program Files\RestoreProof\Uninstall-RestoreProofWorker.ps1"
+rpworker --version at C:\Program Files\RestoreProof: 0.1.1
+2026-10-19T14:53:12Z worker.version 0.1.1, last_seen_at 2026-10-19T14:53:07Z (the heartbeat after the start)
+POST /login as w73@example.invalid: HTTP/1.1 303 See Other
+GET /workers: HTTP/1.1 200 OK; the row: w73-live | 0.1.1 | 2026-10-19 14:53 UTC | — | 0 | 0:00 | Revoke |
+-- worker.log since the upgrade
+2026-10-19T14:51:38.903Z info cleanup before: the test mailbox's Inbox: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-19T14:51:44.692Z info cleanup before: the RestoreTarget library: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-19T14:51:48.324Z info cleanup before: the test OneDrive folder: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-19T14:51:48.324Z info [a2b0ecc9-e104-454b-a370-31a34ada289f] cleanup before ok: deleted 0 mail, 0 sharepoint, 0 onedrive
+2026-10-19T14:53:02.775Z info [a2b0ecc9-e104-454b-a370-31a34ada289f] cleanup after skipped: nothing was restored
+2026-10-19T14:53:02.775Z info [a2b0ecc9-e104-454b-a370-31a34ada289f] cleanup_before        0:00:12.390
+2026-10-19T14:53:02.776Z info [a2b0ecc9-e104-454b-a370-31a34ada289f] cleanup_after         -            not run
+2026-10-19T14:53:05.443Z info stop requested (stop)
+2026-10-19T14:53:05.443Z info service stopped after 0 ms
+2026-10-19T14:53:07.060Z info service running: rpworker 0.1.1, config C:\ProgramData\RestoreProof\config.json, log_level info
+2026-10-19T14:53:07.065Z info scheduler started: poll 300 s, heartbeat 900 s, jobs the Cloud, runs C:\ProgramData\RestoreProof\runs, outbox C:\ProgramData\RestoreProof
+2026-10-19T14:53:16Z run a2b0ecc9-e104-454b-a370-31a34ada289f error (dispatched_at 2026-10-19T14:51:31Z, received_at 2026-10-19T14:53:03Z)
+2026-10-19T15:04:35Z run 8a5ae484-a1b5-4e54-ae03-59f25241ab8d queued (dispatched_at -, received_at -)
+2026-10-19T15:08:13Z run 8a5ae484-a1b5-4e54-ae03-59f25241ab8d queued -> dispatched (dispatched_at 2026-10-19T15:08:07Z, received_at -)
+2026-10-19T15:13:34Z run 8a5ae484-a1b5-4e54-ae03-59f25241ab8d dispatched -> pass (dispatched_at 2026-10-19T15:08:07Z, received_at 2026-10-19T15:13:23Z)
+run 8a5ae484-a1b5-4e54-ae03-59f25241ab8d pass on 0.1.1 (dispatched after the upgrade ended at 2026-10-19T14:53:07Z): ERROR:  unterminated quoted string at or near "'YYYY-MM-DD"
+LINE 1: ...at ' || to_char(dispatched_at AT TIME ZONE 'UTC', 'YYYY-MM-D...
+                                                             ^
+
+== 5. the rollback from previous\, then the upgrade again ==
+pwsh <ProgramDir>\Install-RestoreProofWorker.ps1 -Upgrade -Package <ProgramDir>\previous -WaitMinutes 20
+RestoreProof Worker installer: package C:\Program Files\RestoreProof\previous, program folder C:\Program Files\RestoreProof, data folder C:\ProgramData\RestoreProof, service RestoreProof (S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396)
+ok: Veeam Backup for Microsoft 365 is on this machine
+ok: service RestoreProof is installed from C:\Program Files\RestoreProof\rpworker.exe
+upgrade: 0.1.1 -> 0.1.0 (a downgrade: a rollback)
+change: rpworker service stop (stopped RestoreProof in 0.0 s), for the upgrade
+change: copied cpr.dll to C:\Program Files\RestoreProof
+change: copied fmt.dll to C:\Program Files\RestoreProof
+change: copied libcrypto-3-x64.dll to C:\Program Files\RestoreProof
+change: copied libcurl.dll to C:\Program Files\RestoreProof
+change: copied nlohmann_json_schema_validator.dll to C:\Program Files\RestoreProof
+change: copied rpworker.exe to C:\Program Files\RestoreProof
+change: copied spdlog.dll to C:\Program Files\RestoreProof
+change: copied z.dll to C:\Program Files\RestoreProof
+change: copied zip.dll to C:\Program Files\RestoreProof
+change: the previous files (0.1.1) kept as C:\Program Files\RestoreProof\previous
+ok: rpworker 0.1.0
+change: Apps & features entry (RestoreProof Worker 0.1.0)
+ok: ACL of C:\ProgramData\RestoreProof
+ok: ACL of C:\ProgramData\RestoreProof\state
+ok: ACL of C:\ProgramData\RestoreProof\runs
+ok: ACL of C:\ProgramData\RestoreProof\outbox
+ok: ACL of C:\ProgramData\RestoreProof\sent
+ok: ACL of C:\ProgramData\RestoreProof\failed
+ok: ACL of C:\ProgramData\RestoreProof\logs
+ok: C:\ProgramData\RestoreProof\config.json (kept; its values are not asked again)
+ok: veeam_username is in the vault
+ok: veeam_password is in the vault
+ok: cloud_api_token is in the vault (registered already)
+ok: rpworker vault grant S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396
+ok: signing_key_base64 is in the vault
+ok: the Graph certificate is in the vault
+ok: rpworker veeam list (1 organisation(s))
+ok: RestoreProofLab.onmicrosoft.com: read on the key file of AC3220B58A2B4C438DA13816C2DD1E25D1F783A7
+ok: rpworker service install
+ok: registered with the Cloud as worker 4bde42bf-9231-45a7-8a71-8db0e3d0865f
+change: rpworker service start (started RestoreProof)
+changes: 13
+installed in 5 s (from the last answer typed)
+upgraded 0.1.1 -> 0.1.0; the previous version is in C:\Program Files\RestoreProof\previous (rollback: pwsh -File "C:\Program Files\RestoreProof\Install-RestoreProofWorker.ps1" -Upgrade -Package "C:\Program Files\RestoreProof\previous")
+worker 4bde42bf-9231-45a7-8a71-8db0e3d0865f key 26e5f91efb9bdf7d75bc7ced751ee81a2515d57bea0e91162bdd90a5927982e7
+organisation certificates granted: AC3220B58A2B4C438DA13816C2DD1E25D1F783A7
+next: rpworker graph certificate > worker-graph.pem (the public half for each client's tenant setup); manage.py create-connector --worker-id 4bde42bf-9231-45a7-8a71-8db0e3d0865f ...
+rpworker --version at C:\Program Files\RestoreProof: 0.1.0
+C:\Program Files\RestoreProof:
+  cpr.dll  889856 bytes
+  fmt.dll  131584 bytes
+  libcrypto-3-x64.dll  5352960 bytes
+  libcurl.dll  731648 bytes
+  nlohmann_json_schema_validator.dll  428032 bytes
+  rpworker.exe  2969600 bytes
+  spdlog.dll  284672 bytes
+  z.dll  91136 bytes
+  zip.dll  105984 bytes
+  previous\: cpr.dll, fmt.dll, Install-RestoreProofWorker.ps1, libcrypto-3-x64.dll, libcurl.dll, libssl-3-x64.dll, New-WorkerGraphCertificate.ps1, nlohmann_json_schema_validator.dll, RestoreProofWorker.psm1, rpworker.exe, spdlog.dll, Uninstall-RestoreProofWorker.ps1, WorkerMachine.psm1, z.dll, zip.dll
+2026-10-19T15:13:42Z worker.version 0.1.0, last_seen_at 2026-10-19T15:13:39Z (the heartbeat after the start)
+pwsh <0.1.1>\Install-RestoreProofWorker.ps1 -Upgrade -Package <0.1.1> -WaitMinutes 20 (again)
+RestoreProof Worker installer: package C:\Users\minas\AppData\Local\RestoreProof\lab\w7.3-w7.4-20261019T181822\package-0.1.1, program folder C:\Program Files\RestoreProof, data folder C:\ProgramData\RestoreProof, service RestoreProof (S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396)
+ok: Veeam Backup for Microsoft 365 is on this machine
+ok: service RestoreProof is installed from C:\Program Files\RestoreProof\rpworker.exe
+upgrade: 0.1.0 -> 0.1.1
+change: rpworker service stop (stopped RestoreProof in 0.0 s), for the upgrade
+change: copied cpr.dll to C:\Program Files\RestoreProof
+change: copied fmt.dll to C:\Program Files\RestoreProof
+change: copied Install-RestoreProofWorker.ps1 to C:\Program Files\RestoreProof
+change: copied libcrypto-3-x64.dll to C:\Program Files\RestoreProof
+change: copied libcurl.dll to C:\Program Files\RestoreProof
+change: copied libssl-3-x64.dll to C:\Program Files\RestoreProof
+change: copied New-WorkerGraphCertificate.ps1 to C:\Program Files\RestoreProof
+change: copied nlohmann_json_schema_validator.dll to C:\Program Files\RestoreProof
+change: copied RestoreProofWorker.psm1 to C:\Program Files\RestoreProof
+change: copied rpworker.exe to C:\Program Files\RestoreProof
+change: copied spdlog.dll to C:\Program Files\RestoreProof
+change: copied Uninstall-RestoreProofWorker.ps1 to C:\Program Files\RestoreProof
+change: copied WorkerMachine.psm1 to C:\Program Files\RestoreProof
+change: copied z.dll to C:\Program Files\RestoreProof
+change: copied zip.dll to C:\Program Files\RestoreProof
+change: the previous files (0.1.0) kept as C:\Program Files\RestoreProof\previous
+ok: rpworker 0.1.1
+change: Apps & features entry (RestoreProof Worker 0.1.1)
+ok: ACL of C:\ProgramData\RestoreProof
+ok: ACL of C:\ProgramData\RestoreProof\state
+ok: ACL of C:\ProgramData\RestoreProof\runs
+ok: ACL of C:\ProgramData\RestoreProof\outbox
+ok: ACL of C:\ProgramData\RestoreProof\sent
+ok: ACL of C:\ProgramData\RestoreProof\failed
+ok: ACL of C:\ProgramData\RestoreProof\logs
+ok: C:\ProgramData\RestoreProof\config.json (kept; its values are not asked again)
+ok: veeam_username is in the vault
+ok: veeam_password is in the vault
+ok: cloud_api_token is in the vault (registered already)
+ok: rpworker vault grant S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396
+ok: signing_key_base64 is in the vault
+ok: the Graph certificate is in the vault
+ok: rpworker veeam list (1 organisation(s))
+ok: RestoreProofLab.onmicrosoft.com: read on the key file of AC3220B58A2B4C438DA13816C2DD1E25D1F783A7
+ok: rpworker service install
+ok: registered with the Cloud as worker 4bde42bf-9231-45a7-8a71-8db0e3d0865f
+change: rpworker service start (started RestoreProof)
+changes: 19
+installed in 5 s (from the last answer typed)
+upgraded 0.1.0 -> 0.1.1; the previous version is in C:\Program Files\RestoreProof\previous (rollback: pwsh -File "C:\Program Files\RestoreProof\Install-RestoreProofWorker.ps1" -Upgrade -Package "C:\Program Files\RestoreProof\previous")
+worker 4bde42bf-9231-45a7-8a71-8db0e3d0865f key 26e5f91efb9bdf7d75bc7ced751ee81a2515d57bea0e91162bdd90a5927982e7
+organisation certificates granted: AC3220B58A2B4C438DA13816C2DD1E25D1F783A7
+next: rpworker graph certificate > worker-graph.pem (the public half for each client's tenant setup); manage.py create-connector --worker-id 4bde42bf-9231-45a7-8a71-8db0e3d0865f ...
+2026-10-19T15:13:49Z worker.version 0.1.1, last_seen_at 2026-10-19T15:13:46Z (the heartbeat after the start)
+vault.bin names: veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64, cloud_api_token (the same)
+
+== 6. the uninstall (without -Full) ==
+sent folder kept first (the uninstall overwrites sent\): C:\ProgramData\RestoreProof\w73\44e67ba8-84fb-4eae-8439-31dca5bb55f2
+sent folder kept first (the uninstall overwrites sent\): C:\ProgramData\RestoreProof\w73\8a5ae484-a1b5-4e54-ae03-59f25241ab8d
+sent folder kept first (the uninstall overwrites sent\): C:\ProgramData\RestoreProof\w73\a2b0ecc9-e104-454b-a370-31a34ada289f
+pwsh <ProgramDir>\Uninstall-RestoreProofWorker.ps1 -WaitMinutes 20
+2026-10-19T15:13:51Z to 2026-10-19T15:13:54Z (3 s wall clock)
+RestoreProof Worker uninstaller: program folder C:\Program Files\RestoreProof, data folder C:\ProgramData\RestoreProof, service RestoreProof (S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396)
+ok: rpworker 0.1.1 at C:\Program Files\RestoreProof\rpworker.exe
+ok: service RestoreProof is installed from C:\Program Files\RestoreProof\rpworker.exe
+change: rpworker service stop (stopped RestoreProof in 0.0 s)
+ok: rpworker outbox flush: 0 queued, 0 sent, 0 failed
+ok: the outbox holds no run that never reached the Cloud
+change: rpworker cloud revoke (revoked worker 4bde42bf-9231-45a7-8a71-8db0e3d0865f)
+change: RestoreProofLab.onmicrosoft.com: the account's entry taken off the key file of AC3220B58A2B4C438DA13816C2DD1E25D1F783A7 (as icacls "C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file>" /remove:g *S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396)
+change: rpworker service uninstall (uninstalled RestoreProof)
+change: C:\ProgramData\RestoreProof\failed overwritten once and deleted
+change: C:\ProgramData\RestoreProof\outbox overwritten once and deleted
+change: C:\ProgramData\RestoreProof\runs overwritten once and deleted
+change: C:\ProgramData\RestoreProof\sent overwritten once and deleted
+change: C:\ProgramData\RestoreProof\state overwritten once and deleted
+change: C:\ProgramData\RestoreProof\vault.bin overwritten once and deleted
+change: C:\ProgramData\RestoreProof\cloud-ca.pem deleted
+change: C:\ProgramData\RestoreProof\config.json deleted
+change: C:\ProgramData\RestoreProof\veeam-rest.pem deleted
+note: C:\ProgramData\RestoreProof\c57 left: not the installer's
+note: C:\ProgramData\RestoreProof\w410 left: not the installer's
+note: C:\ProgramData\RestoreProof\w411 left: not the installer's
+note: C:\ProgramData\RestoreProof\w48 left: not the installer's
+note: C:\ProgramData\RestoreProof\w49 left: not the installer's
+note: C:\ProgramData\RestoreProof\w49-attempt1 left: not the installer's
+note: C:\ProgramData\RestoreProof\w51 left: not the installer's
+note: C:\ProgramData\RestoreProof\w71 left: not the installer's
+note: C:\ProgramData\RestoreProof\w73 left: not the installer's
+change: C:\Program Files\RestoreProof removed
+change: the Apps & features entry removed
+changes: 15
+left: C:\ProgramData\RestoreProof\logs (the service's log; -Full removes it and the folder)
+vault.bin and the run folders: each file overwritten once, then deleted (no erasure is guaranteed on an SSD or inside a volume snapshot; the secrets are worthless once the Worker is revoked, the Graph certificate's credential removed from the clients' apps and the Veeam account's password changed)
+next: the Worker's Graph certificate stays as a credential of each client's "RestoreProof Worker" app, its private key gone: the client's admin may remove it (docs/tenant-setup.md); the Veeam account is Veeam's console's
+service RestoreProof: not installed (sc query 1060)
+C:\Program Files\RestoreProof: not there
+no Apps & features entry
+under C:\ProgramData\RestoreProof: c57\, logs\, w410\, w411\, w48\, w49\, w49-attempt1\, w51\, w71\, w73\
+-- icacls after the uninstall (the root's ACL stays; the key file without the account's entry)
+C:\ProgramData\RestoreProof NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+                            BUILTIN\Administrators:(OI)(CI)(F)
+                            NT SERVICE\RestoreProof:(OI)(CI)(RX)
+C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file> NT AUTHORITY\SYSTEM:(F)
+                                                                                                                      BUILTIN\Administrators:(RX)
+worker 4bde42bf-9231-45a7-8a71-8db0e3d0865f: name w73-live, version 0.1.1, revoked_at 2026-10-19 15:13:53 UTC
+audit_log: worker.revoke worker:4bde42bf-9231-45a7-8a71-8db0e3d0865f user null ip 172.19.0.6/32
+vault.bin put back from the run folder's copy, its DACL protected again (SYSTEM, Administrators, OWNER RIGHTS), both Cloud tokens removed from it
+-- the restore targets after
+command: rpworker graph list --config C:\Users\minas\AppData\Local\RestoreProof\lab\config.json
+2026-10-19T15:14:05Z to 2026-10-19T15:14:11Z
+exit code: 0
+--- stdout
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+0 item(s) in the three restore targets
+--- stderr
+
+-- both verifiers on the kept sent folder of 8a5ae484-a1b5-4e54-ae03-59f25241ab8d (the public key from the vault's signing key)
+folder: C:\ProgramData\RestoreProof\w73\8a5ae484-a1b5-4e54-ae03-59f25241ab8d
+command: rpworker signer verify C:\ProgramData\RestoreProof\w73\8a5ae484-a1b5-4e54-ae03-59f25241ab8d --public-key C:\ProgramData\RestoreProof\w48\worker-signing.pub.pem --tsa-ca C:\restoreproof\shared\tsa\tsa-ca.pem
+2026-10-19T15:14:12Z to 2026-10-19T15:14:14Z
+exit code: 0
+--- stdout
+verified 7f56f011d1b0f5de3c08ecb3ed095441934969be38daae9fe899f11572bb656f key 26e5f91efb9bdf7d75bc7ced751ee81a2515d57bea0e91162bdd90a5927982e7 timestamp 2026-10-19T15:12:24Z
+--- stderr
+note: not listed in the result: manifest.json
+
+verify_bundle.py (exit code 0): note: not listed in the result: manifest.json | verified 7f56f011d1b0f5de3c08ecb3ed095441934969be38daae9fe899f11572bb656f key 26e5f91efb9bdf7d75bc7ced751ee81a2515d57bea0e91162bdd90a5927982e7 timestamp 2026-10-19T15:12:24Z
+result.json: run_id 8a5ae484-a1b5-4e54-ae03-59f25241ab8d, status pass, restore_sent True, message: 23 of 23 item(s) verified: manifest 0, fields 9, metadata 0, backup_content 14
+result.json sha256 7f56f011d1b0f5de3c08ecb3ed095441934969be38daae9fe899f11572bb656f
+
+== taken away, and the lab's state put back ==
+vault.bin is there; the copy not used
+cloud_api_token was not in C:\ProgramData\RestoreProof\vault.bin; nothing changed
+cloud_install_token was not in C:\ProgramData\RestoreProof\vault.bin; nothing changed
+failed\: 1 item(s) put back (the folder made again with the root's inherited ACL; the next install sets the account's Modify)
+runs\: 5 item(s) put back (the folder made again with the root's inherited ACL; the next install sets the account's Modify)
+sent\: 2 item(s) put back (the folder made again with the root's inherited ACL; the next install sets the account's Modify)
+state\: 1 item(s) put back (the folder made again with the root's inherited ACL; the next install sets the account's Modify)
+vault.bin names at the end: veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64
+-- icacls at the end
+C:\ProgramData\RestoreProof NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+                            BUILTIN\Administrators:(OI)(CI)(F)
+                            NT SERVICE\RestoreProof:(OI)(CI)(RX)
+C:\ProgramData\RestoreProof\vault.bin OWNER RIGHTS:(F)
+                                      BUILTIN\Administrators:(F)
+                                      NT AUTHORITY\SYSTEM:(F)
+C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file> NT AUTHORITY\SYSTEM:(F)
+                                                                                                                      BUILTIN\Administrators:(RX)
+service RestoreProof: not installed (sc query 1060)

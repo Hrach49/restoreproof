@@ -93,8 +93,10 @@ int run_flush(const CommandOptions& options, std::ostream& out, std::ostream& er
     CloudUploader uploader(*http, config.cloud_url, *secrets.cloud_api_token);
     Outbox outbox({root, env.files, nullptr});
     // An operator's flush: a run a 401 kept is tried at once.
-    const FlushReport report = outbox.flush(
-        uploader, env.wall_now ? env.wall_now() : std::chrono::system_clock::now(), {}, true);
+    // --now: every queued run is due (the uninstall's last flush, W7.3's review).
+    const FlushReport report =
+        outbox.flush(uploader, env.wall_now ? env.wall_now() : std::chrono::system_clock::now(), {},
+                     true, options.has_flag("--now"));
     for (const std::string& line : report.out) {
         out << line << '\n';
     }
@@ -192,7 +194,7 @@ int run_outbox_command(std::span<const std::string_view> args, std::ostream& out
 {
     if (!args.empty() && args[0] == "flush") {
         const std::optional<CommandOptions> options =
-            parse_options(args.subspan(1), {"--config", "--vault", "--outbox", "--record"});
+            parse_options(args.subspan(1), {"--config", "--vault", "--outbox", "--record"}, {"--now"});
         if (options && none_empty(*options)) {
             return run_flush(*options, out, err, env);
         }

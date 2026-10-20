@@ -306,8 +306,11 @@ public:
     // stops the pass (token_refused). failed\ counts under the cap with the
     // queue and is never pruned. `token_is_new`: the token is not the one a
     // 401 refused, so a run whose last_error is upload_http_401 is due now.
+    // `every_run_due` (`outbox flush --now`, the uninstall's last flush): no
+    // queued run waits for its next attempt.
     FlushReport flush(IUploader& uploader, std::chrono::system_clock::time_point now,
-                      const std::function<bool()>& stop = {}, bool token_is_new = false);
+                      const std::function<bool()>& stop = {}, bool token_is_new = false,
+                      bool every_run_due = false);
 
 private:
     OutboxOptions options_;

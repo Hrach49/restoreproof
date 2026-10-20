@@ -6,15 +6,17 @@
 .DESCRIPTION
     From worker/: configures and builds the `ci` preset (Release; the `dev` build is Debug with
     debug DLLs beside the exe), then zips rpworker.exe, every DLL from its build folder,
-    tools/worker-install/Install-RestoreProofWorker.ps1, RestoreProofWorker.psm1 and
-    WorkerMachine.psm1, a copy of tools/tenant-setup/New-WorkerGraphCertificate.ps1 (taken here;
+    tools/worker-install/Install-RestoreProofWorker.ps1, Uninstall-RestoreProofWorker.ps1 (W7.3),
+    RestoreProofWorker.psm1 and WorkerMachine.psm1, a copy of tools/tenant-setup/New-WorkerGraphCertificate.ps1 (taken here;
     no second copy in git), config.example.json and docs/install-guide.md when it exists, as
     RestoreProof-Worker-<version>.zip under -Out, <version> from `rpworker --version`. A
     code-signing step goes before the zip when the owner has the certificate: signtool on the
     exe and the DLLs, Set-AuthenticodeSignature on the scripts.
 
     Run it from a VS 2022 Developer PowerShell (cmake, ninja and cl on PATH; VCPKG_ROOT set back
-    to the real clone). -NoBuild zips what build\ci already holds.
+    to the real clone). -NoBuild zips what build\ci already holds. A zip of the same version
+    already under -Out is refused unless -Force (W7.4 point 8: a version shipped once is never
+    built again with other bytes; bump worker/CMakeLists.txt).
 
 .EXAMPLE
     pwsh -File tools\package.ps1
@@ -25,7 +27,8 @@
 [CmdletBinding()]
 param(
     [string]$Out = '',
-    [switch]$NoBuild
+    [switch]$NoBuild,
+    [switch]$Force
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -57,6 +60,7 @@ try {
         $exe
         Get-ChildItem -LiteralPath $build -File -Filter '*.dll' | ForEach-Object FullName
         (Join-Path $repo 'tools\worker-install\Install-RestoreProofWorker.ps1')
+        (Join-Path $repo 'tools\worker-install\Uninstall-RestoreProofWorker.ps1')
         (Join-Path $repo 'tools\worker-install\RestoreProofWorker.psm1')
         (Join-Path $repo 'tools\worker-install\WorkerMachine.psm1')
         (Join-Path $repo 'tools\tenant-setup\New-WorkerGraphCertificate.ps1')
@@ -70,7 +74,10 @@ try {
     }
     $null = New-Item -ItemType Directory -Path $Out -Force
     $zip = Join-Path $Out "RestoreProof-Worker-$version.zip"
-    if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+    if (Test-Path -LiteralPath $zip) {
+        if (-not $Force) { throw "$zip is there already: a shipped version is never built again with other bytes; bump the version in worker\CMakeLists.txt, or -Force to overwrite it" }
+        Remove-Item -LiteralPath $zip -Force
+    }
     Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zip -CompressionLevel Optimal
     $listing = Get-ChildItem -LiteralPath $staging -File | Sort-Object Name | ForEach-Object { "  $($_.Name)  $($_.Length) bytes  sha256 $((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower())" }
     "package: $zip"

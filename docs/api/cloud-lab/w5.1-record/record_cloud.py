@@ -19,7 +19,10 @@ had them, the body. Every token is replaced by SCRUBBED before anything is
 written; no token is printed. The upload posts the vector's own bytes
 without its timestamp part (the vector's token is the published test TSA's,
 which the stack doesn't trust; a bundle without one is "not timestamped").
-The 502 is Caddy's own, with the api stopped and started again.
+The 502 is Caddy's own, with the api stopped and started again. The
+Worker's own revoke (W7.3) is asked last of what the token can do, and the
+502s after it carry the token the Cloud no longer knows (they never reach
+the app, so the answer is the same).
 """
 from __future__ import annotations
 
@@ -190,6 +193,13 @@ def main() -> None:
         short = {k: v for k, v in HEARTBEAT.items() if k != "uptime_s"}
         write("heartbeat", "422", beat, http.post("/v1/heartbeat", headers=bearer, json=short), tokens)
         write("version", "200", "GET /v1/version", http.get("/v1/version"), tokens)
+
+        # W7.3: the Worker's own revoke, last of what the registered token can
+        # do: 204 once, then the same token is the 401 (the heartbeat's own).
+        revoke = "POST /v1/workers/self/revoke"
+        write("revoke", "401", revoke, http.post("/v1/workers/self/revoke", headers=wrong), tokens)
+        write("revoke", "204", revoke, http.post("/v1/workers/self/revoke", headers=bearer), tokens)
+        write("revoke", "401-revoked", revoke, http.post("/v1/workers/self/revoke", headers=bearer), tokens)
 
         compose("stop", "api")
         try:

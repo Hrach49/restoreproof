@@ -8,6 +8,16 @@ token, 400 for the key, 409 for a key already registered, in that order, each
 in the OpenAPI document; a body that isn't the model is FastAPI's 422. The
 transaction is `get_session`'s, committed before the response starts
 (`SessionDep`).
+
+`POST /workers/self/revoke` (W7.3; docs/decisions.md 2026-10-19, "W7.3 (#82)
+and W7.4 (#83)", point 5): the Worker revokes itself at uninstall. The token's
+Worker, `current_worker`'s one 401 for no, another or a revoked token before
+anything is written; then `onboarding.revoke_worker`, the CLI's and the
+`/workers` page's function (one `UPDATE`, one `worker.revoke` audit row with
+the Worker's address and no user); 204 with no body. No body is read. A
+Worker revoked already never reaches the route (its token is the 401), so
+there is no second answer to word; from the commit on the heartbeat, the poll
+and a second revoke are that 401.
 """
 
 from __future__ import annotations
@@ -15,11 +25,15 @@ from __future__ import annotations
 import datetime as dt
 from typing import Annotated
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from app import audit, onboarding
+from app.auth.dependency import current_worker, not_authenticated
 from app.auth.registration import register_worker
 from app.db import SessionDep
+from app.models import Worker
+from app.repo.errors import RepoError
 from app.routers.errors import BODY_OVER_THE_CAP, NOT_AUTHENTICATED, refusal
 
 router = APIRouter()
@@ -77,3 +91,25 @@ async def register(body: RegisterBody, request: Request, session: SessionDep) ->
         api_token=registration.api_token,
         key_id=registration.key.key_id,
     )
+
+
+@router.post(
+    "/workers/self/revoke",
+    status_code=204,
+    response_class=Response,
+    responses={401: NOT_AUTHENTICATED, 413: BODY_OVER_THE_CAP},
+)
+async def revoke_self(
+    request: Request, worker: Annotated[Worker, Depends(current_worker)], session: SessionDep
+) -> Response:
+    try:
+        await onboarding.revoke_worker(
+            session, worker.msp_id, worker_id=worker.id, user_id=None, ip=audit.client_ip(request)
+        )
+    except RepoError:
+        # A revoke that landed between `current_worker`'s lookup and this
+        # request's UPDATE (the admin's, a second uninstall): 0 rows, so the
+        # Worker is revoked already, and the answer is the one 401, as the
+        # heartbeat's for the same race, never a 500.
+        raise not_authenticated() from None
+    return Response(status_code=204)

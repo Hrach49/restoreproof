@@ -703,6 +703,50 @@
         },
         "summary": "Register"
       }
+    },
+    "/v1/workers/self/revoke": {
+      "post": {
+        "operationId": "revoke_self_v1_workers_self_revoke_post",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not authenticated: no valid token, whatever the reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the 64 KiB cap every request but the upload has (`body: too large`)."
+          }
+        },
+        "security": [
+          {
+            "workerToken": []
+          }
+        ],
+        "summary": "Revoke Self"
+      }
     }
   }
 }

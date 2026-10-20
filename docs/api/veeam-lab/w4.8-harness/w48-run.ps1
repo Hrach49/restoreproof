@@ -349,7 +349,9 @@ function Get-W48Sessions {
 # A text file of evidence under docs/api/veeam-lab/, LF, refused if a known secret survives.
 function Save-W48Evidence([string]$Name, [string]$Text) {
     foreach ($s in Get-W48Secrets) { if ($s -and $Text.Contains($s)) { throw "a secret survived in $Name; nothing written" } }
-    if ($Text -match 'eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.' -or $Text -match 'MII[A-Za-z0-9+/]{60,}' -or $Text -match 'MC4CAQAwBQYDK2VwBCIEI[A-Za-z0-9+/]{43}' -or $Text -match 'PRIVATE KEY') { throw "a token, PFX or key-shaped value in $Name; nothing written" }
+    # Case-sensitive (W7.3): the shapes are (a JWT's eyJ, a DER's MII, a PEM's PRIVATE KEY), and
+    # a line of prose saying "private key" is no key.
+    if ($Text -cmatch 'eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.' -or $Text -cmatch 'MII[A-Za-z0-9+/]{60,}' -or $Text -cmatch 'MC4CAQAwBQYDK2VwBCIEI[A-Za-z0-9+/]{43}' -or $Text -cmatch 'PRIVATE KEY') { throw "a token, PFX or key-shaped value in $Name; nothing written" }
     $path = Join-Path $script:Repo "docs\api\veeam-lab\$Name"
     [IO.File]::WriteAllText($path, $Text.Replace("`r`n", "`n").TrimEnd("`n") + "`n", [Text.UTF8Encoding]::new($false))
     "saved $path"

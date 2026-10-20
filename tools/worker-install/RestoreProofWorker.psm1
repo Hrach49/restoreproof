@@ -92,7 +92,9 @@ function Get-AclDifference {
     $rules = @($Acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]))
     $missing = [System.Collections.Generic.List[object]]::new()
     $extra = [System.Collections.Generic.List[string]]::new()
-    $wantedSids = @($Wanted.Rules | ForEach-Object Sid)
+    # The script-block form: under `pwsh -File ... -WhatIf` the member form `ForEach-Object Sid`
+    # is a WhatIf operation of its own and retrieves nothing (the W7.3 review's second pass).
+    $wantedSids = @($Wanted.Rules | ForEach-Object { $_.Sid })
     foreach ($rule in $Wanted.Rules) {
         $rights = $script:RightsByName[$rule.Rights]
         $found = @($rules | Where-Object {
@@ -350,11 +352,13 @@ function ConvertTo-Pem([Parameter(Mandatory)][byte[]]$Der) {
     The organisations and their app certificate thumbprints from `rpworker veeam list`'s
     table: the APP CERTIFICATE column, one or more thumbprints joined by commas, or '-'. A cell
     that isn't 40 hexadecimal digits is a problem naming the organisation, never a thumbprint.
+    A Veeam with no organisation prints "no organisations in Veeam" for the table: none.
 #>
 function Read-OrganisationThumbprints {
     [CmdletBinding()]
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
     $lines = @($Text -split "`r?`n" | Where-Object { $_ -ne '' })
+    if ($lines.Count -ge 1 -and $lines[0] -ceq 'no organisations in Veeam') { return @() }
     if ($lines.Count -eq 0 -or $lines[0] -notmatch '^  ORGANIZATION\s+APP CERTIFICATE\s+BACKUP TIME') {
         throw 'Not the table rpworker veeam list prints (no APP CERTIFICATE column: an older Worker?)'
     }
@@ -453,7 +457,211 @@ function Read-RegistrationLine([AllowEmptyString()][string]$Text) {
     [pscustomobject]@{ WorkerId = $m.Groups[1].Value; KeyId = $m.Groups[2].Value }
 }
 
+# --- versions, the upgrade and the uninstall (W7.3 and W7.4, decision 2026-10-19) ---------
+
+<#
+.SYNOPSIS
+    Whether `Text` is a version as `rpworker --version` prints one: three numbers with dots.
+#>
+function Test-VersionText([AllowEmptyString()][string]$Text) { $Text -match '^\d+\.\d+\.\d+$' }
+
+<#
+.SYNOPSIS
+    -1, 0 or 1 as `A` is before, the same as or after `B`, number by number (0.1.10 is after
+    0.1.9). A text that isn't a version is refused.
+#>
+function Compare-Version {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$A, [Parameter(Mandatory)][string]$B)
+    foreach ($v in $A, $B) { if (-not (Test-VersionText $v)) { throw "Not a version: '$v'" } }
+    # Not $a and $b: a variable's name ignores case, and the typed parameters would turn the
+    # arrays back into strings.
+    $left = @($A -split '\.' | ForEach-Object { [int]$_ })
+    $right = @($B -split '\.' | ForEach-Object { [int]$_ })
+    foreach ($i in 0..2) {
+        if ($left[$i] -lt $right[$i]) { return -1 }
+        if ($left[$i] -gt $right[$i]) { return 1 }
+    }
+    0
+}
+
+<#
+.SYNOPSIS
+    What step 2 does with the exe when a service is installed from it (point 3): 'install' when
+    no service is there (a plain install, whatever -Upgrade says), 'same' when the installed
+    files are the package's, 'swap' with -Upgrade (Word: '' for a higher version, 'the files
+    differ' for the same version, 'a downgrade: a rollback' for a lower one), 'stop' without it.
+    ServiceState is Test-InstalledService's word; 'other' never reaches this (step 1 stops).
+#>
+function Get-UpgradePlan {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ServiceState,
+        [AllowEmptyString()][string]$InstalledVersion = '',
+        [Parameter(Mandatory)][string]$PackageVersion,
+        [bool]$SameFiles,
+        [bool]$Upgrade
+    )
+    function New-Plan([string]$Action, [string]$Word = '') {
+        [pscustomobject]@{ Action = $Action; Word = $Word; Line = "upgrade: $InstalledVersion -> $PackageVersion$(if ($Word) { " ($Word)" })" }
+    }
+    if ($ServiceState -eq 'absent') { return New-Plan 'install' }
+    if ($SameFiles) { return New-Plan 'same' }
+    if (-not $Upgrade) { return New-Plan 'stop' }
+    $order = if ($InstalledVersion -and (Test-VersionText $InstalledVersion)) { Compare-Version $PackageVersion $InstalledVersion } else { 1 }
+    switch ($order) {
+        1 { New-Plan 'swap' }
+        0 { New-Plan 'swap' 'the files differ' }
+        -1 { New-Plan 'swap' 'a downgrade: a rollback' }
+    }
+}
+
+<#
+.SYNOPSIS
+    The wait for a run in progress (point 3 step 2, point 4 steps 2 and 4): 'go' when no record
+    is there; 'go' too when the service isn't running (a record nothing moves on: the service's
+    own recovery closes it at its next start, which the upgrade's and the uninstall's own start
+    is) and when the record names another run than the first read did (the run waited for
+    ended; the one taken after it is the stop's to catch, as a run taken between the read and
+    the stop is); 'wait' while the budget isn't spent; 'stop' once it is (the W7.3 review's
+    second pass: a stopped service's record, or runs back to back, never ended a wait).
+#>
+function Get-RunPlan {
+    [CmdletBinding()]
+    param([bool]$RecordPresent, [double]$WaitedSeconds, [double]$BudgetSeconds, [bool]$ServiceRunning = $true, [bool]$RunChanged = $false)
+    if (-not $RecordPresent -or -not $ServiceRunning -or $RunChanged) { return 'go' }
+    if ($WaitedSeconds -lt $BudgetSeconds) { return 'wait' }
+    'stop'
+}
+
+$script:UninstallSecretFiles = @('vault.bin')
+$script:UninstallRunFolders = @('state', 'runs', 'outbox', 'sent', 'failed')
+$script:UninstallPlainFiles = @('config.json', 'veeam-rest.pem', 'cloud-ca.pem')
+$script:UninstallLogFolder = 'logs'
+
+<#
+.SYNOPSIS
+    What the uninstall removes under the data root (point 4 steps 9 and 11), from the names
+    present at its top level: Overwrite (each file overwritten once, then deleted: vault.bin and
+    the five run folders), Delete (config.json and the two PEM files), Logs (logs\, with -Full
+    alone), Left (anything else, named and left; with -Full nothing is left: the root goes
+    whole), RemoveRoot (-Full). Names as Windows compares them, whatever their case, each as
+    present. Overwrite in one order whatever the folder lists: vault.bin first (the secrets
+    before the run folders), then state, runs, outbox, sent, failed.
+#>
+function Get-UninstallPlan {
+    [CmdletBinding()]
+    param([string[]]$Present = @(), [bool]$Full)
+    $overwrite = [System.Collections.Generic.List[string]]::new()
+    $delete = [System.Collections.Generic.List[string]]::new()
+    $logs = [System.Collections.Generic.List[string]]::new()
+    $left = [System.Collections.Generic.List[string]]::new()
+    foreach ($known in @($script:UninstallSecretFiles) + @($script:UninstallRunFolders)) {
+        foreach ($name in $Present) { if ($name -eq $known) { $overwrite.Add($name) } }
+    }
+    foreach ($name in $Present) {
+        if ($name -in $script:UninstallSecretFiles -or $name -in $script:UninstallRunFolders) { continue }
+        if ($name -in $script:UninstallPlainFiles) { $delete.Add($name) }
+        elseif ($name -eq $script:UninstallLogFolder) { if ($Full) { $logs.Add($name) } }
+        elseif (-not $Full) { $left.Add($name) }
+    }
+    [pscustomobject]@{
+        Overwrite  = @($overwrite)
+        Delete     = @($delete)
+        Logs       = @($logs)
+        Left       = @($left)
+        RemoveRoot = $Full
+    }
+}
+
+<#
+.SYNOPSIS
+    A file's DACL object with every Allow rule for `Sid` taken away (the key file's entry at
+    uninstall, point 4 step 7: `icacls <file> /remove:g *<sid>`), given back to the script,
+    which sets it on the file.
+#>
+function Remove-FileReadRule {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Acl, [Parameter(Mandatory)][string]$Sid)
+    $template = [Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]$Sid, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow)
+    $null = $Acl.RemoveAccessRuleAll($template)
+    $Acl
+}
+
+$script:UninstallEntryName = 'RestoreProofWorker'
+
+<#
+.SYNOPSIS
+    The Apps & features entry's values (point 2): what the installer writes under
+    HKLM\...\Uninstall\RestoreProofWorker and the upgrade rewrites. The UninstallString runs
+    the uninstall script from the program folder with the pwsh that ran the installer, with
+    -Elevate (the script asks for elevation itself when Settings started it without), -NoExit
+    (the window stays, so its problem: and next: lines can be read) and -ExecutionPolicy Bypass
+    (a script copied from a downloaded zip keeps its mark of the web, which RemoteSigned refuses).
+#>
+function New-UninstallEntryValues {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Version,
+        [Parameter(Mandatory)][string]$ProgramDir,
+        [Parameter(Mandatory)][string]$Pwsh,
+        [Parameter(Mandatory)][string]$InstallDate
+    )
+    if (-not (Test-VersionText $Version)) { throw "Not a version: '$Version'" }
+    if ($InstallDate -notmatch '^\d{8}$') { throw "Not an InstallDate (yyyyMMdd): '$InstallDate'" }
+    foreach ($path in $ProgramDir, $Pwsh) { if ($path -match '"') { throw "A path with a quote: $path" } }
+    [ordered]@{
+        DisplayName     = 'RestoreProof Worker'
+        DisplayVersion  = $Version
+        Publisher       = 'RestoreProof'
+        InstallLocation = $ProgramDir
+        InstallDate     = $InstallDate
+        DisplayIcon     = (Join-Path $ProgramDir 'rpworker.exe')
+        UninstallString = "`"$Pwsh`" -NoProfile -ExecutionPolicy Bypass -NoExit -File `"$(Join-Path $ProgramDir 'Uninstall-RestoreProofWorker.ps1')`" -Elevate"
+        NoModify        = 1
+        NoRepair        = 1
+    }
+}
+
+function Get-UninstallEntryName { $script:UninstallEntryName }
+
+<#
+.SYNOPSIS
+    The counts from `rpworker outbox flush` or `outbox list`'s last line, `<n> queued, <m>
+    sent, <k> failed`, and the run IDs of `outbox list`'s rows (the queued runs); $null for a
+    text without the line.
+#>
+function Read-OutboxSummary([AllowEmptyString()][string]$Text) {
+    $m = [regex]::Match($Text, '(?m)^(\d+) queued, (\d+) sent, (\d+) failed\s*$')
+    if (-not $m.Success) { return $null }
+    $runs = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in ($Text -split "`r?`n")) {
+        if ($line -match '^RUN\s' -or $line -match '^\d+ queued, ' -or $line -eq '') { continue }
+        $cells = @($line -split '  +')
+        if ($cells.Count -ge 2 -and $cells[0] -match '^[A-Za-z0-9._-]+$') { $runs.Add($cells[0]) }
+    }
+    [pscustomobject]@{ Queued = [int]$m.Groups[1].Value; Sent = [int]$m.Groups[2].Value; Failed = [int]$m.Groups[3].Value; Runs = @($runs) }
+}
+
+<#
+.SYNOPSIS
+    What `rpworker cloud revoke`'s exit code means to the uninstall (point 4 step 6): 'revoked'
+    (0: the Cloud took it), 'unknown' (2: the Cloud doesn't know the token, revoked already or
+    never its), 'unreachable' (3: the Cloud wasn't reached, the token kept: the operator revokes
+    in the Cloud), 'failed' (anything else: the same line to the operator). An exit 1 after the
+    Cloud's answer, when only the vault couldn't take the token out (`Err`: "the Cloud revoked
+    this Worker, but ..." or the 401's "... couldn't be removed from the vault"), is what the Cloud
+    said: 'revoked' or 'unknown'.
+#>
+function Get-RevokeOutcome([int]$Code, [AllowEmptyString()][string]$Err = '') {
+    if ($Code -eq 1 -and $Err -match "(?m)^cloud revoke: the Cloud revoked this Worker, but the API token couldn't be removed") { return 'revoked' }
+    if ($Code -eq 1 -and $Err -match "(?m)^cloud revoke: the Cloud doesn't know this token .*couldn't be removed from the vault") { return 'unknown' }
+    switch ($Code) { 0 { 'revoked' } 2 { 'unknown' } 3 { 'unreachable' } default { 'failed' } }
+}
+
 Export-ModuleMember -Function Get-ServiceSid, Get-WantedAcls, Get-ServiceFolderNames, Get-AclDifference, Get-IcaclsArguments, Update-AclObject, Add-FileReadRule,
     Test-TrustedFile, Test-ConfigCheck, Get-ConfigPlan, New-ConfigDocument, Get-VaultPlan, Test-VeeamCertificate, Test-Thumbprint, ConvertTo-Pem,
     Read-OrganisationThumbprints, Get-KeyFileCandidates, Test-Prerequisites, Get-ServiceCommandLine,
-    Test-InstalledService, Test-KeyAlreadyRegistered, Read-RegistrationLine
+    Test-InstalledService, Test-KeyAlreadyRegistered, Read-RegistrationLine,
+    Test-VersionText, Compare-Version, Get-UpgradePlan, Get-RunPlan, Get-UninstallPlan, Remove-FileReadRule,
+    New-UninstallEntryValues, Get-UninstallEntryName, Read-OutboxSummary, Get-RevokeOutcome

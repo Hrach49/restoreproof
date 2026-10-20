@@ -15,10 +15,18 @@
     Every step reads first, prints `ok: ...` when nothing differs and `change: ...` when it
     wrote, and the run ends `changes: <n>`; a step that fails stops the run with its own line,
     the steps before it stay, and running it again continues from the first thing that differs.
-    -WhatIf prints `would: ...` lines and writes nothing. Upgrades (W7.3) and uninstall (W7.4)
-    are not here: a service installed from another exe stops the install.
+    -WhatIf prints `would: ...` lines and writes nothing. -Upgrade (W7.4, docs/decisions.md
+    2026-10-19 point 3) replaces an installed Worker with the package's: it waits for a run in
+    progress to end, stops the service, keeps the installed files as <ProgramDir>\previous and
+    starts the new ones; the config, the vault, the grants and the registration are not
+    touched. A rollback (-Package "<ProgramDir>\previous") leaves previous\ as it is, so the same
+    line run again continues. Without -Upgrade an exe that differs from the installed one stops
+    the install; one that is missing (quarantined) is copied in again. Any stop after the
+    service was stopped says so, with the line that starts it and the rollback. The uninstall
+    is Uninstall-RestoreProofWorker.ps1 (W7.3). A service installed from another exe stops both.
 
-    In order: the checks; the exe and its DLLs into -ProgramDir; -Root and its six folders with
+    In order: the checks; the exe, its DLLs and the scripts into -ProgramDir, and the Apps &
+    features entry; -Root and its six folders with
     their ACLs (the service account by its SID, Users nothing); config.json (kept when it is
     there and passes `rpworker config check`); the vault's names; `rpworker signer new-key`;
     New-WorkerGraphCertificate.ps1; `rpworker veeam list` and the Read ACE on each organisation
@@ -45,6 +53,14 @@
 .PARAMETER VeeamThumbprint
     The SHA-1 thumbprint of Veeam's REST certificate, to confirm a certificate this machine
     doesn't hold without a question.
+.PARAMETER Upgrade
+    Replace the installed exe, DLLs and scripts with the package's (above); the rollback is
+    -Upgrade -Package "<ProgramDir>\previous". Given with no service installed it is a plain
+    install. A package without Uninstall-RestoreProofWorker.ps1 (0.1.0's) brings no script: the
+    installed ones stay.
+.PARAMETER WaitMinutes
+    How long -Upgrade waits for a run in progress (state\running.json) before stopping with
+    nothing changed: 30.
 .PARAMETER Replace
     Write config.json again from the answers and ask the Veeam account and its password again,
     though they are there: the way to correct a URL or a password that step 8 or 10 found
@@ -76,6 +92,10 @@ param(
     [string]$VeeamUsername = '',
     [hashtable]$Answers = @{},
     [switch]$Replace,
+    [switch]$Upgrade,
+    [ValidateRange(0, 1440)][double]$WaitMinutes = 30,
+    # How often the run record is read while waiting (the tests shorten it); 0 would never wait.
+    [ValidateRange(1, 3600)][int]$PollSeconds = 10,
     [switch]$SkipElevationCheck,
     # Full control on the data folder for these SIDs too: the tests' own account (which would
     # otherwise lock itself out of its temporary root). Never given by a deployment.
@@ -113,11 +133,21 @@ $TrustedOwners = @('S-1-5-18', 'S-1-5-32-544', [Security.Principal.WindowsIdenti
 $script:Changes = 0
 $started = [DateTime]::UtcNow
 $lastAnswerAt = $started
+# Why this run stopped the service ('' while it hasn't, or once it started it again): a stop
+# after that says the service is stopped and how to start it (the W7.3 review's second pass).
+$script:StoppedFor = ''
+# Not $script:Rollback: a variable's name ignores case, and $rollback is the rollback line.
+$script:RollbackWhere = ''
 
 function Say([string]$Line) { Write-Output $Line }
 function Changed([string]$What) { $script:Changes++; Say "change: $What" }
 function Would([string]$What) { Say "would: $What" }
-function Stop-Install([string]$Why) { throw "problem: $Why Nothing after this step was done; run the installer again once it is fixed." }
+function Stop-Install([string]$Why) {
+    $state = ''
+    if ($script:StoppedFor -eq 'upgrade') { $state = " The service $ServiceName is stopped, on the new files: rpworker service start starts it as it is, and the previous version is $($script:RollbackWhere)." }
+    elseif ($script:StoppedFor) { $state = " The service $ServiceName is stopped: rpworker service start starts it." }
+    throw "problem: $Why Nothing after this step was done; run the installer again once it is fixed.$state"
+}
 
 # Runs the Worker with `Arguments`, `Stdin` as one line when given (a secret: never an
 # argument, as lab\entra\fill-worker-vault.ps1 and New-WorkerGraphCertificate.ps1 do); its exit
@@ -125,8 +155,12 @@ function Stop-Install([string]$Why) { throw "problem: $Why Nothing after this st
 # arrives as an error record, a stdout line as a string): no file, which a `2>file` redirection
 # would be, and which -WhatIf would then refuse to write.
 function Invoke-Worker([string[]]$Arguments, [string]$Stdin = $null) {
-    if ($null -ne $Stdin) { $all = @($Stdin | & $Worker @Arguments 2>&1) }
-    else { $all = @(& $Worker @Arguments 2>&1) }
+    # An exe that can't be run at all (gone, quarantined) is a failed run of its own (code -1),
+    # never the script's exception.
+    try {
+        if ($null -ne $Stdin) { $all = @($Stdin | & $Worker @Arguments 2>&1) }
+        else { $all = @(& $Worker @Arguments 2>&1) }
+    } catch { return [pscustomobject]@{ Code = -1; Out = ''; Err = "$Worker couldn't be run ($($_.Exception.Message))`n" } }
     $code = $LASTEXITCODE
     $out = @($all | Where-Object { $_ -is [string] })
     $err = @($all | Where-Object { $_ -isnot [string] } | ForEach-Object { "$_" })
@@ -211,6 +245,107 @@ function Test-KeyFileRead([string]$Path, [string]$Sid) {
     }).Count -gt 0
 }
 
+# The swap (W7.4 point 3 step 4). The package's files are copied into a folder of their own
+# first, so a copy that fails leaves the installed files untouched; then the installed files
+# are moved to a staging folder and the new ones in (moves on one volume), and previous\ is
+# replaced through a rename, so no step loses both copies. A failure while the files move puts
+# the installed files back and says so; a file that couldn't be put back keeps the staging
+# folder and is named. A rollback (`Rollback`: the package is previous\ itself) leaves previous\
+# as it is and drops the files it replaced, so the same rollback line run again finds the files
+# the same instead of swapping back. `Keep` names files that stay in place.
+function Invoke-Swap([object[]]$Files, [string[]]$Keep = @(), [bool]$Rollback = $false) {
+    $guid = [Guid]::NewGuid().ToString('N')
+    $incoming = Join-Path $ProgramDir "incoming-$guid"
+    $staging = Join-Path $ProgramDir "previous.new-$guid"
+    $null = New-Item -ItemType Directory -Path $incoming
+    try {
+        foreach ($file in $Files) {
+            Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $incoming $file.Name) -Force
+            if ((Get-FileHash -LiteralPath (Join-Path $incoming $file.Name) -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash) { throw "$($file.Name) was not copied whole" }
+        }
+    } catch {
+        Remove-Item -LiteralPath $incoming -Recurse -Force -ErrorAction SilentlyContinue
+        throw "the package's files couldn't be copied ($($_.Exception.Message)); the installed files are untouched"
+    }
+    $null = New-Item -ItemType Directory -Path $staging
+    $moved = @()
+    try {
+        foreach ($old in @(Get-ChildItem -LiteralPath $ProgramDir -File)) {
+            if ($Keep -contains $old.Name) { continue }
+            Move-Item -LiteralPath $old.FullName -Destination (Join-Path $staging $old.Name)
+            $moved += $old.Name
+        }
+        foreach ($file in $Files) {
+            Move-Item -LiteralPath (Join-Path $incoming $file.Name) -Destination (Join-Path $ProgramDir $file.Name) -Force
+            Changed "copied $($file.Name) to $ProgramDir"
+        }
+    } catch {
+        $why = $_.Exception.Message
+        $stuck = @()
+        foreach ($name in $moved) {
+            try { Move-Item -LiteralPath (Join-Path $staging $name) -Destination (Join-Path $ProgramDir $name) -Force } catch { $stuck += $name }
+        }
+        Remove-Item -LiteralPath $incoming -Recurse -Force -ErrorAction SilentlyContinue
+        if ($stuck.Count -gt 0) { throw "the swap failed ($why), and $($stuck -join ', ') couldn't be put back: they are in $staging; move them into $ProgramDir by hand" }
+        Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+        throw "the swap failed ($why); the installed files were put back"
+    }
+    Remove-Item -LiteralPath $incoming -Recurse -Force -ErrorAction SilentlyContinue
+    if ($Rollback) {
+        Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+        Changed "the files of $installedVersion rolled back from dropped; $previous is left as it is (the version now installed)"
+        return
+    }
+    # The new files are in place from here: a rename that fails says where the replaced ones are.
+    $retired = "$previous.old-$guid"
+    $hadPrevious = Test-Path -LiteralPath $previous -PathType Container
+    try {
+        if ($hadPrevious) { Rename-Item -LiteralPath $previous -NewName (Split-Path -Leaf $retired) }
+        try { Rename-Item -LiteralPath $staging -NewName 'previous' }
+        catch { if ($hadPrevious) { Rename-Item -LiteralPath $retired -NewName 'previous' -ErrorAction SilentlyContinue }; throw }
+    } catch { throw "the new files are in place, but $previous couldn't be replaced ($($_.Exception.Message)): the files of $installedVersion they replaced are in $staging" }
+    if ($hadPrevious) { Remove-Item -LiteralPath $retired -Recurse -Force -ErrorAction SilentlyContinue }
+    Changed "the previous files ($installedVersion) kept as $previous"
+}
+
+# The scripts copied in from a downloaded zip keep its mark of the web, which RemoteSigned
+# refuses: taken off, as the operator who unpacked the package trusted it.
+function Unblock-Scripts {
+    foreach ($script in @(Get-ChildItem -LiteralPath $ProgramDir -File | Where-Object { $_.Extension -in '.ps1', '.psm1' })) { Unblock-File -LiteralPath $script.FullName }
+}
+
+# Whether the service runs now (a query that fails counts as running: the wait goes on).
+function Test-ServiceRunning {
+    try { $now = Get-InstalledService -Name $ServiceName } catch { return $true }
+    $null -ne $now -and "$($now.State)" -ne 'Stopped'
+}
+
+# The wait for the run in progress (W7.4 point 3 step 2): the record read every PollSeconds,
+# one line a minute, until it is gone, names another run than the first read (that run ended),
+# or the service isn't running (the new version's first start closes it); past the budget the
+# install stops with nothing changed.
+function Wait-ForNoRun([string]$Stage) {
+    $budget = $WaitMinutes * 60
+    $waited = 0.0
+    $said = -1
+    $first = $null
+    while ($true) {
+        $record = Get-RunRecord -Root $Root
+        if ($null -ne $record -and $null -eq $first) { $first = $record.RunId }
+        $running = if ($null -ne $record) { Test-ServiceRunning } else { $true }
+        $plan = Get-RunPlan -RecordPresent ($null -ne $record) -WaitedSeconds $waited -BudgetSeconds $budget -ServiceRunning $running -RunChanged ($null -ne $record -and $record.RunId -cne $first)
+        if ($plan -eq 'go') { return }
+        if ($WhatIfPreference) { Would "wait for run $($record.RunId) to end ($Stage)"; return }
+        if ($plan -eq 'stop') {
+            Stop-Install "run $($record.RunId) is still in progress after $WaitMinutes min ($Stage); rpworker doctor shows it. Give a longer -WaitMinutes, or stop the service (rpworker service stop) and run this again: the new version's first start closes a run the service stopped in (its own recovery)."
+        }
+        $minute = [int][Math]::Floor($waited / 60)
+        if ($minute -ne $said) { Say "waiting: run $($record.RunId) in progress for $minute min ($Stage; up to $WaitMinutes min)"; $said = $minute }
+        Start-Sleep -Seconds $PollSeconds
+        $waited += $PollSeconds
+    }
+}
+
 # ======================================================================================
 try {
     $ServiceSid = Get-ServiceSid -ServiceName $ServiceName
@@ -229,31 +364,113 @@ try {
         if (-not $AllowRemoteVeeam -and -not (Ask-YesNo 'Install anyway?')) { Stop-Install 'Veeam is not on this machine (give -AllowRemoteVeeam to install anyway).' }
     } else { Say 'ok: Veeam Backup for Microsoft 365 is on this machine' }
     $expectedCommandLine = Get-ServiceCommandLine -Exe $Exe
-    $service = Get-InstalledService -Name $ServiceName
+    try { $service = Get-InstalledService -Name $ServiceName }
+    catch { Stop-Install "the installed services couldn't be read ($($_.Exception.Message)); fix Windows Management Instrumentation (winmgmt) first." }
     $serviceState = Test-InstalledService -Service $service -ExpectedCommandLine $expectedCommandLine
-    if ($serviceState -eq 'other') { Stop-Install "the service $ServiceName is installed with another command line ($($service.PathName)); an upgrade in place is W7.3's: stop and uninstall it first (rpworker service stop; rpworker service uninstall)." }
+    if ($serviceState -eq 'other') { Stop-Install "the service $ServiceName is installed with another command line ($($service.PathName)), not this installer's; it is neither upgraded nor replaced: stop and uninstall it first (rpworker service stop; rpworker service uninstall, or that installation's Uninstall-RestoreProofWorker.ps1)." }
     Say "ok: service $ServiceName is $(if ($serviceState -eq 'ok') { 'installed from ' + $Exe } else { 'not installed' })"
 
-    # -- 2. the exe ---------------------------------------------------------------------
-    $files = @(Get-ChildItem -LiteralPath $Package -File | Where-Object { $_.Name -eq 'rpworker.exe' -or $_.Extension -eq '.dll' })
-    foreach ($file in $files) {
-        $target = Join-Path $ProgramDir $file.Name
-        if ((Test-Path -LiteralPath $target -PathType Leaf) -and (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -eq (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash) {
-            Say "ok: $target"; continue
+    # -- 2. the exe, its DLLs and the scripts; the upgrade (W7.4 point 3) ----------------------
+    $files = @(Get-ChildItem -LiteralPath $Package -File | Where-Object { $_.Name -eq 'rpworker.exe' -or $_.Extension -in '.dll', '.ps1', '.psm1' })
+    # A package without the uninstall script (0.1.0's carried the installer and its modules but
+    # not it) brings no script: its modules would break the installed uninstall script, and the
+    # Apps entry names that script. The installed scripts stay (the W7.3 review's second pass).
+    $keep = @()
+    if (@($files | Where-Object { $_.Name -eq 'Uninstall-RestoreProofWorker.ps1' }).Count -eq 0) {
+        $files = @($files | Where-Object { $_.Extension -notin '.ps1', '.psm1' })
+        if (Test-Path -LiteralPath $ProgramDir -PathType Container) {
+            $keep = @(Get-ChildItem -LiteralPath $ProgramDir -File | Where-Object { $_.Extension -in '.ps1', '.psm1' } | ForEach-Object { $_.Name })
         }
-        if ($serviceState -eq 'ok' -and (Test-Path -LiteralPath $target -PathType Leaf)) { Stop-Install "$target differs from the package's while the service is installed from it; an upgrade in place is W7.3's." }
-        if (-not $PSCmdlet.ShouldProcess($target, "copy from $($file.FullName)")) { Would "copy $($file.Name) to $ProgramDir"; continue }
-        if (-not (Test-Path -LiteralPath $ProgramDir -PathType Container)) { $null = New-Item -ItemType Directory -Path $ProgramDir }
-        Copy-Item -LiteralPath $file.FullName -Destination $target -Force
-        Changed "copied $($file.Name) to $ProgramDir"
     }
-    if (Test-Path -LiteralPath $Worker -PathType Leaf) {
-        $version = Invoke-Worker @('--version')
-        if ($version.Code -ne 0) { Stop-Install "$Worker --version failed: $(Get-FirstLine ($version.Err + $version.Out))" }
-        Say "ok: rpworker $($version.Out.Trim())"
+    # Which of the package's files are missing from the program folder, and which are there with
+    # another SHA-256, hashed once. Missing alone (a quarantined exe) is copied in again whatever
+    # -Upgrade says, as before W7.4; only another file is an upgrade.
+    try {
+        $missing = @()
+        $changed = @()
+        foreach ($file in $files) {
+            $target = Join-Path $ProgramDir $file.Name
+            if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { $missing += $file.Name }
+            elseif ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash) { $changed += $file.Name }
+        }
+        $differing = @(@($missing) + @($changed) | Sort-Object)
+    } catch { Stop-Install "a file of the package or of $ProgramDir couldn't be read ($($_.Exception.Message)); nothing was changed." }
+    try { $packageVersion = Get-WorkerVersion -Exe $packageExe } catch { Stop-Install "$($_.Exception.Message)" }
+    $installedVersion = ''
+    if (Test-Path -LiteralPath $Exe -PathType Leaf) { try { $installedVersion = Get-WorkerVersion -Exe $Exe } catch { $installedVersion = '' } }
+    $upgradePlan = Get-UpgradePlan -ServiceState $serviceState -InstalledVersion $installedVersion -PackageVersion $packageVersion -SameFiles ($changed.Count -eq 0) -Upgrade $Upgrade.IsPresent
+    $previous = Join-Path $ProgramDir 'previous'
+    $rollback = "pwsh -ExecutionPolicy Bypass -File `"$(Join-Path $ProgramDir 'Install-RestoreProofWorker.ps1')`" -Upgrade -Package `"$previous`""
+    $script:RollbackWhere = "in ${previous}: $rollback"
+    # A rollback is the package previous\ itself (as the rollback line gives it).
+    $isRollback = [string]::Equals([IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($Package)), [IO.Path]::GetFullPath($previous), [StringComparison]::OrdinalIgnoreCase)
+    $upgraded = $false
+    $swapped = $false
+    switch ($upgradePlan.Action) {
+        'stop' {
+            $what = if ($changed.Count -eq 1) { "$($changed[0]) differs" } else { "$($changed -join ', ') differ" }
+            $holds = if ($installedVersion) { "rpworker $installedVersion" } else { 'an rpworker whose version can''t be read' }
+            Stop-Install "$ProgramDir holds $holds and the package is $packageVersion$(if ($installedVersion -eq $packageVersion) { ' with other files' }) ($what) while the service is installed from it; give -Upgrade to replace $(if ($changed.Count -eq 1) { 'it' } else { 'them' }) (docs/upgrade.md)."
+        }
+        'same' {
+            if ($missing.Count -gt 0) { Say "note: $($missing -join ', ') missing from ${ProgramDir}: copied in again from the package" }
+            else { Say "ok: rpworker $packageVersion is installed already" }
+        }
+        'install' { if ($Upgrade) { Say 'note: -Upgrade given and no service is installed: a plain install' } }
+        'swap' {
+            Say $upgradePlan.Line
+            Wait-ForNoRun 'the upgrade'
+            if ($PSCmdlet.ShouldProcess($ServiceName, 'rpworker service stop')) {
+                if (Test-Path -LiteralPath $Worker -PathType Leaf) {
+                    $stop = Invoke-Worker @('service', 'stop')
+                    if ($stop.Code -ne 0) { Stop-Install "rpworker service stop failed: $(Get-FirstLine ($stop.Err + $stop.Out))" }
+                    $script:StoppedFor = 'upgrade'
+                    if ($stop.Out -match '(?m)^stopped ') { Changed "rpworker service stop ($(Get-FirstLine $stop.Out)), for the upgrade" } else { Say "ok: $(Get-FirstLine $stop.Out)" }
+                } else {
+                    $script:StoppedFor = 'upgrade'
+                    Say "note: no rpworker at ${Worker}: the service can't be running it; nothing to stop"
+                }
+                if ($null -ne (Get-RunRecord -Root $Root)) { Say "note: a run was taken as the service stopped; the new version's first start closes it, waits for Veeam and cleans the restore targets (the service's own recovery)" }
+                try { Invoke-Swap -Files $files -Keep $keep -Rollback $isRollback } catch { Stop-Install "$($_.Exception.Message)" }
+                Unblock-Scripts
+                $upgraded = $true
+            } else {
+                Would 'rpworker service stop'
+                Would "move the installed files to $previous$(if ($keep.Count) { " (but $($keep -join ', '), which the package doesn't carry)" }) and copy the package's in: $($differing -join ', ')"
+            }
+            $swapped = $true
+        }
+    }
+    if (-not $swapped) {
+        foreach ($file in $files) {
+            $target = Join-Path $ProgramDir $file.Name
+            if ($file.Name -notin $differing) { Say "ok: $target"; continue }
+            if (-not $PSCmdlet.ShouldProcess($target, "copy from $($file.FullName)")) { Would "copy $($file.Name) to $ProgramDir"; continue }
+            if (-not (Test-Path -LiteralPath $ProgramDir -PathType Container)) { $null = New-Item -ItemType Directory -Path $ProgramDir }
+            Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+            if ($file.Extension -in '.ps1', '.psm1') { Unblock-File -LiteralPath $target }
+            Changed "copied $($file.Name) to $ProgramDir"
+        }
+    }
+    $version = $packageVersion
+    if (Test-Path -LiteralPath $Exe -PathType Leaf) {
+        try { $version = Get-WorkerVersion -Exe $Exe } catch { Stop-Install "$($_.Exception.Message)" }
+        Say "ok: rpworker $version"
     } elseif ($WhatIfPreference) {
-        Say "would: run $Worker --version"
-    } else { Stop-Install "no rpworker at $Worker." }
+        Say "would: run $Exe --version"
+    } else { Stop-Install "no rpworker at $Exe." }
+
+    # -- 2b. the Apps & features entry (W7.3 point 2) --------------------------------------------
+    $entryName = Get-UninstallEntryName
+    $entry = Get-UninstallEntry -Name $entryName
+    $installDate = [DateTime]::UtcNow.ToString('yyyyMMdd', [Globalization.CultureInfo]::InvariantCulture)
+    if ($null -ne $entry -and $entry.ContainsKey('InstallDate') -and "$($entry['InstallDate'])" -match '^\d{8}$') { $installDate = "$($entry['InstallDate'])" }
+    $wantedEntry = New-UninstallEntryValues -Version $version -ProgramDir $ProgramDir -Pwsh (Get-PwshPath) -InstallDate $installDate
+    $entryOk = $null -ne $entry
+    if ($entryOk) { foreach ($key in $wantedEntry.Keys) { if (-not $entry.ContainsKey($key) -or "$($entry[$key])" -ne "$($wantedEntry[$key])") { $entryOk = $false } } }
+    if ($entryOk) { Say "ok: Apps & features entry (RestoreProof Worker $version)" }
+    elseif ($PSCmdlet.ShouldProcess("Apps & features: $entryName", 'write')) { Set-UninstallEntry -Name $entryName -Values $wantedEntry; Changed "Apps & features entry (RestoreProof Worker $version)" }
+    else { Would "write the Apps & features entry (RestoreProof Worker $version)" }
 
     # -- 3. the folders and their ACLs ------------------------------------------------------
     $wanted = Get-WantedAcls -ServiceSid $ServiceSid -AlsoFullControl $AlsoFullControl
@@ -416,6 +633,7 @@ try {
     $granted = @()
     if ($configKept -or -not $WhatIfPreference) {
         $list = Invoke-Worker @('veeam', 'list', '--config', $ConfigPath)
+        if ($list.Code -eq 3) { Stop-Install "rpworker veeam list failed: $(Get-FirstLine ($list.Err + $list.Out)) (Veeam wasn't reached: run the installer again once its REST service answers)." }
         if ($list.Code -ne 0) { Stop-Install "rpworker veeam list failed: $(Get-FirstLine ($list.Err + $list.Out)) (the Veeam URL, its certificate or the account: run the installer again with -Replace to give them again)." }
         $organisations = @(Read-OrganisationThumbprints -Text $list.Out)
         Say "ok: rpworker veeam list ($($organisations.Count) organisation(s))"
@@ -487,12 +705,14 @@ try {
         if ($PSCmdlet.ShouldProcess($ServiceName, 'rpworker service stop')) {
             $stop = Invoke-Worker @('service', 'stop')
             if ($stop.Code -ne 0) { Stop-Install "rpworker service stop failed: $(Get-FirstLine ($stop.Err + $stop.Out))" }
+            if (-not $script:StoppedFor) { $script:StoppedFor = 'config' }
             if ($stop.Out -match '(?m)^stopped ') { Changed "rpworker service stop ($(Get-FirstLine $stop.Out)), so the start takes the new config and account" } else { Say "ok: $(Get-FirstLine $stop.Out)" }
         } else { Would 'rpworker service stop' }
     }
     if ($PSCmdlet.ShouldProcess($ServiceName, 'rpworker service start')) {
         $start = Invoke-Worker @('service', 'start')
         if ($start.Code -ne 0) { Stop-Install "rpworker service start failed: $(Get-FirstLine ($start.Err + $start.Out))" }
+        $script:StoppedFor = ''
         if ($start.Out -match '(?m)^started ') { Changed "rpworker service start ($(Get-FirstLine $start.Out))" } else { Say "ok: $(Get-FirstLine $start.Out)" }
     } else { Would 'rpworker service start' }
 
@@ -500,6 +720,8 @@ try {
     $seconds = [int][Math]::Ceiling(([DateTime]::UtcNow - $lastAnswerAt).TotalSeconds)
     Say "changes: $script:Changes"
     Say "installed in $seconds s (from the last answer typed)"
+    if ($upgraded -and $isRollback) { Say "rolled back $installedVersion -> $packageVersion; $previous holds $packageVersion too (to go forward again: the newer package's installer with -Upgrade)" }
+    elseif ($upgraded) { Say "upgraded $installedVersion -> $packageVersion; the previous version is in $previous (rollback: $rollback)" }
     if ($registration) { Say "worker $($registration.WorkerId) key $($registration.KeyId)" }
     if ($granted.Count -gt 0) { Say "organisation certificates granted: $($granted -join ', ')" }
     Say "next: rpworker graph certificate > worker-graph.pem (the public half for each client's tenant setup); manage.py create-connector --worker-id $(if ($registration) { $registration.WorkerId } else { '<worker id>' }) ..."

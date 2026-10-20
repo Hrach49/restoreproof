@@ -62,11 +62,13 @@ OutboxCommandEnv default_outbox_command_env();
 // `rpworker outbox ...`. `args` is what follows "outbox", in UTF-8.
 //
 // `flush [--config <path>] [--vault <file>] [--outbox <root>] [--record
-// <dir>]`: one pass of rp::Outbox::flush with rp::CloudUploader on config's
-// cloud_url and the vault's cloud_api_token (W5.1; without it "outbox error:
-// cloud_api_token is not in the vault; nothing was sent (rpworker cloud
+// <dir>] [--now]`: one pass of rp::Outbox::flush with rp::CloudUploader on
+// config's cloud_url and the vault's cloud_api_token (W5.1; without it "outbox
+// error: cloud_api_token is not in the vault; nothing was sent (rpworker cloud
 // register)", 1, before the mutex), told the token is new (an operator's
-// flush tries a run a 401 kept at once). On `out`:
+// flush tries a run a 401 kept at once). --now (W7.3's review): every queued
+// run is due, whatever its next attempt says (the uninstall's last flush,
+// before the outbox is deleted). On `out`:
 // each of the flush's lines ("pruned <run>", "sent <run>", "kept <run>:
 // <code>; attempt <n>, next at <time>", "kept <run>: folder_changed", "kept
 // <run>: not_read", "waiting <run>: next at <time>", "moved <run>", "failed

@@ -1756,6 +1756,73 @@ PowerShell 7 on this laptop (the package installed by the script around the W5.1
 stack and plan; evidence `docs/api/veeam-lab/w7.1-done-when.txt`), and `w71-vm.ps1` for the
 clean Server 2022 VM (`docs/decisions.md` 2026-10-16 point 11).
 
+### The uninstall and the upgrade (W7.3, W7.4)
+
+`Uninstall-RestoreProofWorker.ps1` and the installer's `-Upgrade` (`docs/decisions.md`
+2026-10-19, "W7.3 (#82) and W7.4 (#83)"; `docs/upgrade.md`) are tested the same way, in the
+same uv project, with the same fakes grown for them: the fake Worker answers `service
+uninstall`, `outbox flush` and `outbox list` (`outbox-list.txt` is what `list` prints; the
+next `flush --now` "sends" its runs; `fail-outbox-flush`), `cloud revoke` (`revoke-401`,
+`revoke-503`); the fake machine reads an exe's version from the dummy exe's own bytes (`MZ
+fake worker <version>`, written by `InstallLab.write_package`), answers the run record from
+`machine.json` (`runInProgress` for ever, `runInProgressPolls` for the first n reads, the flag
+`record-after-stop` for a run taken in the window between the wait and the stop), keeps the
+Apps & features entry in `uninstall-entry.json`, and records every `Remove-FileOverwritten`
+in `overwritten.log` before deleting the file (`unremovable` names a file that throws as a held
+one does). Both scripts take `-PollSeconds` (the tests give 1) and `-WaitMinutes` (a fraction,
+for a budget of seconds).
+
+- `test_rules.py`: `Compare-Version`, `Get-UpgradePlan` (the table of service state, versions,
+  same files and `-Upgrade` to `install`/`same`/`swap`/`stop` and the line's word),
+  `Get-RunPlan`, `Get-UninstallPlan` (what is overwritten, deleted, left, and `-Full`),
+  `Remove-FileReadRule`, `New-UninstallEntryValues`, `Read-OutboxSummary`, `Get-RevokeOutcome`.
+- `test_machine.py`: the real `Remove-FileOverwritten` on a temporary file through `-KeepFile`
+  (the same length, no 64-byte window of the original left, then deleted; an empty file; a file
+  a reader holds refused and left), the real `Get-WorkerVersion` on the fake Worker and on a
+  `.cmd` that prints no version or exits 1, the real `Get-RunRecord` on a temporary root (no
+  record, a record's `run_id`, a file that isn't one, an id that isn't a name).
+- `test_install_script.py`, the upgrade: the wait's line while a run is in progress, the stop,
+  the swap with `previous\` holding exactly the old files and the folder exactly the package's,
+  the vault and the data folder byte for byte the same, the Apps entry's version, the rollback
+  from `previous\` said as a downgrade; the same version with other bytes; the same files
+  stopping no service; `-Upgrade` without a service a plain install; a run that never ends
+  stopping with nothing changed (and `-WaitMinutes 0` at once); a run taken in the window left
+  to the new version's start; a config the new version refuses naming the rollback; `-WhatIf`
+  swapping nothing. The first run now copies the five scripts and writes the Apps entry, and
+  reads the version through the machine module (the package's exe can't be run in a test).
+- `test_uninstall_script.py`: refusals with nothing removed (not elevated; a service from
+  another exe; a run that never ends, the service left installed and running; a start after
+  the stop's caught record that fails; `service uninstall` failing after the Cloud was told);
+  the whole in order (the Worker's seven calls, every file of `vault.bin` and the five folders
+  in `overwritten.log` and gone, `logs\` and a lab's own folder left and named, the config
+  deleted, the program folder and the entry gone, the summary's lines, no `securely`); `-Full`
+  taking the log and the root; `-WhatIf` running only the two reads; the unsent runs named;
+  the Cloud not reached naming `manage.py revoke-worker`; a token the Cloud no longer knows
+  `ok:`; a Worker never registered neither sent nor revoked; `veeam list` failing leaving the
+  key-file entries named; a held file one `problem:` line and exit 1 (and the root kept under
+  `-Full`); no service and no exe still removing the files; a second uninstall `changes: 0`.
+- `test_script_text.py`: the installer's one `Remove-Item` (the previous version's files) and
+  the uninstall script's text (strict, asks nothing, no secret, `Set-Location $env:SystemRoot`,
+  nothing removed before `service uninstall`, no "securely").
+- The second review's (`docs/decisions.md` 2026-10-20): `test_machine.py` holds the real
+  overwrite to a hard link (`os.link`), a junction on the way (`mklink /J`), a symbolic link
+  (skipped where the account may not make one) and a path outside `-Within`, each refused with
+  the target's bytes unchanged. The fakes grew `serviceQueryFails`, `runSequence` (one run id
+  or null per read, for runs back to back), `elevateRefused`, `fail-vault-list`,
+  `revoke-unwritable` and `fail-veeam-list-unreachable`, and the fake flush keeps a listed run
+  `waiting` unless `--now`. The script tests make real junctions under the temporary root and
+  hold a folder as another process's current folder (`subprocess.Popen(..., cwd=...)`);
+  `test_install_script.py` runs the installer once through `pwsh -File ... -WhatIf` (the
+  modules then see WhatIf, which `& script` doesn't show) and once under `th-TH` (`run(culture=)`);
+  `test_script_text.py` holds every script and module to the script-block form of
+  `ForEach-Object` and every overwrite to `-Within $Root`.
+
+The live Done-when: `docs/api/veeam-lab/w7.3-w7.4-harness/w73-w74-live.ps1` on this laptop
+(the `0.1.0` package installed, a run, `-Upgrade` to `0.1.1`, the rollback and the upgrade
+again, the uninstall; evidence `docs/api/veeam-lab/w7.3-w7.4-done-when.txt`). The 0.1.0
+package is the `ci` build of the commit before the version bump, kept under
+`%LOCALAPPDATA%\RestoreProof\lab\packages\`.
+
 ## Cloud
 
 `cloud/` is the FastAPI backend (C5.1), its data model (C5.2), its repository layer (C5.3), its

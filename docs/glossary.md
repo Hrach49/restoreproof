@@ -450,6 +450,32 @@ may do is computed by Windows' access check for the service's SID, never by runn
 one missing grant is one problem line. `--json` is the support file: ids, results and codes,
 never a text, a path or a tenant value (`docs/worker-config.md` "`rpworker doctor`").
 
+**Upgrade (`Install-RestoreProofWorker.ps1 -Upgrade`, W7.4).** The installer run from a newer
+package over an installed Worker: it waits for a run in progress to end (`state\running.json`
+gone, up to `-WaitMinutes`), stops the service, moves the installed files to **`previous\`**
+(`%ProgramFiles%\RestoreProof\previous\`, the version before this one, emptied at every
+upgrade) and copies the package's in, then starts the service; the config, the vault, the
+grants and the registration are not touched. The **rollback** is the same switch with
+`-Package "<ProgramDir>\previous"`, which leaves `previous\` as it is (the same line run again
+goes on, never back to the newer version). The version is the one number in
+`worker/CMakeLists.txt`, bumped by the PR that ships a package (`docs/upgrade.md`).
+
+**Uninstall (`Uninstall-RestoreProofWorker.ps1`, W7.3).** Takes away what the installer put on
+the machine and what the service made: after the same wait for a run in progress and the
+stop, one `outbox flush --now`, `service uninstall`, `rpworker cloud revoke`, the service
+account's entries off Veeam's key files, then `vault.bin` and the run folders (each file
+**overwritten once, then deleted** through one checked handle, a link among them removed and
+never followed: it defeats an undelete tool and guarantees no erasure on an SSD or inside a
+snapshot; the secrets are worthless once revoked), the config, the exe folder and the Apps &
+features entry; `logs\` and the data folder stay unless **`-Full`**. Nothing is removed and
+nothing told before the service is uninstalled.
+
+**`rpworker cloud revoke`.** The Worker revoking itself (W7.3): one `POST
+/v1/workers/self/revoke` with its API token; on 204 (or the Cloud's own 401: it no longer knows
+the token) the token leaves the vault; `state\worker.json` stays, and a config naming another
+Cloud than it does sends nothing. Run by the uninstall; by hand
+when a Worker is retired without it.
+
 **Service log (`worker.log`).** The running service's log,
 `%ProgramData%\RestoreProof\logs\worker.log`: five files of 10 MiB at most, every line
 through `redact()`, `SECURITY: ` lines written at every `log_level`. The commands log to

@@ -10,7 +10,7 @@ from cryptography import x509
 
 from fake_rpworker import VEEAM_LIST
 from install_lab import self_signed
-from pwsh import evaluate, ps_string, run_json, with_module
+from pwsh import evaluate, ps, ps_string, run_json, with_module
 
 SID = "S-1-5-80-2410341749-1432216181-1010774729-1630443783-2912569396"  # sc showsid RestoreProof
 ACL_SETUP = """
@@ -305,9 +305,15 @@ def test_two_organisations_two_certificates_and_none():
 
 def test_a_table_without_the_column_or_no_table_is_refused():
     old = "  ORGANIZATION                     BACKUP TIME                   EX  SP  OD  TM  LONG-TERM  RESTORE POINT ID\n  x  (no restore points)\n"
-    rows = evaluate([f"Read-OrganisationThumbprints -Text {ps_string(old)}", "Read-OrganisationThumbprints -Text ''",
-                     "Read-OrganisationThumbprints -Text 'no organisations in Veeam'"])
+    rows = evaluate([f"Read-OrganisationThumbprints -Text {ps_string(old)}", "Read-OrganisationThumbprints -Text ''"])
     assert all(isinstance(r, dict) and "older Worker" in r["throws"] for r in rows)
+
+
+def test_a_veeam_with_no_organisation_is_none_never_a_refusal():
+    # What veeam_command.cpp prints for an empty listing (the W7.3 review's second pass: the
+    # uninstall died at step 8 on it, after the service was gone).
+    text = "no organisations in Veeam\n\n0 organisation(s), 0 restore point(s); * = veeam_org_name\n"
+    assert run_json(with_module(f"@(Read-OrganisationThumbprints -Text {ps_string(text)}).Count")) == 0
 
 
 def test_the_key_file_candidates_are_the_two_folders_of_w412():
@@ -491,3 +497,135 @@ def test_the_wanted_acls_are_the_shared_vector():
         for f in vector["folders"]
     ]
     assert wanted == expected
+
+
+# --- versions, the upgrade and the uninstall (W7.3 and W7.4, decision 2026-10-19) ---------
+
+
+def test_versions_compare_number_by_number_and_a_non_version_is_refused():
+    rows = evaluate([
+        "Compare-Version -A '0.1.0' -B '0.1.1'", "Compare-Version -A '0.1.1' -B '0.1.0'", "Compare-Version -A '0.1.1' -B '0.1.1'",
+        "Compare-Version -A '0.1.10' -B '0.1.9'", "Compare-Version -A '1.0.0' -B '0.9.9'", "Compare-Version -A '0.1' -B '0.1.0'",
+        "Compare-Version -A '0.1.0 ' -B '0.1.0'", "Test-VersionText '0.1.0'", "Test-VersionText 'v0.1.0'", "Test-VersionText ''",
+    ])
+    assert rows[:5] == [-1, 1, 0, 1, 1]
+    assert "throws" in rows[5] and "throws" in rows[6]
+    assert rows[7:] == [True, False, False]
+
+
+@pytest.mark.parametrize("state, installed, package, same, upgrade, action, word", [
+    ("absent", "", "0.1.1", False, False, "install", ""),
+    ("absent", "", "0.1.1", False, True, "install", ""),
+    ("ok", "0.1.0", "0.1.0", True, False, "same", ""),
+    ("ok", "0.1.0", "0.1.0", True, True, "same", ""),
+    ("ok", "0.1.0", "0.1.1", False, False, "stop", ""),
+    ("ok", "0.1.0", "0.1.1", False, True, "swap", ""),
+    ("ok", "0.1.0", "0.1.0", False, True, "swap", "the files differ"),
+    ("ok", "0.1.1", "0.1.0", False, True, "swap", "a downgrade: a rollback"),
+    ("ok", "", "0.1.1", False, True, "swap", ""),
+    ("ok", "?", "0.1.1", False, True, "swap", ""),
+])
+def test_the_upgrade_plan(state, installed, package, same, upgrade, action, word):
+    plan = run_json(with_module(
+        f"Get-UpgradePlan -ServiceState '{state}' -InstalledVersion '{installed}' -PackageVersion '{package}' -SameFiles {ps(same)} -Upgrade {ps(upgrade)}"
+    ))
+    assert plan["Action"] == action and plan["Word"] == word
+    assert plan["Line"] == f"upgrade: {installed} -> {package}" + (f" ({word})" if word else "")
+
+
+def test_the_run_plan_waits_while_a_record_is_there_within_the_budget():
+    rows = evaluate([
+        "Get-RunPlan -RecordPresent $false -WaitedSeconds 0 -BudgetSeconds 0",
+        "Get-RunPlan -RecordPresent $true -WaitedSeconds 0 -BudgetSeconds 1800",
+        "Get-RunPlan -RecordPresent $true -WaitedSeconds 1790 -BudgetSeconds 1800",
+        "Get-RunPlan -RecordPresent $true -WaitedSeconds 1800 -BudgetSeconds 1800",
+        "Get-RunPlan -RecordPresent $true -WaitedSeconds 0 -BudgetSeconds 0",
+    ])
+    assert rows == ["go", "wait", "wait", "stop", "stop"]
+
+
+def test_the_run_plan_goes_for_a_stopped_service_and_for_another_run():
+    # A record nothing moves on (the service stopped mid-run) and runs back to back never end a
+    # wait otherwise (the W7.3 review's second pass).
+    rows = evaluate([
+        "Get-RunPlan -RecordPresent $true -WaitedSeconds 0 -BudgetSeconds 1800 -ServiceRunning $false",
+        "Get-RunPlan -RecordPresent $true -WaitedSeconds 0 -BudgetSeconds 1800 -RunChanged $true",
+        "Get-RunPlan -RecordPresent $true -WaitedSeconds 1800 -BudgetSeconds 1800 -ServiceRunning $false",
+        "Get-RunPlan -RecordPresent $true -WaitedSeconds 10 -BudgetSeconds 1800 -ServiceRunning $true -RunChanged $false",
+    ])
+    assert rows == ["go", "go", "go", "wait"]
+
+
+def test_the_uninstall_plan_names_what_goes_what_is_overwritten_and_what_is_left():
+    present = ["vault.bin", "config.json", "veeam-rest.pem", "cloud-ca.pem", "state", "runs", "outbox", "sent", "failed", "logs", "w48", "canaries", "notes.txt"]
+    plan = run_json(with_module(f"Get-UninstallPlan -Present {ps(present)} -Full $false"))
+    assert plan["Overwrite"] == ["vault.bin", "state", "runs", "outbox", "sent", "failed"]
+    assert plan["Delete"] == ["config.json", "veeam-rest.pem", "cloud-ca.pem"]
+    assert plan["Logs"] == [] and plan["Left"] == ["w48", "canaries", "notes.txt"] and plan["RemoveRoot"] is False
+    full = run_json(with_module(f"Get-UninstallPlan -Present {ps(present)} -Full $true"))
+    assert full["Logs"] == ["logs"] and full["Left"] == [] and full["RemoveRoot"] is True
+    empty = run_json(with_module("Get-UninstallPlan -Present @() -Full $false"))
+    assert empty["Overwrite"] == [] and empty["Delete"] == [] and empty["Left"] == []
+    # Names as Windows compares them.
+    upper = run_json(with_module("Get-UninstallPlan -Present @('VAULT.BIN', 'Logs') -Full $true"))
+    assert upper["Overwrite"] == ["VAULT.BIN"] and upper["Logs"] == ["Logs"]
+    # vault.bin first whatever order the folder lists (Get-ChildItem's is by name).
+    listed = run_json(with_module("Get-UninstallPlan -Present @('failed', 'outbox', 'runs', 'sent', 'state', 'vault.bin') -Full $false"))
+    assert listed["Overwrite"] == ["vault.bin", "state", "runs", "outbox", "sent", "failed"]
+
+
+def test_remove_file_read_rule_takes_every_allow_of_the_sid_and_leaves_the_rest():
+    rows = run_json(with_module(ACL_SETUP + """
+$acl = [Security.AccessControl.FileSecurity]::new()
+$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]'S-1-5-18', 'FullControl', 'Allow'))
+$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]'S-1-5-80-1-2-3-4-5', 'Read', 'Allow'))
+$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]'S-1-5-80-1-2-3-4-5', 'Write', 'Allow'))
+$after = Remove-FileReadRule -Acl $acl -Sid 'S-1-5-80-1-2-3-4-5'
+,@($after.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]) | ForEach-Object { "$($_.IdentityReference.Value) $($_.FileSystemRights)" })
+"""))
+    assert rows == ["S-1-5-18 FullControl"]
+
+
+def test_the_apps_entry_values_and_their_refusals():
+    values = run_json(with_module(
+        "New-UninstallEntryValues -Version '0.1.1' -ProgramDir 'C:\\Program Files\\RestoreProof' -Pwsh 'C:\\Program Files\\PowerShell\\7\\pwsh.exe' -InstallDate '20261019'"
+    ))
+    assert list(values) == ["DisplayName", "DisplayVersion", "Publisher", "InstallLocation", "InstallDate", "DisplayIcon", "UninstallString", "NoModify", "NoRepair"]
+    assert values["DisplayName"] == "RestoreProof Worker" and values["DisplayVersion"] == "0.1.1" and values["Publisher"] == "RestoreProof"
+    assert values["InstallLocation"] == "C:\\Program Files\\RestoreProof" and values["DisplayIcon"] == "C:\\Program Files\\RestoreProof\\rpworker.exe"
+    # -Elevate (Settings starts it unelevated), -NoExit (its lines stay readable), Bypass (a
+    # downloaded zip's mark of the web): the W7.3 review's second pass.
+    assert values["UninstallString"] == '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoProfile -ExecutionPolicy Bypass -NoExit -File "C:\\Program Files\\RestoreProof\\Uninstall-RestoreProofWorker.ps1" -Elevate'
+    assert values["NoModify"] == 1 and values["NoRepair"] == 1 and values["InstallDate"] == "20261019"
+    rows = evaluate([
+        "New-UninstallEntryValues -Version 'x' -ProgramDir 'C:\\p' -Pwsh 'C:\\pwsh.exe' -InstallDate '20261019'",
+        "New-UninstallEntryValues -Version '0.1.1' -ProgramDir 'C:\\p' -Pwsh 'C:\\pwsh.exe' -InstallDate '2026-10-19'",
+        "New-UninstallEntryValues -Version '0.1.1' -ProgramDir 'C:\\p\"q' -Pwsh 'C:\\pwsh.exe' -InstallDate '20261019'",
+        "Get-UninstallEntryName",
+    ])
+    assert all("throws" in r for r in rows[:3]) and rows[3] == "RestoreProofWorker"
+
+
+def test_the_outbox_summary_is_read_from_the_last_line_and_the_rows():
+    text = ("RUN              QUEUED                ATTEMPTS  NEXT                  LAST_ERROR          TIMESTAMP\n"
+            "w46-done-when-1  2026-10-07T11:56:44Z  2         2026-10-07T12:40:10Z  upload_unreachable  timestamped\n"
+            "w46-done-when-2  2026-10-07T12:31:05Z  0         -                     -                   not_timestamped tsa_unreachable\n"
+            "2 queued, 0 sent, 1 failed\n")
+    summary = run_json(with_module(f"Read-OutboxSummary -Text {ps_string(text)}"))
+    assert summary["Queued"] == 2 and summary["Sent"] == 0 and summary["Failed"] == 1
+    assert summary["Runs"] == ["w46-done-when-1", "w46-done-when-2"]
+    flush = run_json(with_module(f"Read-OutboxSummary -Text {ps_string('sent abc' + chr(10) + '0 queued, 1 sent, 0 failed' + chr(10))}"))
+    assert flush["Queued"] == 0 and flush["Sent"] == 1 and flush["Runs"] == []
+    assert run_json(with_module("if ($null -eq (Read-OutboxSummary -Text 'outbox error: something')) { 'none' }")) == "none"
+
+
+def test_the_revoke_outcome_by_exit_code():
+    assert evaluate(["Get-RevokeOutcome -Code 0", "Get-RevokeOutcome -Code 2", "Get-RevokeOutcome -Code 3", "Get-RevokeOutcome -Code 4", "Get-RevokeOutcome -Code 1"]) == \
+        ["revoked", "unknown", "unreachable", "failed", "failed"]
+    # Exit 1 after the Cloud's answer, the vault alone failing, is what the Cloud said.
+    revoked = "cloud revoke: the Cloud revoked this Worker, but the API token couldn't be removed from the vault (rpworker vault remove cloud_api_token)"
+    unknown = "cloud revoke: the Cloud doesn't know this token (revoked already, or never this Cloud's); it couldn't be removed from the vault (rpworker vault remove cloud_api_token)"
+    other = "config error: cloud_api_token is not in the vault; this Worker is not registered"
+    assert evaluate([f"Get-RevokeOutcome -Code 1 -Err {ps_string(revoked)}", f"Get-RevokeOutcome -Code 1 -Err {ps_string(unknown)}",
+                     f"Get-RevokeOutcome -Code 1 -Err {ps_string(other)}", f"Get-RevokeOutcome -Code 4 -Err {ps_string(revoked)}"]) == \
+        ["revoked", "unknown", "failed", "failed"]

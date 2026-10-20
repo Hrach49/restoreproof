@@ -9,14 +9,15 @@ import ctypes
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from fake_rpworker import KEY_ID, THUMBPRINT, WORKER_ID
-from install_lab import (ANSWERS, PASSWORD, SERVICE, TOKEN, USERNAME, InstallLab, acl_lines, assert_no_secret,
+from install_lab import (ANSWERS, PASSWORD, SCRIPTS, SERVICE, TOKEN, USERNAME, InstallLab, acl_lines, assert_no_secret,
                          assert_no_secret_argument, current_user_sid, explicit_rules, lines, self_signed, sha1_hex)
-from pwsh import ps_string, run, run_json, with_module
+from pwsh import FAKE_MACHINE, SCRIPT, ps_string, run, run_json, with_module
 
 SERVICE_SID = None
 
@@ -61,7 +62,7 @@ def test_a_service_from_another_exe_stops_before_anything(tmp_path):
     lab = InstallLab(tmp_path, installed_service={"pathName": '"C:\\elsewhere\\rpworker.exe" service run', "state": "Running"})
     result = lab.run()
     assert result.returncode != 0
-    assert "installed with another command line" in result.stderr and "W7.3" in result.stderr
+    assert "installed with another command line" in result.stderr and "neither upgraded nor replaced" in result.stderr
     assert lab.argv() == [] and not lab.program.exists()
 
 
@@ -262,21 +263,22 @@ def test_the_first_run_does_the_twelve_steps_in_order_and_puts_no_secret_anywher
 
     # The order of what the Worker was asked.
     commands = lab.commands()
-    assert commands[0] == "--version"
-    assert commands[1] == f"config check --config {lab.root / 'config.json'}"
-    assert commands[2] == "vault list"
-    assert commands[3:6] == ["vault set veeam_username", "vault set veeam_password", "vault set cloud_install_token"]
-    assert commands[6] == f"vault grant {sid}"
-    assert commands[7] == "signer new-key"
+    assert commands[0] == f"config check --config {lab.root / 'config.json'}"
+    assert commands[1] == "vault list"
+    assert commands[2:5] == ["vault set veeam_username", "vault set veeam_password", "vault set cloud_install_token"]
+    assert commands[5] == f"vault grant {sid}"
+    assert commands[6] == "signer new-key"
     # New-WorkerGraphCertificate.ps1's own calls
-    assert commands[8] == "vault list"
-    assert commands[9:11] == ["vault set graph_cert_pfx_base64", "vault set graph_cert_password"]
-    assert commands[11] == "graph certificate"
-    assert commands[12] == f"veeam list --config {lab.root / 'config.json'}"
-    assert commands[13] == "service install"
-    assert commands[14] == "cloud register --name fake-host-worker"
-    assert commands[15] == "service start"
-    assert len(commands) == 16
+    assert commands[7] == "vault list"
+    assert commands[8:10] == ["vault set graph_cert_pfx_base64", "vault set graph_cert_password"]
+    assert commands[10] == "graph certificate"
+    assert commands[11] == f"veeam list --config {lab.root / 'config.json'}"
+    assert commands[12] == "service install"
+    assert commands[13] == "cloud register --name fake-host-worker"
+    assert commands[14] == "service start"
+    assert len(commands) == 15
+    # The version by the machine module (W7.4): the package's exe, then the installed one.
+    assert [l for l in lab.machine_log() if l.startswith("Get-WorkerVersion")] == [f"Get-WorkerVersion {lab.package / 'rpworker.exe'}", f"Get-WorkerVersion {lab.program / 'rpworker.exe'}"]
     assert_no_secret_argument(lab)
     assert_no_secret(result.stdout + result.stderr)
     assert lab.vault()["veeam_username"] == USERNAME
@@ -288,6 +290,14 @@ def test_the_first_run_does_the_twelve_steps_in_order_and_puts_no_secret_anywher
     assert (lab.program / "rpworker.exe").read_bytes() == (lab.package / "rpworker.exe").read_bytes()
     assert (lab.program / "fake.dll").read_bytes() == (lab.package / "fake.dll").read_bytes()
     assert not (lab.program / "README.txt").exists()
+    # W7.3 point 2: the scripts go with the exe, and the Apps & features entry names the version.
+    for name in SCRIPTS:
+        assert (lab.program / name).read_bytes() == (lab.package / name).read_bytes()
+    entry = lab.entry()
+    assert entry["DisplayName"] == "RestoreProof Worker" and entry["DisplayVersion"] == "0.1.0"
+    assert entry["InstallLocation"] == str(lab.program) and entry["NoModify"] == 1 and entry["NoRepair"] == 1
+    assert entry["UninstallString"] == f'"C:\\fake\\pwsh\\pwsh.exe" -NoProfile -ExecutionPolicy Bypass -NoExit -File "{lab.program / "Uninstall-RestoreProofWorker.ps1"}" -Elevate'
+    assert "change: Apps & features entry (RestoreProof Worker 0.1.0)" in out
     for name in ("state", "runs", "outbox", "sent", "failed", "logs"):
         assert (lab.root / name).is_dir()
     config = lab.config()
@@ -318,7 +328,7 @@ def test_the_first_run_does_the_twelve_steps_in_order_and_puts_no_secret_anywher
 
     # The lines.
     changes = [line for line in out if line.startswith("change: ")]
-    assert changes[0] == f"change: copied rpworker.exe to {lab.program}" or changes[0] == f"change: copied fake.dll to {lab.program}"
+    assert changes[0].startswith("change: copied ") and changes[0].endswith(f" to {lab.program}")
     assert any(line.startswith("change: ACL of " + str(lab.root)) for line in changes)
     assert f"change: wrote {lab.root / 'config.json'}" in changes
     assert "change: rpworker vault set veeam_password" in changes
@@ -347,8 +357,9 @@ def test_the_second_run_changes_nothing_and_asks_nothing(tmp_path):
     assert "changes: 0" in out
     assert not any(line.startswith("change: ") for line in out)
     after = lab.commands()[before:]
-    assert after == ["--version", f"config check --config {lab.root / 'config.json'}", "vault list", f"vault grant {service_sid()}",
+    assert after == [f"config check --config {lab.root / 'config.json'}", "vault list", f"vault grant {service_sid()}",
                      f"veeam list --config {lab.root / 'config.json'}", "service start"]
+    assert "ok: rpworker 0.1.0 is installed already" in out and "ok: Apps & features entry (RestoreProof Worker 0.1.0)" in out
     assert f"ok: service {SERVICE} is installed from {lab.program / 'rpworker.exe'}" in out
     assert f"ok: {lab.root / 'config.json'} (kept; its values are not asked again)" in out
     assert "ok: cloud_api_token is in the vault (registered already)" in out
@@ -363,8 +374,9 @@ def test_whatif_writes_nothing(tmp_path):
     assert result.returncode == 0, result.stderr
     out = lines(result)
     assert not lab.root.exists() and not lab.program.exists()
-    # The tests' Worker is there whether copied or not: its two reads run, nothing that writes.
-    assert lab.commands() == ["--version", "vault list"]
+    # The tests' Worker is there whether copied or not: its one read runs, nothing that writes.
+    assert lab.commands() == ["vault list"]
+    assert "would: write the Apps & features entry (RestoreProof Worker 0.1.0)" in out and lab.entry() is None
     assert any(line.startswith("would: copy rpworker.exe to ") for line in out)
     assert any(line.startswith(f"would: make {lab.root} and set its ACL") for line in out)
     assert any(line.startswith("would: write ") and "veeam_cert_sha256" in line for line in out)
@@ -403,13 +415,213 @@ def test_a_root_with_the_inherited_acl_and_hand_made_folders_is_tightened(tmp_pa
 def test_a_stub_dll_in_the_package_is_copied_and_a_changed_one_is_refused_while_installed(tmp_path):
     lab = InstallLab(tmp_path)
     assert lab.run().returncode == 0
-    lab.machine["installedService"] = {"pathName": f'"{lab.program / "rpworker.exe"}" service run', "state": "Running"}
-    lab.write_machine()
-    (lab.package / "rpworker.exe").write_bytes(b"MZ a newer worker")
+    lab.installed()
+    (lab.package / "rpworker.exe").write_bytes(b"MZ fake worker 0.1.1 newer")
     result = lab.run(urls=False, answers=None)
     assert result.returncode != 0
-    assert "differs from the package's while the service is installed from it; an upgrade in place is W7.3's" in result.stderr
-    assert (lab.program / "rpworker.exe").read_bytes() != b"MZ a newer worker"
+    assert "holds rpworker 0.1.0 and the package is 0.1.1 (rpworker.exe differs) while the service is installed from it; give -Upgrade to replace it" in result.stderr
+    assert (lab.program / "rpworker.exe").read_bytes() != b"MZ fake worker 0.1.1 newer"
+    assert "service stop" not in lab.commands() and not (lab.program / "previous").exists()
+
+
+# --- the upgrade (W7.4, docs/decisions.md 2026-10-19 point 3) --------------------------------
+
+
+def upgraded_lab(tmp_path, *, version: str = "0.1.1", **kw) -> tuple:
+    """A Worker installed from a 0.1.0 package and running, and a second package folder."""
+    lab = InstallLab(tmp_path, **kw)
+    assert lab.run().returncode == 0
+    lab.installed()
+    new = tmp_path / "package-new"
+    InstallLab.write_package(new, version)
+    return lab, new
+
+
+def test_an_upgrade_waits_for_the_run_in_progress_stops_swaps_keeps_previous_and_starts(tmp_path):
+    lab, new = upgraded_lab(tmp_path, run_in_progress=2)
+    old_exe = (lab.program / "rpworker.exe").read_bytes()
+    old_dll = (lab.program / "fake.dll").read_bytes()
+    vault_before = lab.vault()
+    root_files = {f.name: f.read_bytes() for f in lab.root.iterdir() if f.is_file()}
+    before = len(lab.argv())
+    result = lab.run("-Upgrade", urls=False, answers=None, package=new)
+    assert result.returncode == 0, result.stderr
+    out = lines(result)
+    assert "upgrade: 0.1.0 -> 0.1.1" in out
+    assert any(line.startswith("waiting: run fake-run-1 in progress for 0 min (the upgrade") for line in out)
+    assert lab.commands()[before:] == ["service stop", f"config check --config {lab.root / 'config.json'}", "vault list", f"vault grant {service_sid()}",
+                                       f"veeam list --config {lab.root / 'config.json'}", "service start"]
+    assert "change: rpworker service stop (stopped RestoreProof in 0.4 s), for the upgrade" in out
+    assert "change: rpworker service start (started RestoreProof)" in out
+    # previous\ holds exactly the old files; the folder holds exactly the package's.
+    previous = lab.program / "previous"
+    assert (previous / "rpworker.exe").read_bytes() == old_exe and (previous / "fake.dll").read_bytes() == old_dll
+    assert sorted(f.name for f in previous.iterdir()) == sorted(["rpworker.exe", "fake.dll", *SCRIPTS])
+    assert (lab.program / "rpworker.exe").read_bytes() == (new / "rpworker.exe").read_bytes()
+    assert sorted(f.name for f in lab.program.iterdir() if f.is_file()) == sorted(["rpworker.exe", "fake.dll", *SCRIPTS])
+    assert f"change: the previous files (0.1.0) kept as {previous}" in out
+    # Nothing of the data folder or the vault changed.
+    assert lab.vault() == vault_before
+    assert {f.name: f.read_bytes() for f in lab.root.iterdir() if f.is_file()} == root_files
+    assert "ok: rpworker 0.1.1" in out and lab.entry()["DisplayVersion"] == "0.1.1"
+    assert "change: Apps & features entry (RestoreProof Worker 0.1.1)" in out
+    assert any(line.startswith(f"upgraded 0.1.0 -> 0.1.1; the previous version is in {previous} (rollback: pwsh -ExecutionPolicy Bypass -File ") and f'-Upgrade -Package "{previous}"' in line for line in out)
+    assert_no_secret(result.stdout + result.stderr)
+    # The rollback: the same path from previous\, a downgrade said as such; previous\ is left as
+    # it is, so the same line run again continues instead of swapping back (the review's second pass).
+    before = len(lab.argv())
+    result = lab.run("-Upgrade", urls=False, answers=None, package=previous)
+    assert result.returncode == 0, result.stderr
+    out = lines(result)
+    assert "upgrade: 0.1.1 -> 0.1.0 (a downgrade: a rollback)" in out
+    assert (lab.program / "rpworker.exe").read_bytes() == old_exe
+    assert (previous / "rpworker.exe").read_bytes() == old_exe, "previous\\ is left as it is"
+    assert f"change: the files of 0.1.1 rolled back from dropped; {previous} is left as it is (the version now installed)" in out
+    assert f"rolled back 0.1.1 -> 0.1.0; {previous} holds 0.1.0 too (to go forward again: the newer package's installer with -Upgrade)" in out
+    assert lab.entry()["DisplayVersion"] == "0.1.0"
+    assert lab.commands()[before:][0] == "service stop"
+    assert [f.name for f in lab.program.iterdir() if f.name.startswith(("incoming-", "previous.new-", "previous.old-"))] == []
+    # The same rollback line again: nothing to swap.
+    before = len(lab.argv())
+    result = lab.run("-Upgrade", urls=False, answers=None, package=previous)
+    assert result.returncode == 0, result.stderr
+    assert "ok: rpworker 0.1.0 is installed already" in lines(result) and "service stop" not in lab.commands()[before:]
+    assert (lab.program / "rpworker.exe").read_bytes() == old_exe
+
+
+def test_an_upgrade_to_the_same_version_with_other_bytes_says_so_and_swaps(tmp_path):
+    lab, new = upgraded_lab(tmp_path, version="0.1.0")
+    # Without -Upgrade the stop line names the files that differ (the review's finding 8).
+    result = lab.run(urls=False, answers=None, package=new)
+    assert result.returncode != 0
+    assert "holds rpworker 0.1.0 and the package is 0.1.0 with other files (fake.dll, rpworker.exe differ) while the service is installed from it; give -Upgrade to replace them" in result.stderr
+    result = lab.run("-Upgrade", urls=False, answers=None, package=new)
+    assert result.returncode == 0, result.stderr
+    assert "upgrade: 0.1.0 -> 0.1.0 (the files differ)" in lines(result)
+    assert (lab.program / "rpworker.exe").read_bytes() == (new / "rpworker.exe").read_bytes()
+
+
+def test_an_upgrade_with_the_same_files_changes_nothing_and_stops_no_service(tmp_path):
+    lab, _ = upgraded_lab(tmp_path)
+    before = len(lab.argv())
+    result = lab.run("-Upgrade", urls=False, answers=None)
+    assert result.returncode == 0, result.stderr
+    out = lines(result)
+    assert "ok: rpworker 0.1.0 is installed already" in out and "changes: 0" in out
+    assert "service stop" not in lab.commands()[before:] and not (lab.program / "previous").exists()
+
+
+def test_an_upgrade_with_no_service_installed_is_a_plain_install(tmp_path):
+    lab = InstallLab(tmp_path)
+    result = lab.run("-Upgrade")
+    assert result.returncode == 0, result.stderr
+    out = lines(result)
+    assert "note: -Upgrade given and no service is installed: a plain install" in out
+    assert "service stop" not in lab.commands() and lab.marker("service-started")
+
+
+def test_an_upgrade_stops_with_nothing_changed_while_a_run_never_ends(tmp_path):
+    lab, new = upgraded_lab(tmp_path, run_in_progress=True)
+    old_exe = (lab.program / "rpworker.exe").read_bytes()
+    before = len(lab.argv())
+    result = lab.run("-Upgrade", "-WaitMinutes 0.05", urls=False, answers=None, package=new)
+    assert result.returncode != 0
+    assert "run fake-run-1 is still in progress after 0.05 min (the upgrade)" in result.stderr
+    assert "Give a longer -WaitMinutes, or stop the service (rpworker service stop) and run this again" in result.stderr
+    assert lab.commands()[before:] == [] and (lab.program / "rpworker.exe").read_bytes() == old_exe
+    assert not (lab.program / "previous").exists()
+    # -WaitMinutes 0 stops at once.
+    result = lab.run("-Upgrade", "-WaitMinutes 0", urls=False, answers=None, package=new)
+    assert result.returncode != 0 and "still in progress after 0 min" in result.stderr
+
+
+def test_an_upgrade_whose_stop_still_caught_a_run_leaves_it_to_the_new_versions_start(tmp_path):
+    # The record appears after the wait's read (a job taken at a poll in that window): the fake
+    # answers "no run" once, then a run for ever.
+    lab, new = upgraded_lab(tmp_path)
+    lab.machine["runInProgressPolls"] = 0
+    lab.write_machine()
+    (lab.fake / "record-after-stop").write_text("", encoding="ascii")
+    result = lab.run("-Upgrade", urls=False, answers=None, package=new)
+    assert result.returncode == 0, result.stderr
+    assert "note: a run was taken as the service stopped; the new version's first start closes it" in result.stdout
+
+
+def test_an_upgrade_on_a_config_the_new_version_refuses_names_the_rollback(tmp_path):
+    lab, new = upgraded_lab(tmp_path)
+    lab.flag("fail-config-check")
+    result = lab.run("-Upgrade", urls=False, answers=None, package=new)
+    assert result.returncode != 0
+    assert "fails rpworker config check" in result.stderr
+    assert f"The service {SERVICE} is stopped, on the new files: rpworker service start starts it as it is, and the previous version is in {lab.program / 'previous'}: pwsh -ExecutionPolicy Bypass -File" in result.stderr
+    assert (lab.program / "rpworker.exe").read_bytes() == (new / "rpworker.exe").read_bytes(), "the swap stays: the line says how to go back"
+
+
+def test_whatif_upgrade_swaps_nothing_and_stops_no_service(tmp_path):
+    lab, new = upgraded_lab(tmp_path, run_in_progress=True)
+    old_exe = (lab.program / "rpworker.exe").read_bytes()
+    before = len(lab.argv())
+    result = lab.run("-Upgrade", urls=False, answers=None, package=new, whatif=True)
+    assert result.returncode == 0, result.stderr
+    out = lines(result)
+    assert "upgrade: 0.1.0 -> 0.1.1" in out
+    assert "would: wait for run fake-run-1 to end (the upgrade)" in out and "would: rpworker service stop" in out
+    assert any(line.startswith(f"would: move the installed files to {lab.program / 'previous'}") and line.endswith("copy the package's in: fake.dll, rpworker.exe") for line in out)
+    # The kept config's three reads run, as on a second run (W7.1); nothing that writes.
+    assert lab.commands()[before:] == [f"config check --config {lab.root / 'config.json'}", "vault list", f"veeam list --config {lab.root / 'config.json'}"]
+    assert (lab.program / "rpworker.exe").read_bytes() == old_exe and not (lab.program / "previous").exists()
+    assert "changes: 0" in out
+    # Nothing says the upgrade happened (the review's finding 7).
+    assert not any(line.startswith("upgraded ") for line in out) and not any("previous version is in" in line for line in out)
+
+
+def test_a_rollback_to_a_package_without_scripts_keeps_the_scripts_and_the_apps_entry_valid(tmp_path):
+    # A 0.1.0 package carried no scripts: after the upgrade previous\ holds the exe and the DLLs
+    # alone, and a rollback to it must leave the 0.1.1 scripts in the folder (the review's finding 6).
+    lab = InstallLab(tmp_path)
+    for name in SCRIPTS:
+        (lab.package / name).unlink()
+    assert lab.run().returncode == 0
+    lab.installed()
+    assert not (lab.program / "Uninstall-RestoreProofWorker.ps1").exists()
+    new = tmp_path / "package-new"
+    InstallLab.write_package(new, "0.1.1")
+    result = lab.run("-Upgrade", urls=False, answers=None, package=new)
+    assert result.returncode == 0, result.stderr
+    previous = lab.program / "previous"
+    assert sorted(f.name for f in previous.iterdir()) == ["fake.dll", "rpworker.exe"]
+    for name in SCRIPTS:
+        assert (lab.program / name).exists()
+    result = lab.run("-Upgrade", urls=False, answers=None, package=previous)
+    assert result.returncode == 0, result.stderr
+    assert "upgrade: 0.1.1 -> 0.1.0 (a downgrade: a rollback)" in lines(result)
+    for name in SCRIPTS:
+        assert (lab.program / name).exists(), "the scripts the package doesn't carry stay"
+    assert (lab.program / "rpworker.exe").read_bytes() == (previous / "rpworker.exe").read_bytes(), "the rollback leaves previous\\ as it is"
+    entry = lab.entry()
+    assert entry["DisplayVersion"] == "0.1.0" and (lab.program / "Uninstall-RestoreProofWorker.ps1").exists()
+    assert entry["UninstallString"].endswith(f'"{lab.program / "Uninstall-RestoreProofWorker.ps1"}" -Elevate')
+
+
+def test_a_package_file_that_cannot_be_read_stops_before_anything_is_stopped_or_moved(tmp_path):
+    # An unreadable package file (the review's finding 5's first case) stops the run whole.
+    lab, new = upgraded_lab(tmp_path)
+    old_exe = (lab.program / "rpworker.exe").read_bytes()
+    me = subprocess.run(["whoami"], capture_output=True, text=True, check=True).stdout.strip()
+    # Read data alone (not generic read, which takes READ_CONTROL with it and would lock the ACL too).
+    subprocess.run(["icacls", str(new / "fake.dll"), "/deny", f"{me}:(RD)"], capture_output=True, check=True)
+    try:
+        result = lab.run("-Upgrade", urls=False, answers=None, package=new)
+    finally:
+        subprocess.run(["icacls", str(new / "fake.dll"), "/remove:d", me], capture_output=True, check=True)
+    assert result.returncode != 0
+    # The file is found unreadable by the hashing before anything is stopped or moved; the
+    # swap's own guard (the copy into incoming-<guid> before any move) is for a read that fails later.
+    assert "a file of the package or of" in result.stderr and "couldn't be read" in result.stderr and "nothing was changed" in result.stderr
+    assert (lab.program / "rpworker.exe").read_bytes() == old_exe
+    assert not (lab.program / "previous").exists()
+    assert [f.name for f in lab.program.iterdir() if f.name.startswith(("incoming-", "previous.new-"))] == []
+    assert "service stop" not in lab.commands()[-3:], "nothing was stopped"
 
 
 # --- the W7.1 code review's fixes ------------------------------------------------------------
@@ -581,3 +793,118 @@ def test_a_worker_registered_with_another_cloud_stops_and_says_how_to_move(tmp_p
     assert result.returncode != 0
     assert ("this Worker is registered with https://cloud.example.invalid" in result.stderr and
             "rpworker vault remove cloud_api_token" in result.stderr)
+
+
+# --- the W7.3 review's second pass ------------------------------------------------------------
+
+
+def test_a_failure_after_the_upgrades_swap_says_the_service_is_stopped_and_how_back(tmp_path):
+    lab, new = upgraded_lab(tmp_path)
+    lab.flag("fail-veeam-list")
+    result = lab.run("-Upgrade", urls=False, answers=None, package=new)
+    assert result.returncode != 0
+    assert "rpworker veeam list failed" in result.stderr
+    assert f"The service {SERVICE} is stopped, on the new files: rpworker service start starts it as it is, and the previous version is in {lab.program / 'previous'}" in result.stderr
+
+
+def test_a_new_exe_whose_start_fails_says_how_back(tmp_path):
+    lab, new = upgraded_lab(tmp_path)
+    lab.flag("fail-service-start")
+    result = lab.run("-Upgrade", urls=False, answers=None, package=new)
+    assert result.returncode != 0
+    assert "rpworker service start failed" in result.stderr and "and the previous version is in" in result.stderr
+
+
+def test_a_veeam_that_isnt_reached_is_not_told_to_replace_the_config(tmp_path):
+    lab, new = upgraded_lab(tmp_path)
+    lab.flag("fail-veeam-list-unreachable")
+    result = lab.run("-Upgrade", urls=False, answers=None, package=new)
+    assert result.returncode != 0
+    assert "Veeam wasn't reached: run the installer again once its REST service answers" in result.stderr and "-Replace" not in result.stderr
+
+
+def test_a_missing_exe_under_an_installed_service_is_copied_in_again(tmp_path):
+    # A quarantined exe: a plain re-run repairs it, as before W7.4 (the review's second pass).
+    lab = InstallLab(tmp_path)
+    assert lab.run().returncode == 0
+    lab.installed()
+    (lab.program / "rpworker.exe").unlink()
+    before = len(lab.argv())
+    result = lab.run(urls=False, answers=None)
+    assert result.returncode == 0, result.stderr
+    out = lines(result)
+    assert f"note: rpworker.exe missing from {lab.program}: copied in again from the package" in out
+    assert f"change: copied rpworker.exe to {lab.program}" in out
+    assert (lab.program / "rpworker.exe").read_bytes() == (lab.package / "rpworker.exe").read_bytes()
+    assert "service stop" not in lab.commands()[before:] and not (lab.program / "previous").exists()
+
+
+def test_a_stopped_services_record_does_not_hold_the_upgrade(tmp_path):
+    lab, new = upgraded_lab(tmp_path, run_in_progress=True)
+    lab.installed(state="Stopped")
+    result = lab.run("-Upgrade", "-WaitMinutes 0.05", urls=False, answers=None, package=new)
+    assert result.returncode == 0, result.stderr
+    assert not any(line.startswith("waiting: ") for line in lines(result))
+    assert "note: a run was taken as the service stopped; the new version's first start closes it" in result.stdout
+
+
+def test_a_previous_folder_that_cant_be_replaced_says_where_the_replaced_files_are(tmp_path):
+    lab, new = upgraded_lab(tmp_path)
+    assert lab.run("-Upgrade", urls=False, answers=None, package=new).returncode == 0
+    newer = tmp_path / "package-newer"
+    InstallLab.write_package(newer, "0.1.2")
+    previous = lab.program / "previous"
+    window = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"], cwd=previous)
+    try:
+        result = lab.run("-Upgrade", urls=False, answers=None, package=newer)
+    finally:
+        window.kill()
+        window.wait()
+    assert result.returncode != 0
+    assert f"the new files are in place, but {previous} couldn't be replaced (" in result.stderr
+    assert "the files of 0.1.1 they replaced are in" in result.stderr and f"The service {SERVICE} is stopped, on the new files" in result.stderr
+    assert (lab.program / "rpworker.exe").read_bytes() == (newer / "rpworker.exe").read_bytes()
+    staging = [f for f in lab.program.iterdir() if f.name.startswith("previous.new-")]
+    assert len(staging) == 1 and (staging[0] / "rpworker.exe").read_bytes() == (new / "rpworker.exe").read_bytes()
+
+
+def test_a_package_without_the_uninstall_script_brings_no_script(tmp_path):
+    # 0.1.0's zip carried the installer and its modules but not the uninstall script: a rollback
+    # from it must leave the installed scripts, which the Apps entry names (the review's second pass).
+    lab, new = upgraded_lab(tmp_path)
+    assert lab.run("-Upgrade", urls=False, answers=None, package=new).returncode == 0
+    old = tmp_path / "package-0.1.0"
+    InstallLab.write_package(old, "0.1.0")
+    (old / "Uninstall-RestoreProofWorker.ps1").unlink()
+    (old / "RestoreProofWorker.psm1").write_text("# an old module", encoding="ascii")
+    result = lab.run("-Upgrade", urls=False, answers=None, package=old)
+    assert result.returncode == 0, result.stderr
+    assert (lab.program / "Uninstall-RestoreProofWorker.ps1").exists()
+    assert (lab.program / "RestoreProofWorker.psm1").read_text(encoding="utf-8") != "# an old module"
+    assert lab.entry()["UninstallString"].endswith(f'"{lab.program / "Uninstall-RestoreProofWorker.ps1"}" -Elevate')
+
+
+def test_whatif_through_pwsh_file_plans_no_acl_removal(tmp_path):
+    # `pwsh -File ... -WhatIf` gives the modules WhatIf; the member form of ForEach-Object then
+    # retrieved nothing and step 3 planned to remove every rule of the root (the review's second pass).
+    lab = InstallLab(tmp_path)
+    assert lab.run().returncode == 0
+    lab.installed()
+    import os
+    env = dict(os.environ, RP_FAKE_DIR=str(lab.fake))
+    result = subprocess.run([
+        "pwsh", "-NoProfile", "-NonInteractive", "-File", str(SCRIPT), "-Package", str(lab.package), "-PollSeconds", "1",
+        "-ProgramDir", str(lab.program), "-Root", str(lab.root), "-Worker", str(lab.cmd), "-ServiceName", SERVICE,
+        "-MachineModule", str(FAKE_MACHINE), "-AlsoFullControl", current_user_sid(), "-VeeamUsername", "FAKE-HOST\\rp-veeam", "-WhatIf",
+    ], capture_output=True, text=True, env=env, timeout=240)
+    assert result.returncode == 0, result.stderr
+    assert "/remove:g *S-1-5-18" not in result.stdout and "Retrieve the value for property" not in result.stdout
+    assert f"ok: ACL of {lab.root}" in result.stdout
+
+
+def test_the_install_date_is_written_in_the_gregorian_calendar_whatever_the_culture(tmp_path):
+    lab = InstallLab(tmp_path)
+    result = lab.run(culture="th-TH")
+    assert result.returncode == 0, result.stderr
+    date = lab.entry()["InstallDate"]
+    assert date.startswith("20"), date

@@ -275,6 +275,37 @@ TEST_CASE("rpworker outbox is one of run_cli's commands", "[outbox_command][cli]
 
 // --- flush: the network down, then up -------------------------------------------------
 
+TEST_CASE("rpworker outbox flush --now sends a run whose next attempt hasn't come",
+          "[outbox_command][flush]")
+{
+    // The uninstall's last flush: the outbox is deleted after it, so a run in its backoff is
+    // tried once more rather than destroyed unsent (the W7.3 review's second pass).
+    Lab lab;
+    lab.box.queue_run("run-0001");
+    int calls = 0;
+    lab.cloud.on(rp::HttpMethod::post, kResultsUrl, [&calls](const rp::HttpRequest&) -> rp::HttpResponse {
+        if (++calls == 1) {
+            throw rp::HttpError("POST: could not connect", rp::TransportError::connect, 0, 1);
+        }
+        return rp::test::cloud_answer(202);
+    });
+    REQUIRE(lab.run({"flush"}).exit_code == rp::exit_code::transient);
+
+    lab.now = 10;
+    const Run early = lab.run({"flush"});
+    CHECK(early.out == "waiting run-0001: next at " + text_at(60) + "\n1 queued, 0 sent, 0 failed\n");
+    CHECK(calls == 1);
+
+    const Run now = lab.run({"flush", "--now"});
+    CHECK(now.exit_code == rp::exit_code::ok);
+    CHECK(now.out == "sent run-0001\n0 queued, 1 sent, 0 failed\n");
+    CHECK(now.err.empty());
+    CHECK(calls == 2);
+
+    // A flag, never a value; given twice it is usage.
+    CHECK(lab.run({"flush", "--now", "--now"}).exit_code == rp::exit_code::usage);
+}
+
 TEST_CASE("rpworker outbox flush: with the Cloud down the run stays queued, exit 3; the next "
           "flush that reaches it sends it, exit 0",
           "[outbox_command][flush][acceptance]")

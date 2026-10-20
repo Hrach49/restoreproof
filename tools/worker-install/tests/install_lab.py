@@ -169,7 +169,8 @@ class InstallLab:
         return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
     def run(self, *extra: str, answers: dict | None = ANSWERS, urls: bool = True, whatif: bool = False,
-            worker_name: str = "fake-host-worker", timeout: int = 240, package: Path | None = None) -> subprocess.CompletedProcess:
+            worker_name: str = "fake-host-worker", timeout: int = 240, package: Path | None = None,
+            culture: str | None = None) -> subprocess.CompletedProcess:
         params = [
             f"-Package {ps_string(package or self.package)}",
             "-PollSeconds 1",
@@ -194,7 +195,8 @@ class InstallLab:
         # it came from (the script's stack), so a test shows both.
         command = (
             f"$env:RP_FAKE_DIR = {ps_string(self.fake)}\n"
-            f"try {{ & {ps_string(SCRIPT)} {' '.join(params)} }}\n"
+            + (f"[Globalization.CultureInfo]::CurrentCulture = {ps_string(culture)}\n" if culture else "")
+            + f"try {{ & {ps_string(SCRIPT)} {' '.join(params)} }}\n"
             "catch { [Console]::Error.WriteLine($_.Exception.Message); [Console]::Error.WriteLine($_.ScriptStackTrace); throw }\n"
         )
         return run(command, timeout=timeout)
@@ -207,8 +209,9 @@ class InstallLab:
             f"-Worker {ps_string(worker or self.cmd)}",
             f"-ServiceName {ps_string(SERVICE)}",
             f"-MachineModule {ps_string(FAKE_MACHINE)}",
-            "-PollSeconds 1",
         ]
+        if not any("-PollSeconds" in e for e in extra):
+            params.append("-PollSeconds 1")
         if whatif:
             params.append("-WhatIf")
         params += list(extra)

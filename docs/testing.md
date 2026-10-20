@@ -1762,7 +1762,7 @@ clean Server 2022 VM (`docs/decisions.md` 2026-10-16 point 11).
 2026-10-19, "W7.3 (#82) and W7.4 (#83)"; `docs/upgrade.md`) are tested the same way, in the
 same uv project, with the same fakes grown for them: the fake Worker answers `service
 uninstall`, `outbox flush` and `outbox list` (`outbox-list.txt` is what `list` prints; the
-next `flush` "sends" its runs; `fail-outbox-flush`), `cloud revoke` (`revoke-401`,
+next `flush --now` "sends" its runs; `fail-outbox-flush`), `cloud revoke` (`revoke-401`,
 `revoke-503`); the fake machine reads an exe's version from the dummy exe's own bytes (`MZ
 fake worker <version>`, written by `InstallLab.write_package`), answers the run record from
 `machine.json` (`runInProgress` for ever, `runInProgressPolls` for the first n reads, the flag
@@ -1804,6 +1804,18 @@ for a budget of seconds).
 - `test_script_text.py`: the installer's one `Remove-Item` (the previous version's files) and
   the uninstall script's text (strict, asks nothing, no secret, `Set-Location $env:SystemRoot`,
   nothing removed before `service uninstall`, no "securely").
+- The second review's (`docs/decisions.md` 2026-10-20): `test_machine.py` holds the real
+  overwrite to a hard link (`os.link`), a junction on the way (`mklink /J`), a symbolic link
+  (skipped where the account may not make one) and a path outside `-Within`, each refused with
+  the target's bytes unchanged. The fakes grew `serviceQueryFails`, `runSequence` (one run id
+  or null per read, for runs back to back), `elevateRefused`, `fail-vault-list`,
+  `revoke-unwritable` and `fail-veeam-list-unreachable`, and the fake flush keeps a listed run
+  `waiting` unless `--now`. The script tests make real junctions under the temporary root and
+  hold a folder as another process's current folder (`subprocess.Popen(..., cwd=...)`);
+  `test_install_script.py` runs the installer once through `pwsh -File ... -WhatIf` (the
+  modules then see WhatIf, which `& script` doesn't show) and once under `th-TH` (`run(culture=)`);
+  `test_script_text.py` holds every script and module to the script-block form of
+  `ForEach-Object` and every overwrite to `-Within $Root`.
 
 The live Done-when: `docs/api/veeam-lab/w7.3-w7.4-harness/w73-w74-live.ps1` on this laptop
 (the `0.1.0` package installed, a run, `-Upgrade` to `0.1.1`, the rollback and the upgrade

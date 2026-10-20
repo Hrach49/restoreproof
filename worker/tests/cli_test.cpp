@@ -31,7 +31,7 @@ const std::string kUsage =
     "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
     "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "
     "[--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | "
-    "rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] | "
+    "rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] [--now] | "
     "rpworker outbox list [--outbox <root>] | "
     "rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] "
     "[--record <dir>] | rpworker cloud revoke [--config <path>] [--vault <file>] [--record <dir>] | "

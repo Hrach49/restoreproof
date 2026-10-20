@@ -8,8 +8,10 @@ it (one line, the newline dropped), and every other command's effect is a marker
 that folder change the answers: `missing-vault` makes `vault list` answer as for a vault that
 isn't there yet, `fail-<command words joined by ->` makes that command fail with one line and
 the Worker's exit code, `register-401` makes `cloud register` answer as for a refused token,
-`revoke-401` and `revoke-503` the same for `cloud revoke` (W7.3), `outbox-list.txt` is what
-`outbox list` prints (its runs are "sent" by the next `outbox flush`),
+`revoke-401` and `revoke-503` the same for `cloud revoke` (W7.3), `revoke-unwritable` as for a
+revoke the vault couldn't record, `fail-vault-list` as for a vault this account can't read, `outbox-list.txt` is what
+`outbox list` prints (its runs are in their backoff: "sent" by the next `outbox flush --now`,
+"waiting" without it),
 `register-503` as for a Cloud that wasn't reached, `cloud-holds-key` as for a Cloud that took
 this Worker's key in a registration whose answer was lost (409 for that key, the key it held
 kept in cloud-held-key.txt, 201 for any other). `config check` answers as the real one does
@@ -85,6 +87,9 @@ def main() -> int:
         print("secrets (vault C:\\ProgramData\\RestoreProof\\vault.bin; values are never shown):")
         return 0
     if args == ["vault", "list"]:
+        if fails("vault", "list"):
+            print("vault error: C:\\ProgramData\\RestoreProof\\vault.bin: the vault file can't be read", file=sys.stderr)
+            return 1
         if (folder / "missing-vault").exists() and not vault:
             print("vault error: C:\\ProgramData\\RestoreProof\\vault.bin: vault file not found", file=sys.stderr)
             return 1
@@ -146,6 +151,9 @@ def main() -> int:
         print(f"thumbprint {thumb} (SHA-1), expires {end}", file=sys.stderr)
         return 0
     if args[:2] == ["veeam", "list"] and len(args) == 4 and args[2] == "--config":
+        if fails("veeam", "list", "unreachable"):
+            print("veeam error: Veeam POST /v8/token: unreachable", file=sys.stderr)
+            return 3
         if fails("veeam", "list"):
             print("veeam error: Veeam POST /v8/token: HTTP 401: The server has rejected the client credentials.", file=sys.stderr)
             return 2
@@ -182,8 +190,14 @@ def main() -> int:
             print("1 queued, 0 sent, 0 failed")
             return 3
         listing = folder / "outbox-list.txt"
+        if listing.exists() and "--now" not in args:
+            # The listing's runs are in their backoff (NEXT ahead), as the real flush keeps them.
+            for run in [line.split()[0] for line in listing.read_text(encoding="utf-8").splitlines()[1:] if line and not line[0].isdigit()]:
+                print(f"waiting {run}: next at 2026-10-19T12:40:10Z")
+            print("1 queued, 0 sent, 0 failed")
+            return 3
         if listing.exists():
-            # Every queued run of the listing is sent by the flush, so the list after it is empty.
+            # --now: every queued run of the listing is sent, so the list after it is empty.
             for run in [line.split()[0] for line in listing.read_text(encoding="utf-8").splitlines()[1:] if line and not line[0].isdigit()]:
                 print(f"sent {run}")
             listing.unlink()
@@ -202,6 +216,10 @@ def main() -> int:
         if (folder / "revoke-503").exists():
             print("cloud revoke: the Cloud couldn't be reached (http_503); run it again, or revoke the Worker in the Cloud (manage.py revoke-worker)", file=sys.stderr)
             return 3
+        if (folder / "revoke-unwritable").exists():
+            mark("revoked")
+            print("cloud revoke: the Cloud revoked this Worker, but the API token couldn't be removed from the vault (rpworker vault remove cloud_api_token)", file=sys.stderr)
+            return 1
         if (folder / "revoke-401").exists():
             del vault["cloud_api_token"]
             save()
@@ -228,6 +246,8 @@ def main() -> int:
             print("RestoreProof is already running")
             return 0
         mark("service-started")
+        if (folder / "service-stopped-once").exists():
+            mark("started-after-stop")
         print("started RestoreProof")
         return 0
     if args[:2] == ["cloud", "register"] and (len(args) == 2 or (len(args) == 4 and args[2] == "--name")):

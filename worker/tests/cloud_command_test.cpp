@@ -806,6 +806,30 @@ TEST_CASE("cloud revoke: a vault this account can't write is found before anythi
     no_token_in(run);
 }
 
+TEST_CASE("cloud revoke: a config naming another Cloud than worker.json's sends nothing", "[cloud_command]")
+{
+    // The installer's -Replace -CloudUrl B stopped after writing the config: the token is A's,
+    // and B's 401 would have removed its only copy (the W7.3 review's second pass).
+    RevokeLab lab;
+    nlohmann::json values = rp::test::restore_command_lab::config_values();
+    values["cloud_url"] = "https://other.example.invalid";
+    lab.config = lab.dir.write("other-cloud.json", values.dump(2));
+    const std::string record = lab.write_record();
+
+    const Run run = lab.rev();
+    CHECK(run.code == rp::exit_code::config);
+    CHECK(run.out.empty());
+    CHECK(run.err == "cloud revoke: this Worker is registered with https://cloud.example.invalid "
+                     "(state\\worker.json) and the config's cloud_url is https://other.example.invalid; "
+                     "nothing was sent: put cloud_url back, or revoke the Worker in that Cloud "
+                     "(manage.py revoke-worker)\n");
+    CHECK(lab.cloud.requests().empty());
+    CHECK(lab.writes.empty());
+    CHECK(lab.secrets.cloud_api_token == kIssued);
+    CHECK(lab.record_text() == record);
+    no_token_in(run);
+}
+
 TEST_CASE("cloud revoke: a 401 is a token the Cloud doesn't know, removed from the vault", "[cloud_command]")
 {
     RevokeLab lab;

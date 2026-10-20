@@ -1564,7 +1564,7 @@ is. One line on stderr, the status unchanged, an exit code of 0 becoming 1:
 ## `rpworker outbox`
 
 ```
-rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>]
+rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] [--now]
 rpworker outbox list [--outbox <root>]
 ```
 
@@ -1579,7 +1579,9 @@ vault.
 
 ### `outbox flush`
 
-One pass, no waiting. The service makes the same pass itself, after each run it queued and
+One pass, no waiting. `--now` (W7.3's review) makes every queued run due, whatever its next
+attempt says: the uninstall's last flush, since the outbox is deleted after it (no `waiting`
+line then). The service makes the same pass itself, after each run it queued and
 at the end of every poll ("The service's loop"); by hand the command is for a machine where
 the service isn't running, and while the service's pass holds the flush mutex it answers
 `another flush is running`. It reads the config for `cloud_url` (and `cloud_ca_file`), deletes old sent runs, then
@@ -1763,7 +1765,12 @@ and from then on every request under that token is 401. Run it from an elevated 
 writes the vault.
 
 In order: the config; the vault read; no API token `config error: cloud_api_token is not in
-the vault; this Worker is not registered` (exit 1, nothing sent); **the vault written back
+the vault; this Worker is not registered` (exit 1, nothing sent); `state\worker.json`, when it
+reads, naming another `cloud_url` than the config's: `cloud revoke: this Worker is registered
+with <its url> (state\worker.json) and the config's cloud_url is <url>; nothing was sent: put
+cloud_url back, or revoke the Worker in that Cloud (manage.py revoke-worker)`, exit 1 (the token
+is that Cloud's, and another Cloud's 401 would take its only copy out of the vault; the W7.3
+review's second pass); **the vault written back
 unchanged**, so a vault this account can't write is found before the Cloud is told anything
 (`vault error: ...`, exit 1); then the request, sent once with a 30 s timeout.
 
@@ -3017,5 +3024,5 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 The usage line is:
 
 ```
-usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph certificate [--vault <file>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] [--record <dir>] | rpworker cloud revoke [--config <path>] [--vault <file>] [--record <dir>] | rpworker signer public-key [--vault <file>] | rpworker signer new-key [--vault <file>] [--replace] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>] | rpworker doctor [--config <path>] [--vault <file>] [--client <profile file>]... [--json <file>] [--record <dir>]
+usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph certificate [--vault <file>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--vault <file>] [--outbox <root>] [--record <dir>] [--now] | rpworker outbox list [--outbox <root>] | rpworker cloud register [--config <path>] [--vault <file>] [--name <worker name>] [--record <dir>] | rpworker cloud revoke [--config <path>] [--vault <file>] [--record <dir>] | rpworker signer public-key [--vault <file>] | rpworker signer new-key [--vault <file>] [--replace] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>] | rpworker doctor [--config <path>] [--vault <file>] [--client <profile file>]... [--json <file>] [--record <dir>]
 ```

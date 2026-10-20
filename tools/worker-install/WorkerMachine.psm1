@@ -25,10 +25,12 @@ function Get-MachineFacts {
     }
 }
 
-# The service `Name`, as Win32_Service reports it (PathName, State, StartName), or $null.
+# The service `Name`, as Win32_Service reports it (PathName, State, StartName), or $null when
+# there is none. A query that fails throws (never $null: a WMI fault read as "no service" made
+# the uninstall destroy a running Worker's data, the W7.3 review's second pass).
 function Get-InstalledService([Parameter(Mandatory)][string]$Name) {
     $escaped = $Name -replace "'", "''"
-    Get-CimInstance Win32_Service -Filter "Name='$escaped'" -ErrorAction SilentlyContinue | Select-Object -First 1
+    Get-CimInstance Win32_Service -Filter "Name='$escaped'" -ErrorAction Stop | Select-Object -First 1
 }
 
 # Whether Veeam Backup for Microsoft 365's REST service is on this machine.
@@ -165,16 +167,86 @@ function Remove-UninstallEntry([Parameter(Mandatory)][string]$Name) {
     if (Test-Path -LiteralPath $key) { Remove-Item -LiteralPath $key -Recurse -Force }
 }
 
+# What the overwrite needs of Windows that .NET doesn't give: a handle opened with the DELETE
+# right beside read and write (so the file deleted is the file checked and written, through the
+# same handle), the path that handle reached (GetFinalPathNameByHandleW: every junction and
+# symbolic link on the way resolved), how many names the file has (nNumberOfLinks), and the
+# delete itself (SetFileInformationByHandle, FileDispositionInfo).
+if (-not ('RestoreProof.HandleFacts' -as [type])) {
+    Add-Type -Namespace RestoreProof -Name HandleFacts -MemberDefinition @'
+[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+public struct ByHandleInfo {
+    public uint Attributes; public uint CreatedLow, CreatedHigh, AccessedLow, AccessedHigh, WrittenLow, WrittenHigh;
+    public uint Volume; public uint SizeHigh; public uint SizeLow; public uint Links;
+    public uint IndexHigh; public uint IndexLow;
+}
+[System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+static extern uint GetFinalPathNameByHandleW(Microsoft.Win32.SafeHandles.SafeFileHandle handle, System.Text.StringBuilder path, uint length, uint flags);
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle handle, out ByHandleInfo info);
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+static extern bool SetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle handle, int infoClass, ref byte deleteFile, uint size);
+[System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFileW(string name, uint access, uint share, System.IntPtr security, uint disposition, uint flags, System.IntPtr template);
+static Microsoft.Win32.SafeHandles.SafeFileHandle Open(string path, uint access, uint share, uint flags) {
+    var handle = CreateFileW(path, access, share, System.IntPtr.Zero, 3, flags, System.IntPtr.Zero);
+    if (handle.IsInvalid) { throw new System.ComponentModel.Win32Exception(); }
+    return handle;
+}
+// Read, write and delete, shared with nobody (a held file is refused here).
+public static Microsoft.Win32.SafeHandles.SafeFileHandle OpenForOverwrite(string path) {
+    return Open(path, 0x80000000u | 0x40000000u | 0x00010000u, 0, 0);
+}
+public static string FinalPath(Microsoft.Win32.SafeHandles.SafeFileHandle handle) {
+    var text = new System.Text.StringBuilder(32768);
+    uint n = GetFinalPathNameByHandleW(handle, text, (uint)text.Capacity, 0);
+    if (n == 0 || n >= text.Capacity) { throw new System.ComponentModel.Win32Exception(); }
+    return text.ToString();
+}
+public static uint Links(Microsoft.Win32.SafeHandles.SafeFileHandle handle) {
+    ByHandleInfo info;
+    if (!GetFileInformationByHandle(handle, out info)) { throw new System.ComponentModel.Win32Exception(); }
+    return info.Links;
+}
+public static void MarkDeleted(Microsoft.Win32.SafeHandles.SafeFileHandle handle) {
+    byte yes = 1;
+    if (!SetFileInformationByHandle(handle, 4, ref yes, 1)) { throw new System.ComponentModel.Win32Exception(); }
+}
+// A folder's final path: opened for no access (FILE_FLAG_BACKUP_SEMANTICS, sharing everything).
+public static string FolderFinalPath(string path) {
+    using (var handle = Open(path, 0, 7, 0x02000000)) { return FinalPath(handle); }
+}
+'@
+}
+
 <#
 .SYNOPSIS
     The file's bytes overwritten once in place with random ones through one handle, flushed to
-    the disk, then the file deleted (W7.3 point 6: it defeats an undelete tool; it guarantees no
-    erasure on an SSD or inside a volume snapshot). -KeepFile leaves the overwritten file for a
-    test to read. Throws when the file can't be opened (held by someone, or no right).
+    the disk, then the file deleted through that same handle (W7.3 point 6: it defeats an
+    undelete tool; it guarantees no erasure on an SSD or inside a volume snapshot). -KeepFile
+    leaves the overwritten file for a test to read. Throws when the file can't be opened (held
+    by someone, or no right).
+
+    The service account can write under the run folders, and this runs elevated, so nothing is
+    written or deleted that isn't the file at `Path` itself (the W7.3 review's second pass,
+    CWE-59): the handle's final path must be `Within`'s final path joined with the rest of
+    `Path` (no junction or symbolic link on the way, whatever was swapped in after the caller
+    looked), and the file must have one name (a hard link to a file elsewhere is never
+    written). Either refused throws before a byte is written, and the file is left.
 #>
-function Remove-FileOverwritten([Parameter(Mandatory)][string]$Path, [switch]$KeepFile) {
-    $stream = [IO.FileStream]::new($Path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+function Remove-FileOverwritten([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Within, [switch]$KeepFile) {
+    $full = [IO.Path]::GetFullPath($Path)
+    $base = [IO.Path]::TrimEndingDirectorySeparator([IO.Path]::GetFullPath($Within))
+    if (-not $full.StartsWith($base + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "not under $Within" }
+    $expected = [RestoreProof.HandleFacts]::FolderFinalPath($base) + $full.Substring($base.Length)
+    $handle = [RestoreProof.HandleFacts]::OpenForOverwrite($full)
     try {
+        $reached = [RestoreProof.HandleFacts]::FinalPath($handle)
+        if (-not [string]::Equals($reached, $expected, [StringComparison]::OrdinalIgnoreCase)) { throw 'is reached through a junction or a symbolic link: not overwritten' }
+        $links = [RestoreProof.HandleFacts]::Links($handle)
+        if ($links -ne 1) { throw "has $links names (a hard link): not overwritten" }
+        # The stream owns no handle of its own: the one checked is written, then deleted.
+        $stream = [IO.FileStream]::new($handle, [IO.FileAccess]::ReadWrite)
         $length = $stream.Length
         $left = $length
         while ($left -gt 0) {
@@ -184,8 +256,19 @@ function Remove-FileOverwritten([Parameter(Mandatory)][string]$Path, [switch]$Ke
             $left -= $n
         }
         $stream.Flush($true)
-    } finally { $stream.Dispose() }
-    if (-not $KeepFile) { [IO.File]::Delete($Path) }
+        if (-not $KeepFile) { [RestoreProof.HandleFacts]::MarkDeleted($handle) }
+    } finally { $handle.Dispose() }
 }
 
-Export-ModuleMember -Function Test-IsElevated, Get-MachineFacts, Get-InstalledService, Test-VeeamOnThisMachine, Get-RemoteCertificate, Get-CertificateKeyFile, Get-WorkerVersion, Get-RunRecord, Get-PwshPath, Get-UninstallEntry, Set-UninstallEntry, Remove-UninstallEntry, Remove-FileOverwritten
+<#
+.SYNOPSIS
+    The uninstall started again in an elevated window (Settings' Uninstall starts it as the user,
+    UAC-filtered): the same pwsh, -NoExit so its lines can be read, -ExecutionPolicy Bypass.
+    Throws when the elevation is refused.
+#>
+function Start-ElevatedUninstall([Parameter(Mandatory)][string]$Script) {
+    $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-File', "`"$Script`"")
+    $null = Start-Process -FilePath (Get-PwshPath) -Verb RunAs -ArgumentList $arguments
+}
+
+Export-ModuleMember -Function Test-IsElevated, Get-MachineFacts, Get-InstalledService, Test-VeeamOnThisMachine, Get-RemoteCertificate, Get-CertificateKeyFile, Get-WorkerVersion, Get-RunRecord, Get-PwshPath, Get-UninstallEntry, Set-UninstallEntry, Remove-UninstallEntry, Remove-FileOverwritten, Start-ElevatedUninstall

@@ -37,6 +37,7 @@ function Get-MachineFacts {
 
 function Get-InstalledService([Parameter(Mandatory)][string]$Name) {
     Write-FakeLog "Get-InstalledService $Name"
+    if (Get-FakeValue 'serviceQueryFails' $false) { throw 'fake: Invalid class' }
     $service = Get-FakeValue 'installedService' $null
     if ($null -eq $service) { return $null }
     [pscustomobject]@{ Name = $Name; PathName = $service['pathName']; State = $service['state'] }
@@ -93,9 +94,20 @@ function Get-RunRecord([Parameter(Mandatory)][string]$Root) {
     if ($state.ContainsKey('runInProgress') -and $state['runInProgress']) { return [pscustomobject]@{ RunId = 'fake-run-1' } }
     # The window of point 3 step 3: a run taken between the wait's read and the stop (the flag
     # record-after-stop makes every read after the fake Worker's `service stop` see one, until
-    # its `service start`).
-    if ((Test-Path -LiteralPath (Join-Path $env:RP_FAKE_DIR 'record-after-stop')) -and (Test-Path -LiteralPath (Join-Path $env:RP_FAKE_DIR 'service-stopped-once')) -and -not (Test-Path -LiteralPath (Join-Path $env:RP_FAKE_DIR 'service-started'))) {
+    # its first `service start` after that stop (started-after-stop)).
+    if ((Test-Path -LiteralPath (Join-Path $env:RP_FAKE_DIR 'record-after-stop')) -and (Test-Path -LiteralPath (Join-Path $env:RP_FAKE_DIR 'service-stopped-once')) -and -not (Test-Path -LiteralPath (Join-Path $env:RP_FAKE_DIR 'started-after-stop'))) {
         return [pscustomobject]@{ RunId = 'fake-run-2' }
+    }
+    # `runSequence`: one entry per read, taken from the front (a run id, or null for none), then none.
+    if ($state.ContainsKey('runSequence') -and @($state['runSequence']).Count -gt 0) {
+        $sequence = [System.Collections.Generic.List[object]]::new()
+        foreach ($entry in @($state['runSequence'])) { $sequence.Add($entry) }
+        $id = $sequence[0]
+        $sequence.RemoveAt(0)
+        $state['runSequence'] = @($sequence)
+        ($state | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath (Join-Path $env:RP_FAKE_DIR 'machine.json') -Encoding utf8
+        if ($null -eq $id) { return $null }
+        return [pscustomobject]@{ RunId = [string]$id }
     }
     if ($state.ContainsKey('runInProgressPolls') -and [int]$state['runInProgressPolls'] -gt 0) {
         $state['runInProgressPolls'] = [int]$state['runInProgressPolls'] - 1
@@ -128,7 +140,7 @@ function Remove-UninstallEntry([Parameter(Mandatory)][string]$Name) {
 
 # Recorded, then deleted (the real overwrite is tested on its own, test_machine.py); a path
 # named in `unremovable` throws as a held file does.
-function Remove-FileOverwritten([Parameter(Mandatory)][string]$Path, [switch]$KeepFile) {
+function Remove-FileOverwritten([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Within, [switch]$KeepFile) {
     Write-FakeLog "Remove-FileOverwritten $Path"
     $held = @(Get-FakeValue 'unremovable' @())
     if ($held -contains (Split-Path -Leaf $Path)) { throw "fake: $Path is held by another process" }
@@ -136,4 +148,10 @@ function Remove-FileOverwritten([Parameter(Mandatory)][string]$Path, [switch]$Ke
     if (-not $KeepFile) { [IO.File]::Delete($Path) }
 }
 
-Export-ModuleMember -Function Test-IsElevated, Get-MachineFacts, Get-InstalledService, Test-VeeamOnThisMachine, Get-RemoteCertificate, Get-CertificateKeyFile, Get-WorkerVersion, Get-RunRecord, Get-PwshPath, Get-UninstallEntry, Set-UninstallEntry, Remove-UninstallEntry, Remove-FileOverwritten
+# Logged, as the real one starts the elevated window; `elevateRefused` throws as a refused UAC does.
+function Start-ElevatedUninstall([Parameter(Mandatory)][string]$Script) {
+    Write-FakeLog "Start-ElevatedUninstall $Script"
+    if (Get-FakeValue 'elevateRefused' $false) { throw 'fake: The operation was canceled by the user.' }
+}
+
+Export-ModuleMember -Function Test-IsElevated, Get-MachineFacts, Get-InstalledService, Test-VeeamOnThisMachine, Get-RemoteCertificate, Get-CertificateKeyFile, Get-WorkerVersion, Get-RunRecord, Get-PwshPath, Get-UninstallEntry, Set-UninstallEntry, Remove-UninstallEntry, Remove-FileOverwritten, Start-ElevatedUninstall

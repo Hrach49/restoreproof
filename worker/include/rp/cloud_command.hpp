@@ -131,7 +131,11 @@ struct RevokeRequest {
 // `rpworker cloud revoke` (W7.3, docs/decisions.md 2026-10-19, "W7.3 (#82)
 // and W7.4 (#83)", point 5): the uninstall's call. The config; the vault read;
 // no API token ("config error: cloud_api_token is not in the vault; this
-// Worker is not registered", 1); the vault written back unchanged ("vault
+// Worker is not registered", 1); state\worker.json, when it reads, naming
+// another cloud_url than the config's: "cloud revoke: this Worker is
+// registered with <its url> (state\worker.json) and the config's cloud_url
+// is <url>; nothing was sent: ...", 1 (the token is that Cloud's, and another
+// Cloud's 401 would remove it); the vault written back unchanged ("vault
 // error: <what()>", 1); the recording opened; then one POST to
 // <cloud_url>/v1/workers/self/revoke with the token as the bearer and no
 // body. The answers:
@@ -141,9 +145,12 @@ struct RevokeRequest {
 //   a 2xx without the header: "cloud revoke: the answer is not a RestoreProof
 //       Cloud's (no X-RestoreProof-API: 1)", 4 (with another value "(X-
 //       RestoreProof-API: <text>)"); nothing removed;
-//   401: "cloud revoke: the Cloud doesn't know this token (revoked already, or
-//       never this Cloud's); it was removed from the vault", the token
-//       removed, 2;
+//   401 with the contract header: "cloud revoke: the Cloud doesn't know this
+//       token (revoked already, or never this Cloud's); it was removed from
+//       the vault", the token removed, 2;
+//   401 without it (a proxy's, a captive page's): "cloud revoke: the answer is
+//       not a RestoreProof Cloud's (no X-RestoreProof-API: 1 on its 401); the
+//       token is kept", 4;
 //   5xx, a timeout, no connection, a TLS failure: "cloud revoke: the Cloud
 //       couldn't be reached (<word>); run it again, or revoke the Worker in
 //       the Cloud (manage.py revoke-worker)", 3, the token kept;

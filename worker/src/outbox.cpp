@@ -559,7 +559,8 @@ OutboxListing Outbox::list() const
 }
 
 FlushReport Outbox::flush(IUploader& uploader, std::chrono::system_clock::time_point now,
-                          const std::function<bool()>& stop, bool token_is_new)
+                          const std::function<bool()>& stop, bool token_is_new,
+                          bool every_run_due)
 {
     FlushReport report;
     const std::string now_text = outbox_time_text(now);
@@ -723,7 +724,8 @@ FlushReport Outbox::flush(IUploader& uploader, std::chrono::system_clock::time_p
         }
         const bool token_waits =
             token_is_new && manifest.last_error == std::string{kTokenRefused};
-        if (!token_waits && manifest.next_attempt_at && *manifest.next_attempt_at > now_text) {
+        if (!every_run_due && !token_waits && manifest.next_attempt_at &&
+            *manifest.next_attempt_at > now_text) {
             report.out.push_back("waiting " + id + ": next at " + *manifest.next_attempt_at);
             continue;
         }
